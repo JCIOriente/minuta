@@ -59,8 +59,12 @@ fn overlap_is_clamped() {
 
 #[test]
 fn inverted_segment_dropped() {
-    let t = from_whisper_json(&whisper(&[(0, 1000, "a"), (5000, 2000, "bad"), (3000, 4000, "c")]))
-        .unwrap();
+    let t = from_whisper_json(&whisper(&[
+        (0, 1000, "a"),
+        (5000, 2000, "bad"),
+        (3000, 4000, "c"),
+    ]))
+    .unwrap();
     let texts: Vec<&str> = t.segments.iter().map(|s| s.text.as_str()).collect();
     assert_eq!(texts, ["a", "c"]);
 }
@@ -94,7 +98,10 @@ fn srt_over_one_hour() {
 
 #[test]
 fn srt_preserves_utf8() {
-    let t = transcript(vec![seg(0.0, 1.0, "café ñandú"), seg(1.0, 2.0, "你好，世界")]);
+    let t = transcript(vec![
+        seg(0.0, 1.0, "café ñandú"),
+        seg(1.0, 2.0, "你好，世界"),
+    ]);
     let srt = to_srt(&t);
     assert!(srt.contains("café ñandú"));
     assert!(srt.contains("你好，世界"));
