@@ -37,7 +37,10 @@ fn env_beats_file() {
 #[test]
 fn file_beats_default() {
     let dir = tempfile::tempdir().unwrap();
-    let file = write_config(&dir, "out_dir = \"/tmp/out\"\n[ffmpeg]\nbin = \"/opt/ffmpeg\"\n");
+    let file = write_config(
+        &dir,
+        "out_dir = \"/tmp/out\"\n[ffmpeg]\nbin = \"/opt/ffmpeg\"\n",
+    );
     let cfg = Config::resolve(Overrides::default(), &no_env, Some(&file)).unwrap();
     assert_eq!(cfg.out_dir.value, "/tmp/out");
     assert_eq!(cfg.out_dir.source, Source::File);
@@ -49,7 +52,10 @@ fn file_beats_default() {
 #[test]
 fn precedence_is_checked_per_key() {
     let dir = tempfile::tempdir().unwrap();
-    let file = write_config(&dir, "[whisper]\nbin = \"file-whisper\"\nmodel = \"file-model\"\n");
+    let file = write_config(
+        &dir,
+        "[whisper]\nbin = \"file-whisper\"\nmodel = \"file-model\"\n",
+    );
     let flags = Overrides {
         whisper_model: Some("flag-model".into()),
         ..Overrides::default()
@@ -98,7 +104,12 @@ fn minuta_config_env_overrides_path() {
     let dir = tempfile::tempdir().unwrap();
     let file = write_config(&dir, "out_dir = \"from-env-path\"\n");
     let env = |k: &str| (k == "MINUTA_CONFIG").then(|| file.clone());
-    let cfg = Config::resolve(Overrides::default(), &env, Some("/nonexistent/default.toml")).unwrap();
+    let cfg = Config::resolve(
+        Overrides::default(),
+        &env,
+        Some("/nonexistent/default.toml"),
+    )
+    .unwrap();
     assert_eq!(cfg.path, Some(PathBuf::from(&file)));
     assert_eq!(cfg.out_dir.value, "from-env-path");
     assert_eq!(cfg.out_dir.source, Source::File);
@@ -127,7 +138,14 @@ fn show_lists_every_key_with_source() {
     let keys: Vec<&str> = shown.iter().map(|(k, _)| *k).collect();
     assert_eq!(
         keys,
-        ["out_dir", "whisper.bin", "whisper.model", "whisper.lang", "ffmpeg.bin", "ffprobe.bin"]
+        [
+            "out_dir",
+            "whisper.bin",
+            "whisper.model",
+            "whisper.lang",
+            "ffmpeg.bin",
+            "ffprobe.bin"
+        ]
     );
     assert!(shown.iter().all(|(_, s)| s.source == Source::Default));
 }
