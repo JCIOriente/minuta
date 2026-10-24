@@ -76,16 +76,21 @@ pub fn run(argv: &[OsString], opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> R
         pump(child.stderr.take().expect("piped stderr"), true, tx),
     ];
 
-    let mut tail: Vec<String> = Vec::new();
-    loop {
-        if opts
-            .interrupt
+    let interrupted = || {
+        opts.interrupt
             .as_ref()
             .is_some_and(|f| f.load(Ordering::SeqCst))
-        {
+    };
+    let kill_and_reap = |child: &mut std::process::Child| {
+        let _ = child.kill();
+        let _ = child.wait();
+    };
+
+    let mut tail: Vec<String> = Vec::new();
+    loop {
+        if interrupted() {
             // Readers are not joined: a grandchild may still hold the pipes open.
-            let _ = child.kill();
-            let _ = child.wait();
+            kill_and_reap(&mut child);
             return Err(Error::Interrupted);
         }
         match rx.recv_timeout(POLL_INTERVAL) {
@@ -105,7 +110,17 @@ pub fn run(argv: &[OsString], opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> R
     for reader in readers {
         let _ = reader.join();
     }
-    let status = child.wait()?;
+    // The child may outlive its pipes, so keep honouring the interrupt flag while waiting.
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if interrupted() {
+            kill_and_reap(&mut child);
+            return Err(Error::Interrupted);
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    };
     if status.success() {
         Ok(Output { status })
     } else {

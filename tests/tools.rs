@@ -137,3 +137,24 @@ fn version_captured() {
     assert_eq!(tc.ffmpeg.path, dir.path().join("ffmpeg"));
     assert_eq!(tc.model, Some(model));
 }
+
+#[test]
+fn interrupt_kills_child_that_closed_stdio() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = script(dir.path(), "quiet", "exec >/dev/null 2>&1\nexec sleep 30").into_os_string();
+    let flag = Arc::new(AtomicBool::new(false));
+    let setter = Arc::clone(&flag);
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        setter.store(true, Ordering::SeqCst);
+    });
+    let opts = RunOpts {
+        interrupt: Some(flag),
+        ..RunOpts::default()
+    };
+    let start = Instant::now();
+    let err = run(&[bin], opts, &mut |_| {}).unwrap_err();
+    assert!(matches!(err, Error::Interrupted), "got {err:?}");
+    assert!(start.elapsed() < Duration::from_secs(1));
+    // The pipes closed long before the flag was set, so this proves the wait is interruptible.
+}
