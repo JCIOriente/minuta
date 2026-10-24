@@ -3,7 +3,13 @@
 pub mod fingerprint;
 pub mod state;
 
-use std::path::Path;
+use std::ffi::OsString;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::error::Result;
+
+pub use fingerprint::fingerprint;
 
 /// Extensions stripped from job names, compared case-insensitively.
 const MEDIA_EXTENSIONS: [&str; 9] = [
@@ -25,4 +31,22 @@ pub fn derive_name(first: &Path) -> String {
         name.truncate(stem.len());
     }
     name
+}
+
+/// Writes an artifact atomically: `f` writes to `<path>.tmp`, which is renamed to `path` only
+/// if `f` succeeds. On failure the temp file is removed and `path` is left untouched.
+pub fn write_atomic(path: &Path, f: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
+    let tmp = tmp_path(path);
+    let result = f(&tmp).and_then(|()| Ok(fs::rename(&tmp, path)?));
+    if result.is_err() {
+        // Best effort: a temp file that survives is removed the next time the job is opened.
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
+fn tmp_path(path: &Path) -> PathBuf {
+    let mut tmp = OsString::from(path.as_os_str());
+    tmp.push(".tmp");
+    PathBuf::from(tmp)
 }
