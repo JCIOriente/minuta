@@ -105,7 +105,7 @@ fn invalid_job_names_rejected() {
     for name in ["", ".", "..", "a/b"] {
         assert!(
             matches!(
-                Job::open(&out, name, &[source.clone()], false),
+                Job::open(&out, name, std::slice::from_ref(&source), false),
                 Err(Error::Usage(_))
             ),
             "{name:?}"
@@ -176,7 +176,7 @@ fn step_names_parse_in_pipeline_order() {
 #[test]
 fn job_json_has_version_1() {
     let (_root, out, source) = setup();
-    let job = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
+    let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
     assert_eq!(job.dir, fs::canonicalize(out.join("clase-4")).unwrap());
     let json = read_json(&job.dir.join("job.json"));
     assert_eq!(json["version"], 1);
@@ -194,7 +194,7 @@ fn job_json_has_version_1() {
 #[test]
 fn unknown_version_rejected() {
     let (_root, out, source) = setup();
-    let job = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
+    let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
     let file = job.dir.join("job.json");
     let mut json = read_json(&file);
     json["version"] = 2.into();
@@ -215,7 +215,7 @@ fn unknown_version_rejected() {
 #[test]
 fn tmp_cleaned_on_open() {
     let (_root, out, source) = setup();
-    let job = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
+    let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
     fs::write(job.dir.join("audio.wav.tmp"), b"partial").unwrap();
     fs::write(job.dir.join("job.json.tmp"), b"partial").unwrap();
     fs::write(job.dir.join("audio.wav"), b"good").unwrap();
@@ -229,7 +229,7 @@ fn tmp_cleaned_on_open() {
 #[test]
 fn tmp_cleanup_spares_other_names() {
     let (_root, out, source) = setup();
-    let job = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
+    let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
     fs::create_dir(job.dir.join("cache.tmp")).unwrap();
     fs::write(job.dir.join("notes.tmpl"), b"keep").unwrap();
 
@@ -241,7 +241,7 @@ fn tmp_cleanup_spares_other_names() {
 #[test]
 fn missing_version_rejected() {
     let (_root, out, source) = setup();
-    let job = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
+    let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
     let file = job.dir.join("job.json");
     let mut json = read_json(&file);
     json.as_object_mut().unwrap().remove("version");
@@ -258,7 +258,7 @@ fn missing_version_rejected() {
 #[test]
 fn invalid_job_json_rejected() {
     let (_root, out, source) = setup();
-    let job = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
+    let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
     let file = job.dir.join("job.json");
     fs::write(&file, b"{ not json").unwrap();
 
@@ -274,7 +274,7 @@ fn failed_open_touches_nothing() {
     let (root, out, source) = setup();
     let other = root.path().join("other.mp4");
     fs::write(&other, b"other bytes").unwrap();
-    let job = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
+    let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
     let leftover = job.dir.join("audio.wav.tmp");
     fs::write(&leftover, b"another run").unwrap();
     let before = fs::read(job.dir.join("job.json")).unwrap();
@@ -321,10 +321,10 @@ fn name_conflict_different_sources() {
     fs::create_dir_all(other.parent().unwrap()).unwrap();
     fs::write(&other, b"other bytes").unwrap();
 
-    let mut job = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
+    let mut job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
     job.mark_done(StepName::Probe, "fp", 0.1, &[]).unwrap();
 
-    match Job::open(&out, "clase-4", &[other.clone()], false) {
+    match Job::open(&out, "clase-4", std::slice::from_ref(&other), false) {
         Err(Error::Job(msg)) => assert!(msg.contains("different sources"), "{msg}"),
         other => panic!("expected Error::Job, got {other:?}"),
     }
@@ -342,10 +342,10 @@ fn name_conflict_different_sources() {
         Err(Error::Job(msg)) => assert!(msg.contains("different sources"), "{msg}"),
         other => panic!("source order must count, got {other:?}"),
     }
-    let same = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
+    let same = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
     assert_eq!(same.state.steps.len(), 1, "same sources keep the job");
 
-    let replaced = Job::open(&out, "clase-4", &[other.clone()], true).unwrap();
+    let replaced = Job::open(&out, "clase-4", std::slice::from_ref(&other), true).unwrap();
     assert_eq!(replaced.state.sources.len(), 1);
     assert_eq!(
         replaced.state.sources[0].path,
@@ -527,7 +527,7 @@ fn set_mtime(path: &Path, offset: Duration) {
 #[test]
 fn ctx_describes_the_job() {
     let (_root, out, source) = setup();
-    let job = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
+    let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
     let ctx = job.ctx();
     assert_eq!(ctx.dir, job.dir);
     assert_eq!(ctx.sources, vec![fs::canonicalize(&source).unwrap()]);
