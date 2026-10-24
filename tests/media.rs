@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use minuta::error::Error;
 use minuta::job::{Ctx, Step};
+use minuta::steps::audio::Audio;
+use minuta::steps::join::{joined_path, plan_join, Encoder, Join, Mode};
 use minuta::steps::probe::{read_probe, Probe, SourceProbe};
 use minuta::tools::{inspect, run, RunOpts, ToolInfo, ToolPaths};
 
@@ -157,8 +159,6 @@ fn probe_params_change_with_tool_version() {
 }
 
 // ---- join ----
-
-use minuta::steps::join::{joined_path, plan_join, Encoder, Join, Mode};
 
 fn probe_all(t: &Tools, dir: &Path, sources: &[PathBuf]) -> Ctx {
     let ctx = ctx(dir, sources);
@@ -359,4 +359,49 @@ fn join_params_change_with_inputs() {
         Join::new(upgraded, Encoder::X264).params(&one)
     );
     assert_ne!(base.params(&one), base.params(&reordered));
+}
+
+// ---- audio ----
+
+#[test]
+fn audio_is_mono_16k() {
+    let Some(t) = ffmpeg_available() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let a = clip(&t, tmp.path(), "a.mp4", "red", "160x120", 2);
+    let ctx = probe_all(&t, tmp.path(), &[a]);
+    Join::new(t.ffmpeg.clone(), Encoder::X264)
+        .run(&ctx)
+        .unwrap();
+
+    let step = Audio::new(t.ffmpeg.clone());
+    step.run(&ctx).unwrap();
+
+    let wav = tmp.path().join("audio.wav");
+    assert_eq!(step.outputs(&ctx), vec![wav.clone()]);
+    let probed = describe(&t, &wav);
+    assert!(probed.video.is_none());
+    assert_eq!(probed.audio.codec, "pcm_s16le");
+    assert_eq!(
+        (probed.audio.channels, probed.audio.sample_rate),
+        (1, 16000)
+    );
+    assert!((probed.duration - 2.0).abs() < 0.3, "{}", probed.duration);
+    assert!(!tmp.path().join("audio.wav.tmp").exists());
+}
+
+#[test]
+fn audio_params_change_with_tool_version() {
+    let tool = ToolInfo {
+        path: "ffmpeg".into(),
+        version: "ffmpeg version 1".into(),
+    };
+    let newer = ToolInfo {
+        version: "ffmpeg version 2".into(),
+        ..tool.clone()
+    };
+    let ctx = ctx(Path::new("."), &[]);
+    assert_ne!(
+        Audio::new(tool).params(&ctx),
+        Audio::new(newer).params(&ctx)
+    );
 }
