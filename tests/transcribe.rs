@@ -84,11 +84,7 @@ fn step(s: &Setup, lang: &str) -> Transcribe {
 
 /// Retries while the freshly written script is still held open by a fork in another test
 /// thread (ETXTBSY on Linux).
-fn run_step(
-    t: &Transcribe,
-    ctx: &Ctx,
-    on_line: &mut dyn FnMut(&str),
-) -> Result<TranscribeOutcome> {
+fn run_step(t: &Transcribe, ctx: &Ctx, on_line: &mut dyn FnMut(&str)) -> Result<TranscribeOutcome> {
     let mut attempts = 0;
     loop {
         let res = t.run_with(ctx, RunOpts::default(), on_line);
@@ -216,8 +212,14 @@ fn empty_transcript_still_writes_outputs() {
     assert!(t.segments.is_empty());
 
     Outputs.run(&s.ctx).unwrap();
-    assert_eq!(fs::read_to_string(s.ctx.dir.join("transcript.txt")).unwrap(), "");
-    assert_eq!(fs::read_to_string(s.ctx.dir.join("captions.srt")).unwrap(), "");
+    assert_eq!(
+        fs::read_to_string(s.ctx.dir.join("transcript.txt")).unwrap(),
+        ""
+    );
+    assert_eq!(
+        fs::read_to_string(s.ctx.dir.join("captions.srt")).unwrap(),
+        ""
+    );
 }
 
 #[test]
