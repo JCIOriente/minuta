@@ -12,6 +12,7 @@ while [ $# -gt 0 ]; do
   if [ "$1" = "-of" ]; then prefix=$2; fi
   shift
 done
+if [ -z "$prefix" ]; then echo "fake whisper-cli: missing -of" >&2; exit 2; fi
 if [ -n "$FAKE_WHISPER_HANG" ]; then
   echo $$ > "$FAKE_WHISPER_HANG.part"
   /bin/mv "$FAKE_WHISPER_HANG.part" "$FAKE_WHISPER_HANG"

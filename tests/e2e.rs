@@ -38,12 +38,13 @@ fn e2e_real_whisper_tiny() {
         let mut cmd = Command::new(assert_cmd::cargo::cargo_bin("minuta"));
         cmd.args(args)
             .current_dir(tmp.path())
+            // No MINUTA_* from the developer's shell may swap in another whisper or model.
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .env("HOME", &home)
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_CACHE_HOME", home.join(".cache"))
             .env("MINUTA_CONFIG", tmp.path().join("config.toml"))
-            .env_remove("MINUTA_WHISPER_MODEL")
-            .env_remove("MINUTA_OUT_DIR")
             .stdin(Stdio::null());
         cmd
     };

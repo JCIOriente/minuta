@@ -23,6 +23,10 @@ pub fn have_ffmpeg() -> bool {
 macro_rules! require_ffmpeg {
     () => {
         if !$crate::common::have_ffmpeg() {
+            assert!(
+                std::env::var("MINUTA_REQUIRE_FFMPEG").as_deref() != Ok("1"),
+                "MINUTA_REQUIRE_FFMPEG=1 but ffmpeg and ffprobe are not on PATH"
+            );
             eprintln!("skipping: ffmpeg and ffprobe are not on PATH");
             return;
         }
@@ -99,6 +103,13 @@ impl Env {
         self.command(args).output().unwrap()
     }
 
+    /// Runs minuta and asserts success (for setup steps).
+    pub fn run_ok(&self, args: &[&str]) -> Output {
+        let out = self.minuta(args);
+        assert!(out.status.success(), "{args:?} failed: {}", stderr(&out));
+        out
+    }
+
     /// Number of whisper-cli invocations so far.
     pub fn whisper_calls(&self) -> usize {
         fs::read_to_string(self.path("whisper.log"))
@@ -159,4 +170,29 @@ pub fn signal(sig: &str, child: &Child) {
         .unwrap()
         .success();
     assert!(ok);
+}
+
+/// Whether `pid` is a live process.
+pub fn pid_alive(pid: &str) -> bool {
+    Command::new("kill")
+        .args(["-0", pid])
+        .stderr(Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
+pub fn kill_pid(pid: &str) {
+    let _ = Command::new("kill").args(["-KILL", pid]).status();
+}
+
+/// Starts `minuta args` with the fake whisper hanging; returns the run and whisper's pid.
+pub fn start_hanging(env: &Env, args: &[&str]) -> (Child, String) {
+    let pid_file = env.path("whisper.pid");
+    let mut cmd = env.command(args);
+    cmd.env("FAKE_WHISPER_HANG", &pid_file);
+    let child = cmd.spawn().unwrap();
+    wait_for(&pid_file);
+    let pid = fs::read_to_string(&pid_file).unwrap().trim().to_string();
+    (child, pid)
 }

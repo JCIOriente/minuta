@@ -25,3 +25,5 @@ jobs:
       # whisper-cli and a model. Run it locally with MINUTA_E2E=1 (MINUTA_E2E_MODEL=<file>
       # to skip the download of the tiny model).
       - run: make ci
+        env:
+          MINUTA_REQUIRE_FFMPEG: "1"

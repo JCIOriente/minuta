@@ -82,7 +82,7 @@ fn rerun_is_cached() {
     require_ffmpeg!();
     let env = Env::new();
     env.clip("a.m4a", 440);
-    env.minuta(&["run", "a.m4a"]);
+    env.run_ok(&["run", "a.m4a"]);
     assert_eq!(env.whisper_calls(), 1);
 
     let out = env.minuta(&["run", "a.m4a"]);
@@ -96,7 +96,7 @@ fn lang_change_reruns_transcribe_only() {
     require_ffmpeg!();
     let env = Env::new();
     env.clip("a.m4a", 440);
-    env.minuta(&["run", "a.m4a", "--lang", "es"]);
+    env.run_ok(&["run", "a.m4a", "--lang", "es"]);
 
     let out = env.minuta(&["run", "a.m4a", "--lang", "en"]);
     assert!(out.status.success(), "{}", stderr(&out));
@@ -107,13 +107,11 @@ fn lang_change_reruns_transcribe_only() {
 
     // `reason` is cleared once a step finishes, so it is only visible while stale: rerun with
     // another language and stop at transcribe.
-    let pid_file = env.path("whisper.pid");
-    let mut cmd = env.command(&["run", "a.m4a", "--lang", "fr"]);
-    cmd.env("FAKE_WHISPER_HANG", &pid_file);
-    let child = cmd.spawn().unwrap();
-    wait_for(&pid_file);
+    let (child, pid) = start_hanging(&env, &["run", "a.m4a", "--lang", "fr"]);
     signal("-INT", &child);
-    child.wait_with_output().unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(!out.status.success(), "{}", stderr(&out));
+    assert!(!pid_alive(&pid), "minuta left whisper running");
     let steps = &job_json(&env.job_dir("a"))["steps"];
     assert_eq!(steps["transcribe"]["status"], "stale");
     assert_eq!(steps["transcribe"]["reason"], "fingerprint changed");
@@ -130,7 +128,7 @@ fn source_change_reruns_all() {
     require_ffmpeg!();
     let env = Env::new();
     env.clip("a.m4a", 440);
-    env.minuta(&["run", "a.m4a"]);
+    env.run_ok(&["run", "a.m4a"]);
 
     env.clip("a.m4a", 880);
     let out = env.minuta(&["run", "a.m4a"]);
@@ -149,19 +147,17 @@ fn killed_step_resumes() {
     for sig in ["-INT", "-KILL"] {
         let env = Env::new();
         env.clip("a.m4a", 440);
-        let pid_file = env.path("whisper.pid");
-        let mut cmd = env.command(&["run", "a.m4a"]);
-        cmd.env("FAKE_WHISPER_HANG", &pid_file);
-        let child = cmd.spawn().unwrap();
-        wait_for(&pid_file);
+        let (child, pid) = start_hanging(&env, &["run", "a.m4a"]);
         signal(sig, &child);
+        if sig == "-KILL" {
+            // minuta could not clean up: stop the orphan, which holds the output pipes open.
+            kill_pid(&pid);
+        }
         let out = child.wait_with_output().unwrap();
         assert!(!out.status.success());
-        // Do not leave the (possibly orphaned) fake whisper behind.
-        let pid = fs::read_to_string(&pid_file).unwrap();
-        let _ = std::process::Command::new("kill")
-            .args(["-KILL", pid.trim()])
-            .status();
+        if sig == "-INT" {
+            assert!(!pid_alive(&pid), "minuta left whisper running");
+        }
 
         let job = env.job_dir("a");
         assert!(!job.join("transcript.json").exists(), "{sig}");
