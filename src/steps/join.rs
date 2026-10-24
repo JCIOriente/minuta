@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::probe::{read_probe, SourceProbe};
+use super::probe::{read_probe, SourceProbe, PROBE_FILE};
 use crate::error::{Error, Result};
 use crate::job::{write_atomic, Ctx, Step, StepName};
 use crate::tools::{run, RunOpts, ToolInfo};
@@ -216,6 +216,7 @@ impl Join {
     fn reencode(
         &self,
         probes: &[SourceProbe],
+        sources: &[PathBuf],
         out: &Path,
         tmp: &Path,
         opts: &RunOpts,
@@ -233,8 +234,8 @@ impl Join {
             } else {
                 "stereo"
             };
-            for (i, p) in probes.iter().enumerate() {
-                argv.extend(["-i".into(), p.path.as_os_str().to_owned()]);
+            for (i, source) in sources.iter().enumerate() {
+                argv.extend(["-i".into(), source.as_os_str().to_owned()]);
                 filter.push_str(&format!(
                     "[{i}:a]aresample={rate},aformat=sample_fmts=fltp:sample_rates={rate}:\
                      channel_layouts={layout}[a{i}];",
@@ -251,8 +252,8 @@ impl Join {
             let target = probes[0].video.as_ref().expect("all sources have video");
             // Even dimensions, as H.264 needs.
             let (w, h) = (target.width & !1, target.height & !1);
-            for (i, p) in probes.iter().enumerate() {
-                argv.extend(["-i".into(), p.path.as_os_str().to_owned()]);
+            for (i, source) in sources.iter().enumerate() {
+                argv.extend(["-i".into(), source.as_os_str().to_owned()]);
                 filter.push_str(&format!(
                     "[{i}:v]scale={w}:{h}:force_original_aspect_ratio=decrease,\
                      pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}[v{i}];\
@@ -304,11 +305,19 @@ impl Join {
     /// interrupt.
     pub fn run_with(&self, ctx: &Ctx, opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<()> {
         let probes = read_probe(&ctx.dir)?;
+        if probes.len() != ctx.sources.len() {
+            return Err(Error::Job(format!(
+                "{} lists {} sources but the job has {}; run probe again",
+                PROBE_FILE,
+                probes.len(),
+                ctx.sources.len()
+            )));
+        }
         let out = joined_path(ctx);
         write_atomic(&out, |tmp| match plan_join(&probes) {
             Mode::Link => link_or_copy(&ctx.sources[0], tmp, |s, d| fs::hard_link(s, d)),
             Mode::StreamCopy => self.stream_copy(ctx, &out, tmp, &opts, on_line),
-            Mode::Reencode => self.reencode(&probes, &out, tmp, &opts, on_line),
+            Mode::Reencode => self.reencode(&probes, &ctx.sources, &out, tmp, &opts, on_line),
         })
     }
 }

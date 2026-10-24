@@ -189,8 +189,12 @@ fn parse(path: &Path, json: &str) -> Result<SourceProbe> {
 impl Step for Probe {
     const NAME: StepName = StepName::Probe;
 
-    fn params(&self, _ctx: &Ctx) -> Vec<u8> {
-        format!("ffprobe={}", self.ffprobe.version).into_bytes()
+    fn params(&self, ctx: &Ctx) -> Vec<u8> {
+        let mut params = format!("ffprobe={}\n", self.ffprobe.version);
+        for source in &ctx.sources {
+            params.push_str(&format!("source={}\n", source.display()));
+        }
+        params.into_bytes()
     }
 
     fn outputs(&self, ctx: &Ctx) -> Vec<PathBuf> {

@@ -596,3 +596,58 @@ fn run_with_forwards_tool_output() {
 
     assert!(probe_lines > 0 && audio_lines > 0);
 }
+
+#[test]
+fn probe_params_change_with_sources() {
+    let tool = ToolInfo {
+        path: "ffprobe".into(),
+        version: "ffprobe version 1".into(),
+    };
+    let one = Ctx {
+        dir: ".".into(),
+        sources: vec!["/a.mp4".into(), "/b.mp4".into()],
+        source_digest: "d".into(),
+    };
+    let moved = Ctx {
+        sources: vec!["/moved/a.mp4".into(), "/moved/b.mp4".into()],
+        ..one.clone()
+    };
+    let step = Probe::new(tool);
+    assert_ne!(step.params(&one), step.params(&moved));
+}
+
+#[test]
+fn reencode_reads_moved_sources() {
+    let Some(t) = ffmpeg_available() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let old = tmp.path().join("old");
+    let new = tmp.path().join("new");
+    fs::create_dir(&old).unwrap();
+    fs::create_dir(&new).unwrap();
+    let a = clip(&t, &old, "a.mp4", "red", "320x240", 1);
+    let b = clip(&t, &old, "b.mp4", "blue", "640x480", 1);
+    let job = tmp.path().join("job");
+    fs::create_dir(&job).unwrap();
+    probe_all(&t, &job, &[a.clone(), b.clone()]);
+    // The recordings move; probe.json still names the old paths.
+    let moved: Vec<PathBuf> = [&a, &b]
+        .iter()
+        .map(|s| {
+            let to = new.join(s.file_name().unwrap());
+            fs::rename(s, &to).unwrap();
+            to
+        })
+        .collect();
+
+    Join::new(t.ffmpeg.clone(), Encoder::X264)
+        .run(&ctx(&job, &moved))
+        .unwrap();
+
+    let joined = describe(&t, &job.join("joined.mp4"));
+    assert!((joined.duration - 2.0).abs() < 0.3, "{}", joined.duration);
+
+    let err = Join::new(t.ffmpeg.clone(), Encoder::X264)
+        .run(&ctx(&job, &moved[..1]))
+        .unwrap_err();
+    assert!(matches!(err, Error::Job(_)), "{err}");
+}
