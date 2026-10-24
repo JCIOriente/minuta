@@ -1,6 +1,6 @@
 # Core pipeline (sub-project 1 of 6) — Spec
 
-- Status: draft
+- Status: approved
 - Date: 2026-10-23
 - Owner: Arnold Gandarillas Castillo
 - Related: docs/brief.md, ADR-0001, ADR-0002, ADR-0003
