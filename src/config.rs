@@ -40,7 +40,8 @@ pub struct Config {
     pub path: Option<PathBuf>,
     pub out_dir: Setting,
     pub whisper_bin: Setting,
-    pub whisper_model: Setting,
+    /// `None` when no layer sets a non-empty value.
+    pub whisper_model: Option<Setting>,
     pub whisper_lang: Setting,
     pub ffmpeg_bin: Setting,
     pub ffprobe_bin: Setting,
@@ -66,6 +67,13 @@ pub fn default_path() -> Option<PathBuf> {
     directories::BaseDirs::new().map(|dirs| dirs.home_dir().join(".config/minuta/config.toml"))
 }
 
+/// The config file path: `MINUTA_CONFIG` if set, else the default. Does not read the file.
+pub fn resolve_path(env: &dyn Fn(&str) -> Option<String>, file: Option<&str>) -> Option<PathBuf> {
+    env("MINUTA_CONFIG")
+        .or_else(|| file.map(str::to_string))
+        .map(PathBuf::from)
+}
+
 impl Config {
     /// Resolve the config using the real process environment and default path.
     pub fn load(flags: Overrides) -> Result<Config> {
@@ -77,13 +85,14 @@ impl Config {
     /// Merge flags > `MINUTA_*` env > config file > defaults, per key.
     ///
     /// `file` is the default config path; `MINUTA_CONFIG` in `env` overrides it.
-    /// A missing file yields defaults; a malformed file is `Error::Config`.
+    /// A missing file yields defaults; a malformed or unreadable file is `Error::Config`.
+    /// Empty values count as unset.
     pub fn resolve(
         flags: Overrides,
         env: &dyn Fn(&str) -> Option<String>,
         file: Option<&str>,
     ) -> Result<Config> {
-        let path = env("MINUTA_CONFIG").or_else(|| file.map(str::to_string));
+        let path = resolve_path(env, file);
         let from_file = match &path {
             Some(p) => read_file(p)?,
             None => FileConfig::default(),
@@ -93,7 +102,7 @@ impl Config {
         let ffprobe = from_file.ffprobe.unwrap_or_default();
 
         Ok(Config {
-            path: path.map(PathBuf::from),
+            path,
             out_dir: pick(
                 flags.out_dir,
                 env("MINUTA_OUT_DIR"),
@@ -106,11 +115,10 @@ impl Config {
                 whisper.bin,
                 "whisper-cli",
             ),
-            whisper_model: pick(
+            whisper_model: pick_opt(
                 flags.whisper_model,
                 env("MINUTA_WHISPER_MODEL"),
                 whisper.model,
-                "",
             ),
             whisper_lang: pick(
                 flags.whisper_lang,
@@ -133,34 +141,46 @@ impl Config {
         })
     }
 
-    /// Every key with its resolved value and source, in documented order.
-    pub fn entries(&self) -> Vec<(&'static str, &Setting)> {
+    /// Every key with its resolved setting in documented order; `None` means unset.
+    pub fn entries(&self) -> Vec<(&'static str, Option<&Setting>)> {
         vec![
-            ("out_dir", &self.out_dir),
-            ("whisper.bin", &self.whisper_bin),
-            ("whisper.model", &self.whisper_model),
-            ("whisper.lang", &self.whisper_lang),
-            ("ffmpeg.bin", &self.ffmpeg_bin),
-            ("ffprobe.bin", &self.ffprobe_bin),
+            ("out_dir", Some(&self.out_dir)),
+            ("whisper.bin", Some(&self.whisper_bin)),
+            ("whisper.model", self.whisper_model.as_ref()),
+            ("whisper.lang", Some(&self.whisper_lang)),
+            ("ffmpeg.bin", Some(&self.ffmpeg_bin)),
+            ("ffprobe.bin", Some(&self.ffprobe_bin)),
         ]
     }
 }
 
-fn pick(flag: Option<String>, env: Option<String>, file: Option<String>, default: &str) -> Setting {
-    let (value, source) = match (flag, env, file) {
-        (Some(v), _, _) => (v, Source::Flag),
-        (None, Some(v), _) => (v, Source::Env),
-        (None, None, Some(v)) => (v, Source::File),
-        (None, None, None) => (default.to_string(), Source::Default),
-    };
-    Setting { value, source }
+/// The highest-precedence non-empty layer, or `None` if every layer is unset or empty.
+fn pick_opt(flag: Option<String>, env: Option<String>, file: Option<String>) -> Option<Setting> {
+    [
+        (flag, Source::Flag),
+        (env, Source::Env),
+        (file, Source::File),
+    ]
+    .into_iter()
+    .find_map(|(value, source)| {
+        value
+            .filter(|v| !v.is_empty())
+            .map(|value| Setting { value, source })
+    })
 }
 
-fn read_file(path: &str) -> Result<FileConfig> {
+fn pick(flag: Option<String>, env: Option<String>, file: Option<String>, default: &str) -> Setting {
+    pick_opt(flag, env, file).unwrap_or(Setting {
+        value: default.to_string(),
+        source: Source::Default,
+    })
+}
+
+fn read_file(path: &Path) -> Result<FileConfig> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(FileConfig::default()),
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(Error::Config(format!("{}: {e}", path.display()))),
     };
     toml::from_str(&text).map_err(|e| {
         let line = e
@@ -168,7 +188,8 @@ fn read_file(path: &str) -> Result<FileConfig> {
             .map(|s| text[..s.start].matches('\n').count() + 1)
             .unwrap_or(1);
         Error::Config(format!(
-            "{path}: invalid TOML at line {line}: {}",
+            "{}: invalid TOML at line {line}: {}",
+            path.display(),
             e.message()
         ))
     })
