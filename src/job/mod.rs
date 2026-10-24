@@ -7,9 +7,81 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 
-pub use fingerprint::fingerprint;
+pub use fingerprint::{fingerprint, source_record};
+pub use state::{JobState, Source, Status, StepName, StepState};
+
+/// File name of the job state inside the job folder.
+pub const JOB_FILE: &str = "job.json";
+
+/// A job folder `<out>/<name>/` and its `job.json` state.
+#[derive(Debug)]
+pub struct Job {
+    pub dir: PathBuf,
+    pub state: JobState,
+}
+
+impl Job {
+    /// Opens or creates the job `<out>/<name>` for `sources` (in join order), removing leftover
+    /// `*.tmp` files, and records the sources in `job.json`.
+    ///
+    /// If the folder already holds a job made from a different list of source paths, this is
+    /// an `Error::Job` unless `allow_replace` is set, in which case the job starts over.
+    pub fn open(out: &Path, name: &str, sources: &[PathBuf], allow_replace: bool) -> Result<Job> {
+        let dir = out.join(name);
+        fs::create_dir_all(&dir)?;
+        remove_tmp_files(&dir)?;
+        let paths = sources
+            .iter()
+            .map(fs::canonicalize)
+            .collect::<std::io::Result<Vec<_>>>()?;
+        let file = dir.join(JOB_FILE);
+        let mut state = if file.exists() {
+            JobState::load(&file)?
+        } else {
+            JobState::new(name)
+        };
+        if !state.sources.iter().map(|s| &s.path).eq(paths.iter()) {
+            if !state.sources.is_empty() && !allow_replace {
+                return Err(Error::Job(format!(
+                    "{} holds a job made from different sources; \
+                     choose another name with --name or replace it with --force",
+                    dir.display()
+                )));
+            }
+            state = JobState::new(name);
+        }
+        state.sources = paths
+            .iter()
+            .map(|p| source_record(p))
+            .collect::<Result<_>>()?;
+        let job = Job { dir, state };
+        job.save()?;
+        Ok(job)
+    }
+
+    /// Writes `job.json` atomically.
+    pub fn save(&self) -> Result<()> {
+        self.state.save(&self.dir.join(JOB_FILE))
+    }
+
+    /// Removes leftover `*.tmp` files from the job folder (after an interrupt, for example).
+    pub fn clean_tmp(&self) -> Result<()> {
+        remove_tmp_files(&self.dir)
+    }
+}
+
+fn remove_tmp_files(dir: &Path) -> Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "tmp") && entry.file_type()?.is_file() {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(())
+}
 
 /// Extensions stripped from job names, compared case-insensitively.
 const MEDIA_EXTENSIONS: [&str; 9] = [
