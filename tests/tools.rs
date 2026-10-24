@@ -308,7 +308,7 @@ fn invalid_utf8_line_does_not_stop_streaming() {
     let bin = script(
         dir.path(),
         "latin1",
-        r"printf 'bad \377\376 bytes\r\n'; echo after1; echo after2 >&2; echo after3",
+        r"printf 'bad \377\376 bytes\r\n'; echo after1; echo after3; echo after2 >&2",
     )
     .into_os_string();
     let mut lines = Vec::new();
@@ -317,11 +317,13 @@ fn invalid_utf8_line_does_not_stop_streaming() {
     })
     .unwrap();
     assert!(out.status.success());
-    assert_eq!(lines[0], "bad \u{fffd}\u{fffd} bytes");
-    lines.sort();
-    assert!(lines.contains(&"after1".to_string()));
+    // Only stdout order is fixed; stderr is read by a separate thread.
+    let stdout: Vec<_> = lines.iter().filter(|l| *l != "after2").collect();
+    assert_eq!(
+        stdout,
+        vec!["bad \u{fffd}\u{fffd} bytes", "after1", "after3"]
+    );
     assert!(lines.contains(&"after2".to_string()));
-    assert!(lines.contains(&"after3".to_string()));
 }
 
 #[test]
