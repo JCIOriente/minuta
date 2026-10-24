@@ -9,9 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use minuta::error::{Error, Result};
-use minuta::tools::{inspect, preflight, run, Output, RunOpts, ToolPaths, Toolchain};
-
-const ETXTBSY: i32 = 26;
+use minuta::tools::{inspect, preflight, run, Output, Report, RunOpts, ToolPaths, Toolchain};
 
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
@@ -27,8 +25,8 @@ fn retry<T>(mut f: impl FnMut() -> Result<T>) -> Result<T> {
     loop {
         let res = f();
         let busy = match &res {
-            Err(Error::Io(e)) => e.raw_os_error() == Some(ETXTBSY),
-            Err(Error::MissingTools(m)) => m.iter().any(|m| m.hint.contains("Text file busy")),
+            Err(Error::Io(e)) => e.to_string().contains("Text file busy"),
+            Err(Error::MissingTools(m)) => busy_hint(m.iter().map(|m| m.hint.as_str())),
             _ => false,
         };
         attempts += 1;
@@ -37,6 +35,21 @@ fn retry<T>(mut f: impl FnMut() -> Result<T>) -> Result<T> {
         }
         std::thread::sleep(Duration::from_millis(25));
     }
+}
+
+fn busy_hint<'a>(mut hints: impl Iterator<Item = &'a str>) -> bool {
+    hints.any(|h| h.contains("Text file busy"))
+}
+
+fn inspect_r(paths: &ToolPaths, need_model: bool) -> Report {
+    for _ in 0..20 {
+        let report = inspect(paths, need_model);
+        if !busy_hint(report.missing.iter().map(|m| m.hint.as_str())) {
+            return report;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    inspect(paths, need_model)
 }
 
 fn run_r(argv: &[OsString], opts: &RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<Output> {
@@ -103,12 +116,13 @@ fn streams_lines() {
 #[test]
 fn nonzero_exit_is_tool_error() {
     let dir = tempfile::tempdir().unwrap();
-    let bin = script(dir.path(), "bad", "echo boom >&2\nexit 3").into_os_string();
+    let bin = script(dir.path(), "bad", "echo noise\necho boom >&2\nexit 3").into_os_string();
     let err = run_r(&[bin], &RunOpts::default(), &mut |_| {}).unwrap_err();
     match err {
         Error::Tool { code, stderr, .. } => {
             assert_eq!(code, Some(3));
             assert!(stderr.contains("boom"), "stderr was {stderr:?}");
+            assert!(!stderr.contains("noise"), "stderr was {stderr:?}");
         }
         other => panic!("expected Tool error, got {other:?}"),
     }
@@ -214,7 +228,7 @@ fn empty_and_relative_path_entries_are_skipped() {
         path: Some(search),
         ..ToolPaths::default()
     };
-    let report = inspect(&paths, false);
+    let report = inspect_r(&paths, false);
     assert!(report.ffmpeg.is_none());
     assert!(report.missing.iter().any(|m| m.name == "ffmpeg"));
 }
@@ -240,7 +254,7 @@ fn failing_version_probe_is_reported_missing() {
     let dir = tempfile::tempdir().unwrap();
     let paths = fake_toolchain(dir.path());
     script(dir.path(), "ffprobe", "echo 'some text'\nexit 1");
-    let report = retry(|| Ok(inspect(&paths, true))).unwrap();
+    let report = inspect_r(&paths, true);
     // Doctor data still shows where the tool was found.
     assert_eq!(report.ffprobe.unwrap().path, dir.path().join("ffprobe"));
     assert_eq!(report.missing.len(), 1);
@@ -249,7 +263,7 @@ fn failing_version_probe_is_reported_missing() {
     assert!(m.hint.contains("found at"), "hint was {:?}", m.hint);
     assert!(m.hint.contains("--version") || m.hint.contains("-version"));
     assert!(matches!(
-        preflight(&paths, true).unwrap_err(),
+        preflight_r(&paths, true).unwrap_err(),
         Error::MissingTools(_)
     ));
 }
@@ -286,4 +300,54 @@ fn configured_bad_paths_get_specific_hints() {
         missing[1].1,
         format!("configured path {} is not a file", dir.path().display())
     );
+}
+
+#[test]
+fn invalid_utf8_line_does_not_stop_streaming() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = script(
+        dir.path(),
+        "latin1",
+        r"printf 'bad \377\376 bytes\r\n'; echo after1; echo after2 >&2; echo after3",
+    )
+    .into_os_string();
+    let mut lines = Vec::new();
+    let out = run_r(&[bin], &RunOpts::default(), &mut |l| {
+        lines.push(l.to_string())
+    })
+    .unwrap();
+    assert!(out.status.success());
+    assert_eq!(lines[0], "bad \u{fffd}\u{fffd} bytes");
+    lines.sort();
+    assert!(lines.contains(&"after1".to_string()));
+    assert!(lines.contains(&"after2".to_string()));
+    assert!(lines.contains(&"after3".to_string()));
+}
+
+#[test]
+fn spawn_failure_names_the_program() {
+    let dir = tempfile::tempdir().unwrap();
+    let err = run(
+        &[dir.path().as_os_str().to_owned()],
+        RunOpts::default(),
+        &mut |_| {},
+    )
+    .unwrap_err();
+    assert!(matches!(err, Error::Io(_)), "got {err:?}");
+    assert!(
+        err.to_string().contains(&dir.path().display().to_string()),
+        "message was {err}"
+    );
+}
+
+#[test]
+fn configured_path_beats_path_lookup() {
+    let on_path = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let mut paths = fake_toolchain(on_path.path());
+    let configured = script(other.path(), "my-ffmpeg", "echo 'ffmpeg version custom'");
+    paths.ffmpeg = Some(configured.clone());
+    let tc = preflight_r(&paths, true).unwrap();
+    assert_eq!(tc.ffmpeg.path, configured);
+    assert_eq!(tc.ffmpeg.version, "ffmpeg version custom");
 }

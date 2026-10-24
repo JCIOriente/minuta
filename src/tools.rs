@@ -33,14 +33,32 @@ pub struct Output {
     pub status: ExitStatus,
 }
 
+type Line = (bool, std::io::Result<String>);
+
+/// Forward lines until EOF. Bytes are decoded lossily so non-UTF-8 output never stops the
+/// reader; a real I/O error is forwarded to the caller and ends it.
 fn pump<R: Read + Send + 'static>(
     stream: R,
     is_stderr: bool,
-    tx: mpsc::Sender<(bool, String)>,
+    tx: mpsc::Sender<Line>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        for line in BufReader::new(stream).lines().map_while(|l| l.ok()) {
-            if tx.send((is_stderr, line)).is_err() {
+        let mut reader = BufReader::new(stream);
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            let item = match reader.read_until(b'\n', &mut buf) {
+                Ok(0) => break,
+                Ok(_) => {
+                    while matches!(buf.last(), Some(b'\n' | b'\r')) {
+                        buf.pop();
+                    }
+                    Ok(String::from_utf8_lossy(&buf).into_owned())
+                }
+                Err(e) => Err(e),
+            };
+            let failed = item.is_err();
+            if tx.send((is_stderr, item)).is_err() || failed {
                 break;
             }
         }
@@ -67,7 +85,12 @@ pub fn run(argv: &[OsString], opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> R
     if let Some(cwd) = &opts.cwd {
         cmd.current_dir(cwd);
     }
-    let mut child = cmd.spawn()?;
+    let mut child = cmd.spawn().map_err(|e| {
+        Error::Io(std::io::Error::new(
+            e.kind(),
+            format!("cannot run {}: {e}", Path::new(program).display()),
+        ))
+    })?;
     let (tx, rx) = mpsc::channel();
     let readers = [
         pump(
@@ -96,7 +119,11 @@ pub fn run(argv: &[OsString], opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> R
             return Err(Error::Interrupted);
         }
         match rx.recv_timeout(POLL_INTERVAL) {
-            Ok((is_stderr, line)) => {
+            Ok((_, Err(e))) => {
+                kill_and_reap(&mut child);
+                return Err(Error::Io(e));
+            }
+            Ok((is_stderr, Ok(line))) => {
                 on_line(&line);
                 if is_stderr {
                     if tail.len() == STDERR_TAIL_LINES {
