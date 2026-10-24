@@ -43,7 +43,8 @@ fn done_job() -> (TempDir, Job) {
     (root, job)
 }
 
-fn later_than(step: StepName, reason: Reason) -> Vec<(StepName, Reason)> {
+/// `step` stale for `reason`, and every later step stale because of it.
+fn stale_from(step: StepName, reason: Reason) -> Vec<(StepName, Reason)> {
     StepName::ALL
         .into_iter()
         .filter(|&s| s >= step)
@@ -244,7 +245,7 @@ fn changed_fingerprint_marks_stale() {
     let plan = plan_stale(&job, &fps, None);
     assert_eq!(
         plan,
-        later_than(StepName::Audio, Reason::FingerprintChanged)
+        stale_from(StepName::Audio, Reason::FingerprintChanged)
     );
 
     job.mark_stale(&plan).unwrap();
@@ -267,14 +268,14 @@ fn stale_propagates_to_later_steps() {
     let plan = plan_stale(&job, &fps, None);
     assert_eq!(
         plan,
-        later_than(StepName::Probe, Reason::FingerprintChanged)
+        stale_from(StepName::Probe, Reason::FingerprintChanged)
     );
 }
 
 #[test]
 fn interrupted_step_stays_stale() {
     let (_root, mut job) = done_job();
-    job.mark_stale(&later_than(StepName::Transcribe, Reason::Forced))
+    job.mark_stale(&stale_from(StepName::Transcribe, Reason::Forced))
         .unwrap();
     let artifact = job.dir.join("transcribe.out");
     job.mark_done(StepName::Transcribe, "fp-transcribe", 0.1, &[artifact])
@@ -291,7 +292,7 @@ fn missing_artifact_marks_stale() {
     let plan = plan_stale(&job, &current(), None);
     assert_eq!(
         plan,
-        later_than(StepName::Join, Reason::MissingArtifact("join.out".into()))
+        stale_from(StepName::Join, Reason::MissingArtifact("join.out".into()))
     );
 }
 
