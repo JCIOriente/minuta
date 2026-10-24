@@ -69,10 +69,7 @@ fn bad_checksum_rejected_and_cleaned() {
         size: BODY.len() as u64,
     };
     let err = models::pull(&spec, dir.path(), &base).unwrap_err();
-    assert_eq!(
-        err.to_string().split(": ").last(),
-        Some("checksum mismatch for tiny")
-    );
+    assert_eq!(err.to_string(), "job error: checksum mismatch for tiny");
     assert!(
         files_in(dir.path()).is_empty(),
         "left {:?}",
@@ -178,4 +175,23 @@ fn list_shows_installed_and_available_with_sizes() {
     let tiny = rows.iter().find(|r| r.name == "tiny").unwrap();
     assert!(!tiny.installed);
     assert_eq!(tiny.size, 77_691_713);
+}
+
+#[test]
+fn corrupt_present_file_removed_when_download_also_bad() {
+    let (base, _) = serve(BODY);
+    let dir = tempfile::tempdir().unwrap();
+    let wrong = sha(b"something else");
+    let spec = ModelSpec {
+        name: "tiny",
+        sha256: &wrong,
+        size: BODY.len() as u64,
+    };
+    std::fs::write(dir.path().join("ggml-tiny.bin"), b"corrupt").unwrap();
+    models::pull(&spec, dir.path(), &base).unwrap_err();
+    assert!(
+        files_in(dir.path()).is_empty(),
+        "left {:?}",
+        files_in(dir.path())
+    );
 }

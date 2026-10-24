@@ -154,8 +154,11 @@ fn download(url: &str, part: &Path) -> Result<String> {
 /// The bytes go to a temp file that is renamed into place only after the checksum matches.
 pub fn pull(spec: &ModelSpec, dir: &Path, base_url: &str) -> Result<Pulled> {
     let target = dir.join(file_name(spec.name));
-    if target.is_file() && file_sha256(&target)? == spec.sha256 {
-        return Ok(Pulled::AlreadyPresent);
+    if target.is_file() {
+        if file_sha256(&target)? == spec.sha256 {
+            return Ok(Pulled::AlreadyPresent);
+        }
+        fs::remove_file(&target)?;
     }
     fs::create_dir_all(dir)?;
     let part = dir.join(format!(".{}.part", file_name(spec.name)));
