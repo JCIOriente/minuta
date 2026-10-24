@@ -1,0 +1,20 @@
+#!/bin/sh
+# Fake whisper-cli for the integration tests. It honours -of (writes "<prefix>.json" from the
+# fixture) and -l (recorded in the log).
+#   FAKE_WHISPER_LOG      file that gets one line per invocation (optional)
+#   FAKE_WHISPER_HANG     file; when set, write the pid there, then hang until killed
+#   FAKE_WHISPER_FIXTURE  JSON to emit (default: ../whisper/sample.json next to this script)
+if [ "$1" = "--version" ]; then echo "whisper-cli 1.7.2-fake"; exit 0; fi
+here=$(cd "$(dirname "$0")" && pwd)
+[ -n "$FAKE_WHISPER_LOG" ] && echo "whisper-cli $*" >> "$FAKE_WHISPER_LOG"
+prefix=
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-of" ]; then prefix=$2; fi
+  shift
+done
+if [ -n "$FAKE_WHISPER_HANG" ]; then
+  echo $$ > "$FAKE_WHISPER_HANG.part"
+  /bin/mv "$FAKE_WHISPER_HANG.part" "$FAKE_WHISPER_HANG"
+  exec /bin/sleep 30
+fi
+/bin/cp "${FAKE_WHISPER_FIXTURE:-$here/../whisper/sample.json}" "$prefix.json"
