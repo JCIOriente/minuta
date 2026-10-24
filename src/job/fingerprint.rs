@@ -50,23 +50,25 @@ pub(super) fn source_digest(sources: &[Source]) -> String {
 }
 
 /// Stats the source file at `path`. Its content is hashed only when the size or mtime differ
-/// from `previous`, the record of the same path from the last run.
+/// from `previous`, the record of the same path from the last run. `mtime` is recorded as 0
+/// when it is before the Unix epoch.
 pub fn source_record(path: &Path, previous: Option<&Source>) -> Result<Source> {
     let meta = fs::metadata(path)?;
     let size = meta.len();
+    // An mtime before the epoch cannot be recorded, so it never matches and the file is hashed.
     let mtime = meta
         .modified()?
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
+        .ok()
+        .map(|d| d.as_nanos() as u64);
     let hash = match previous {
-        Some(p) if p.path == path && p.size == size && p.mtime == mtime => p.hash.clone(),
+        Some(p) if p.path == path && p.size == size && Some(p.mtime) == mtime => p.hash.clone(),
         _ => hash_file(path)?,
     };
     Ok(Source {
         path: path.to_path_buf(),
         size,
-        mtime,
+        mtime: mtime.unwrap_or(0),
         hash,
     })
 }

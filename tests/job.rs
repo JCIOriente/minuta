@@ -63,24 +63,55 @@ fn stale_from(step: StepName, reason: Reason) -> Vec<(StepName, Reason)> {
 
 #[test]
 fn derive_name_strips_extension() {
-    assert_eq!(derive_name(Path::new("clase-4.mp4")), "clase-4");
-    assert_eq!(derive_name(Path::new("/videos/clase-4.mp4")), "clase-4");
-    assert_eq!(derive_name(Path::new("clase-4")), "clase-4");
-    assert_eq!(derive_name(Path::new("a.b.mkv")), "a.b");
-    assert_eq!(derive_name(Path::new("x.mp4.wav")), "x");
+    assert_eq!(derive_name(Path::new("clase-4.mp4")).unwrap(), "clase-4");
+    assert_eq!(
+        derive_name(Path::new("/videos/clase-4.mp4")).unwrap(),
+        "clase-4"
+    );
+    assert_eq!(derive_name(Path::new("clase-4")).unwrap(), "clase-4");
+    assert_eq!(derive_name(Path::new("a.b.mkv")).unwrap(), "a.b");
+    assert_eq!(derive_name(Path::new("x.mp4.wav")).unwrap(), "x");
     for ext in [
         "mp4", "mkv", "mov", "m4v", "webm", "mp3", "wav", "m4a", "flac",
     ] {
-        assert_eq!(derive_name(Path::new(&format!("talk.{ext}"))), "talk");
+        assert_eq!(
+            derive_name(Path::new(&format!("talk.{ext}"))).unwrap(),
+            "talk"
+        );
     }
-    assert_eq!(derive_name(Path::new("notes.txt")), "notes.txt");
+    assert_eq!(derive_name(Path::new("notes.txt")).unwrap(), "notes.txt");
 }
 
 #[test]
 fn derive_name_case_insensitive() {
-    assert_eq!(derive_name(Path::new("CLASE-4.MP4")), "CLASE-4");
-    assert_eq!(derive_name(Path::new("talk.Mov")), "talk");
-    assert_eq!(derive_name(Path::new("talk.FlAc")), "talk");
+    assert_eq!(derive_name(Path::new("CLASE-4.MP4")).unwrap(), "CLASE-4");
+    assert_eq!(derive_name(Path::new("talk.Mov")).unwrap(), "talk");
+    assert_eq!(derive_name(Path::new("talk.FlAc")).unwrap(), "talk");
+}
+
+#[test]
+fn derive_name_without_file_name_is_usage_error() {
+    for path in ["", "..", "/", "videos/.."] {
+        assert!(
+            matches!(derive_name(Path::new(path)), Err(Error::Usage(_))),
+            "{path:?}"
+        );
+    }
+}
+
+#[test]
+fn invalid_job_names_rejected() {
+    let (_root, out, source) = setup();
+    for name in ["", ".", "..", "a/b"] {
+        assert!(
+            matches!(
+                Job::open(&out, name, &[source.clone()], false),
+                Err(Error::Usage(_))
+            ),
+            "{name:?}"
+        );
+    }
+    assert!(!out.exists(), "a rejected name must not create anything");
 }
 
 #[test]
@@ -146,7 +177,7 @@ fn step_names_parse_in_pipeline_order() {
 fn job_json_has_version_1() {
     let (_root, out, source) = setup();
     let job = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
-    assert_eq!(job.dir, out.join("clase-4"));
+    assert_eq!(job.dir, fs::canonicalize(out.join("clase-4")).unwrap());
     let json = read_json(&job.dir.join("job.json"));
     assert_eq!(json["version"], 1);
     assert_eq!(json["name"], "clase-4");
@@ -196,6 +227,94 @@ fn tmp_cleaned_on_open() {
 }
 
 #[test]
+fn tmp_cleanup_spares_other_names() {
+    let (_root, out, source) = setup();
+    let job = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
+    fs::create_dir(job.dir.join("cache.tmp")).unwrap();
+    fs::write(job.dir.join("notes.tmpl"), b"keep").unwrap();
+
+    let job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    assert!(job.dir.join("cache.tmp").is_dir());
+    assert!(job.dir.join("notes.tmpl").exists());
+}
+
+#[test]
+fn missing_version_rejected() {
+    let (_root, out, source) = setup();
+    let job = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
+    let file = job.dir.join("job.json");
+    let mut json = read_json(&file);
+    json.as_object_mut().unwrap().remove("version");
+    let written = serde_json::to_vec(&json).unwrap();
+    fs::write(&file, &written).unwrap();
+
+    assert!(matches!(
+        Job::open(&out, "clase-4", &[source], false),
+        Err(Error::Job(_))
+    ));
+    assert_eq!(fs::read(&file).unwrap(), written);
+}
+
+#[test]
+fn invalid_job_json_rejected() {
+    let (_root, out, source) = setup();
+    let job = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
+    let file = job.dir.join("job.json");
+    fs::write(&file, b"{ not json").unwrap();
+
+    match Job::open(&out, "clase-4", &[source], false) {
+        Err(Error::Job(msg)) => assert!(msg.contains("job.json"), "{msg}"),
+        other => panic!("expected Error::Job, got {other:?}"),
+    }
+    assert_eq!(fs::read(&file).unwrap(), b"{ not json");
+}
+
+#[test]
+fn failed_open_touches_nothing() {
+    let (root, out, source) = setup();
+    let other = root.path().join("other.mp4");
+    fs::write(&other, b"other bytes").unwrap();
+    let job = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
+    let leftover = job.dir.join("audio.wav.tmp");
+    fs::write(&leftover, b"another run").unwrap();
+    let before = fs::read(job.dir.join("job.json")).unwrap();
+
+    assert!(Job::open(&out, "clase-4", &[other], false).is_err());
+    assert!(leftover.exists(), "a refused open must not clean tmp files");
+    assert_eq!(fs::read(job.dir.join("job.json")).unwrap(), before);
+
+    let missing = root.path().join("missing.mp4");
+    assert!(Job::open(&out, "missing", &[missing], false).is_err());
+    assert!(!out.join("missing").exists());
+    assert!(leftover.exists());
+}
+
+#[test]
+fn relative_out_dir_records_artifacts() {
+    let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let cwd = std::env::current_dir().unwrap();
+    let out = tmp.path().strip_prefix(&cwd).unwrap().join("minuta-out");
+    assert!(out.is_relative());
+    let source = tmp.path().join("clase-4.mp4");
+    fs::write(&source, b"source bytes").unwrap();
+
+    let mut job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    assert!(job.dir.is_absolute());
+    let ctx = job.ctx();
+    let artifact = ctx.dir.join("audio.wav");
+    fs::write(&artifact, b"wav").unwrap();
+    job.mark_done(StepName::Audio, "fp", 0.1, &[artifact])
+        .unwrap();
+
+    assert_eq!(
+        job.state.steps[&StepName::Audio].artifacts,
+        vec![PathBuf::from("audio.wav")]
+    );
+    let current = vec![(StepName::Audio, "fp".to_string())];
+    assert_eq!(plan_stale(&job, &current, None), vec![]);
+}
+
+#[test]
 fn name_conflict_different_sources() {
     let (root, out, source) = setup();
     let other = root.path().join("sub").join("clase-4.mp4");
@@ -212,6 +331,16 @@ fn name_conflict_different_sources() {
     match Job::open(&out, "clase-4", &[source.clone(), other.clone()], false) {
         Err(Error::Job(_)) => {}
         other => panic!("expected Error::Job, got {other:?}"),
+    }
+    match Job::open(&out, "clase-4", &[other.clone(), source.clone()], false) {
+        Err(Error::Job(_)) => {}
+        other => panic!("expected Error::Job, got {other:?}"),
+    }
+    let mut both = Job::open(&out, "both", &[source.clone(), other.clone()], false).unwrap();
+    both.mark_done(StepName::Probe, "fp", 0.1, &[]).unwrap();
+    match Job::open(&out, "both", &[other.clone(), source.clone()], false) {
+        Err(Error::Job(msg)) => assert!(msg.contains("different sources"), "{msg}"),
+        other => panic!("source order must count, got {other:?}"),
     }
     let same = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
     assert_eq!(same.state.steps.len(), 1, "same sources keep the job");
@@ -484,4 +613,22 @@ fn changed_source_content_marks_stale() {
         .map(|&s| (s, Reason::FingerprintChanged))
         .collect();
     assert_eq!(plan, expected);
+}
+
+#[test]
+fn mtime_before_epoch_always_rehashes() {
+    let (_root, _out, source) = setup();
+    let file = fs::File::options().write(true).open(&source).unwrap();
+    file.set_modified(SystemTime::UNIX_EPOCH - Duration::from_secs(10))
+        .unwrap();
+    let real = source_record(&source, None).unwrap();
+    let previous = Source {
+        hash: "recorded".into(),
+        ..real.clone()
+    };
+    let again = source_record(&source, Some(&previous)).unwrap();
+    assert_eq!(
+        again.hash, real.hash,
+        "an unknown mtime must not trust the cache"
+    );
 }

@@ -5,8 +5,8 @@ pub mod stale;
 pub mod state;
 
 use std::ffi::OsString;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::fs::{self, File};
+use std::path::{Path, PathBuf, MAIN_SEPARATOR};
 
 use crate::error::{Error, Result};
 
@@ -50,18 +50,21 @@ pub struct Job {
 
 impl Job {
     /// Opens or creates the job `<out>/<name>` for `sources` (in join order), removing leftover
-    /// `*.tmp` files, and records the sources in `job.json`.
+    /// `*.tmp` files, and records the sources in `job.json`. `Job::dir` is absolute.
     ///
     /// If the folder already holds a job made from a different list of source paths, this is
-    /// an `Error::Job` unless `allow_replace` is set, in which case the job starts over.
+    /// an `Error::Job` unless `allow_replace` is set, in which case the job starts over. A name
+    /// that is empty, `.`, `..` or contains a path separator is an `Error::Usage`. Names,
+    /// sources, `job.json` and conflicts are all checked before anything is created or changed.
     pub fn open(out: &Path, name: &str, sources: &[PathBuf], allow_replace: bool) -> Result<Job> {
-        let dir = out.join(name);
-        fs::create_dir_all(&dir)?;
-        remove_tmp_files(&dir)?;
+        if name.is_empty() || name == "." || name == ".." || name.contains(['/', MAIN_SEPARATOR]) {
+            return Err(Error::Usage(format!("invalid job name `{name}`")));
+        }
         let paths = sources
             .iter()
             .map(fs::canonicalize)
             .collect::<std::io::Result<Vec<_>>>()?;
+        let dir = out.join(name);
         let file = dir.join(JOB_FILE);
         let mut state = if file.exists() {
             JobState::load(&file)?
@@ -83,7 +86,12 @@ impl Job {
             .enumerate()
             .map(|(i, p)| source_record(p, state.sources.get(i)))
             .collect::<Result<_>>()?;
-        let job = Job { dir, state };
+        fs::create_dir_all(&dir)?;
+        let job = Job {
+            dir: fs::canonicalize(&dir)?,
+            state,
+        };
+        job.clean_tmp()?;
         job.save()?;
         Ok(job)
     }
@@ -172,11 +180,18 @@ const MEDIA_EXTENSIONS: [&str; 9] = [
 
 /// Derives a job name from a path (the first source, or the value of `--name`):
 /// its file name with trailing media extensions removed, so the name never ends in one.
-pub fn derive_name(first: &Path) -> String {
+/// A path without a file name is an `Error::Usage`.
+pub fn derive_name(first: &Path) -> Result<String> {
     let mut name = first
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
+    if name.is_empty() {
+        return Err(Error::Usage(format!(
+            "cannot derive a job name from `{}`",
+            first.display()
+        )));
+    }
     while let Some((stem, ext)) = name.rsplit_once('.') {
         let is_media = MEDIA_EXTENSIONS.iter().any(|m| ext.eq_ignore_ascii_case(m));
         if stem.is_empty() || !is_media {
@@ -184,19 +199,28 @@ pub fn derive_name(first: &Path) -> String {
         }
         name.truncate(stem.len());
     }
-    name
+    Ok(name)
 }
 
-/// Writes an artifact atomically: `f` writes to `<path>.tmp`, which is renamed to `path` only
-/// if `f` succeeds. On failure the temp file is removed and `path` is left untouched.
+/// Writes an artifact atomically: `f` writes to `<path>.tmp`, which is synced to disk and
+/// renamed to `path` only if `f` succeeds. On failure the temp file is removed and `path` is
+/// left untouched.
 pub fn write_atomic(path: &Path, f: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
     let tmp = tmp_path(path);
-    let result = f(&tmp).and_then(|()| Ok(fs::rename(&tmp, path)?));
+    let result = f(&tmp).and_then(|()| {
+        File::open(&tmp)?.sync_all()?;
+        fs::rename(&tmp, path)?;
+        Ok(())
+    });
     if result.is_err() {
         // Best effort: a temp file that survives is removed the next time the job is opened.
         let _ = fs::remove_file(&tmp);
+        return result;
     }
-    result
+    // Best effort: persist the rename. Some platforms cannot sync a directory.
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
+    let _ = File::open(parent.unwrap_or(Path::new("."))).and_then(|d| d.sync_all());
+    Ok(())
 }
 
 fn tmp_path(path: &Path) -> PathBuf {
