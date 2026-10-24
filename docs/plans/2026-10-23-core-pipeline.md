@@ -18,10 +18,22 @@ the public shape does not change without updating this plan.
 pub enum Error { Usage(String), MissingTools(Vec<Missing>), Io(..), Tool{tool,code,stderr}, Parse(..), Config(..), Job(..), Interrupted }
 pub type Result<T> = std::result::Result<T, Error>;
 
+// config.rs (T2, merged)
+pub struct Config { path: Option<PathBuf>, out_dir: Setting, whisper_bin: Setting, whisper_model: Option<Setting>, whisper_lang: Setting, ffmpeg_bin: Setting, ffprobe_bin: Setting }
+impl Config { pub fn load(Overrides) -> Result<Config>; pub fn resolve(Overrides, env: &dyn Fn(&str)->Option<String>, file: Option<&Path>) -> Result<Config>; pub fn entries(&self) -> Vec<(&'static str, Option<&Setting>)>; }
+pub struct Setting { value: String, source: Source }   // Source: Flag | Env | File | Default
+pub fn resolve_path(env, file) -> Option<PathBuf>;
+
 // tools.rs (T5)
-pub fn run(argv: &[OsString], opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<Output>; // no shell
-pub struct Toolchain { ffmpeg, ffprobe, whisper }          // resolved paths + version strings
-pub fn preflight(cfg: &Config, need_model: bool) -> Result<Toolchain>; // lists ALL missing at once
+pub fn run(argv: &[OsString], opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<Output>; // no shell; RunOpts { cwd, interrupt: Option<Arc<AtomicBool>> }; Output { status }
+pub struct ToolPaths { ffmpeg, ffprobe, whisper, model: Option<PathBuf>, path: Option<OsString> }  // T9 maps Config onto it (bin settings -> paths, resolved model -> model, path = None)
+pub struct Toolchain { ffmpeg: ToolInfo, ffprobe: ToolInfo, whisper: ToolInfo, model: Option<PathBuf> }   // ToolInfo { path, version }
+pub fn preflight(paths: &ToolPaths, need_model: bool) -> Result<Toolchain>; // lists ALL missing at once
+pub fn inspect(paths: &ToolPaths, need_model: bool) -> Report;  // data for `doctor`; never fails
+
+// models.rs (T6, merged)
+pub const CATALOG: &[ModelSpec]; pub fn default_dir() -> Result<PathBuf>; pub fn resolve(name_or_path: &str, dir: &Path) -> Result<PathBuf>;
+pub fn list(dir: &Path) -> Vec<ModelInfo>; pub fn pull(spec: &ModelSpec, dir: &Path, base_url: &str) -> Result<Pulled>;  // DEFAULT_BASE_URL; checksum/size mismatch is Error::Job
 
 // transcript.rs (T3)
 pub struct Segment { start: f64, end: f64, text: String }
@@ -101,8 +113,8 @@ For `baton:parallel`; model and effort chosen by how much judgment the task need
 - Acceptance:
   - [ ] keys `out_dir`, `whisper.bin`, `whisper.model`, `whisper.lang`, `ffmpeg.bin`, `ffprobe.bin` load from TOML
   - [ ] precedence is flags > `MINUTA_*` env > config file > defaults, checked per key
-  - [ ] `MINUTA_CONFIG` overrides the file path; a missing file yields defaults; a malformed file is `Error::Config` naming the file and line
-  - [ ] `config path` and `config show` data functions return the resolved path and the merged config with each value's source
+  - [ ] `MINUTA_CONFIG` overrides the file path; a missing default file yields defaults, an explicit `MINUTA_CONFIG` pointing at a missing file is `Error::Config`; unknown keys are rejected; a malformed file is `Error::Config` naming the file and line
+  - [ ] `config path` and `config show` data (`Config.path`, `resolve_path`, `entries()`) return the resolved path and the merged config with each value's source (T9 renders them)
   - [ ] defaults: `out_dir=./minuta-out`, `whisper.lang=auto`
 - Tests first: `flag_beats_env`, `env_beats_file`, `file_beats_default`, `missing_file_uses_defaults`, `malformed_file_names_line`, `minuta_config_env_overrides_path`
 - Notes: expose `Config::resolve(flags: Overrides, env: &dyn Fn(&str)->Option<String>, file: Option<&str>)` so tests need no real environment.
