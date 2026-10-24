@@ -1,6 +1,7 @@
 //! Job folders: naming, `job.json`, fingerprints, staleness and atomic writes.
 
 pub mod fingerprint;
+pub mod stale;
 pub mod state;
 
 use std::ffi::OsString;
@@ -10,6 +11,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{Error, Result};
 
 pub use fingerprint::{fingerprint, source_record};
+pub use stale::{plan_stale, Force, Reason};
 pub use state::{JobState, Source, Status, StepName, StepState};
 
 /// File name of the job state inside the job folder.
@@ -64,6 +66,52 @@ impl Job {
     /// Writes `job.json` atomically.
     pub fn save(&self) -> Result<()> {
         self.state.save(&self.dir.join(JOB_FILE))
+    }
+
+    /// Records `step` as done with `fingerprint`, then saves `job.json`. Fails with
+    /// `Error::Job`, recording nothing, if any of `artifacts` does not exist.
+    pub fn mark_done(
+        &mut self,
+        step: StepName,
+        fingerprint: &str,
+        seconds: f64,
+        artifacts: &[PathBuf],
+    ) -> Result<()> {
+        if let Some(missing) = artifacts.iter().find(|a| !self.dir.join(a).exists()) {
+            return Err(Error::Job(format!(
+                "step {step} finished without writing {}",
+                missing.display()
+            )));
+        }
+        let artifacts = artifacts
+            .iter()
+            .map(|a| a.strip_prefix(&self.dir).unwrap_or(a).to_path_buf())
+            .collect();
+        let done = StepState {
+            status: Status::Done,
+            fingerprint: Some(fingerprint.to_owned()),
+            seconds: Some(seconds),
+            reason: None,
+            artifacts,
+        };
+        self.state.steps.insert(step, done);
+        self.save()
+    }
+
+    /// Marks each planned step stale with its reason, then saves `job.json`.
+    pub fn mark_stale(&mut self, plan: &[(StepName, Reason)]) -> Result<()> {
+        for (step, reason) in plan {
+            let state = self.state.steps.entry(*step).or_insert_with(|| StepState {
+                status: Status::Stale,
+                fingerprint: None,
+                seconds: None,
+                reason: None,
+                artifacts: Vec::new(),
+            });
+            state.status = Status::Stale;
+            state.reason = Some(reason.to_string());
+        }
+        self.save()
     }
 
     /// Removes leftover `*.tmp` files from the job folder (after an interrupt, for example).

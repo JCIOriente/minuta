@@ -2,7 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use minuta::error::Error;
-use minuta::job::{derive_name, fingerprint, write_atomic, Job, StepName};
+use minuta::job::{
+    derive_name, fingerprint, plan_stale, write_atomic, Force, Job, Reason, Status, StepName,
+};
 use tempfile::TempDir;
 
 /// A temp dir holding one source file `clase-4.mp4` and an empty output dir.
@@ -16,6 +18,44 @@ fn setup() -> (TempDir, PathBuf, PathBuf) {
 
 fn read_json(path: &Path) -> serde_json::Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
+}
+
+/// Fingerprints `fp-<step>` for every step, in pipeline order.
+fn current() -> Vec<(StepName, String)> {
+    StepName::ALL
+        .iter()
+        .map(|&step| (step, format!("fp-{step}")))
+        .collect()
+}
+
+/// A job where every step is done with fingerprint `fp-<step>` and artifact `<step>.out`.
+fn done_job() -> (TempDir, Job) {
+    let (root, out, source) = setup();
+    let mut job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    for (step, fp) in current() {
+        let artifact = job.dir.join(format!("{step}.out"));
+        fs::write(&artifact, step.as_str()).unwrap();
+        job.mark_done(step, &fp, 0.1, &[artifact]).unwrap();
+    }
+    assert!(plan_stale(&job, &current(), None).is_empty());
+    (root, job)
+}
+
+fn later_than(step: StepName, reason: Reason) -> Vec<(StepName, Reason)> {
+    StepName::ALL
+        .into_iter()
+        .filter(|&s| s >= step)
+        .map(|s| {
+            (
+                s,
+                if s == step {
+                    reason.clone()
+                } else {
+                    Reason::Upstream(step)
+                },
+            )
+        })
+        .collect()
 }
 
 #[test]
@@ -160,17 +200,7 @@ fn name_conflict_different_sources() {
     fs::write(&other, b"other bytes").unwrap();
 
     let mut job = Job::open(&out, "clase-4", &[source.clone()], false).unwrap();
-    job.state.steps.insert(
-        StepName::Probe,
-        minuta::job::StepState {
-            status: minuta::job::Status::Done,
-            fingerprint: Some("fp".into()),
-            seconds: Some(0.1),
-            reason: None,
-            artifacts: vec![],
-        },
-    );
-    job.save().unwrap();
+    job.mark_done(StepName::Probe, "fp", 0.1, &[]).unwrap();
 
     match Job::open(&out, "clase-4", &[other.clone()], false) {
         Err(Error::Job(msg)) => assert!(msg.contains("different sources"), "{msg}"),
@@ -193,4 +223,120 @@ fn name_conflict_different_sources() {
         replaced.state.steps.is_empty(),
         "replacing starts the job over"
     );
+}
+
+#[test]
+fn fresh_job_steps_not_run() {
+    let (_root, out, source) = setup();
+    let job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    let plan = plan_stale(&job, &current(), None);
+    let expected: Vec<_> = StepName::ALL.iter().map(|&s| (s, Reason::NotRun)).collect();
+    assert_eq!(plan, expected);
+}
+
+#[test]
+fn changed_fingerprint_marks_stale() {
+    let (_root, mut job) = done_job();
+    let mut fps = current();
+    fps[2].1 = "fp-audio-new".into();
+    let plan = plan_stale(&job, &fps, None);
+    assert_eq!(
+        plan,
+        later_than(StepName::Audio, Reason::FingerprintChanged)
+    );
+
+    job.mark_stale(&plan).unwrap();
+    let json = read_json(&job.dir.join("job.json"));
+    assert_eq!(json["steps"]["audio"]["status"], "stale");
+    assert_eq!(json["steps"]["audio"]["reason"], "fingerprint changed");
+    assert_eq!(
+        json["steps"]["outputs"]["reason"],
+        "earlier step audio is stale"
+    );
+    assert_eq!(json["steps"]["join"]["status"], "done");
+    assert_eq!(json["steps"]["join"]["reason"], serde_json::Value::Null);
+}
+
+#[test]
+fn stale_propagates_to_later_steps() {
+    let (_root, job) = done_job();
+    let mut fps = current();
+    fps[0].1 = "fp-probe-new".into();
+    let plan = plan_stale(&job, &fps, None);
+    assert_eq!(
+        plan,
+        later_than(StepName::Probe, Reason::FingerprintChanged)
+    );
+}
+
+#[test]
+fn interrupted_step_stays_stale() {
+    let (_root, mut job) = done_job();
+    job.mark_stale(&later_than(StepName::Transcribe, Reason::Forced))
+        .unwrap();
+    let artifact = job.dir.join("transcribe.out");
+    job.mark_done(StepName::Transcribe, "fp-transcribe", 0.1, &[artifact])
+        .unwrap();
+    // Interrupted before `outputs` finished: its fingerprint and artifact still match.
+    let plan = plan_stale(&job, &current(), None);
+    assert_eq!(plan, vec![(StepName::Outputs, Reason::Unfinished)]);
+}
+
+#[test]
+fn missing_artifact_marks_stale() {
+    let (_root, job) = done_job();
+    fs::remove_file(job.dir.join("join.out")).unwrap();
+    let plan = plan_stale(&job, &current(), None);
+    assert_eq!(
+        plan,
+        later_than(StepName::Join, Reason::MissingArtifact("join.out".into()))
+    );
+}
+
+#[test]
+fn force_all() {
+    let (_root, job) = done_job();
+    let plan = plan_stale(&job, &current(), Some(Force::All));
+    let expected: Vec<_> = StepName::ALL.iter().map(|&s| (s, Reason::Forced)).collect();
+    assert_eq!(plan, expected);
+}
+
+#[test]
+fn force_step_and_later() {
+    let (_root, job) = done_job();
+    let plan = plan_stale(&job, &current(), Some(Force::From(StepName::Transcribe)));
+    assert_eq!(
+        plan,
+        vec![
+            (StepName::Transcribe, Reason::Forced),
+            (StepName::Outputs, Reason::Forced),
+        ]
+    );
+}
+
+#[test]
+fn done_requires_all_artifacts() {
+    let (_root, out, source) = setup();
+    let mut job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    let present = job.dir.join("audio.wav");
+    fs::write(&present, b"wav").unwrap();
+    let missing = job.dir.join("audio.json");
+
+    match job.mark_done(StepName::Audio, "fp", 0.1, &[present.clone(), missing]) {
+        Err(Error::Job(msg)) => assert!(msg.contains("audio.json"), "{msg}"),
+        other => panic!("expected Error::Job, got {other:?}"),
+    }
+    assert!(!job.state.steps.contains_key(&StepName::Audio));
+    let json = read_json(&job.dir.join("job.json"));
+    assert_eq!(json["steps"]["audio"], serde_json::Value::Null);
+
+    job.mark_done(StepName::Audio, "fp", 0.1, &[present])
+        .unwrap();
+    let json = read_json(&job.dir.join("job.json"));
+    assert_eq!(json["steps"]["audio"]["status"], "done");
+    assert_eq!(
+        json["steps"]["audio"]["artifacts"],
+        serde_json::json!(["audio.wav"])
+    );
+    assert_eq!(job.state.steps[&StepName::Audio].status, Status::Done);
 }
