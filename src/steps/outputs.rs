@@ -30,11 +30,12 @@ impl Step for Outputs {
         let json = fs::read_to_string(ctx.dir.join(TRANSCRIPT_FILE))?;
         let transcript: Transcript = serde_json::from_str(&json)
             .map_err(|e| Error::Parse(format!("{TRANSCRIPT_FILE}: {e}")))?;
-        let render: [(&str, fn(&Transcript) -> String); 2] =
-            [(TXT_FILE, to_txt), (SRT_FILE, to_srt)];
-        for (name, f) in render {
+        for (name, text) in [
+            (TXT_FILE, to_txt(&transcript)),
+            (SRT_FILE, to_srt(&transcript)),
+        ] {
             write_atomic(&ctx.dir.join(name), |tmp| {
-                fs::write(tmp, f(&transcript))?;
+                fs::write(tmp, &text)?;
                 Ok(())
             })?;
         }
