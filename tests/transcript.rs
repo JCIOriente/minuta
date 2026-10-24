@@ -58,6 +58,24 @@ fn overlap_is_clamped() {
 }
 
 #[test]
+fn contained_segment_clamped_not_inverted() {
+    let t = from_whisper_json(&whisper(&[
+        (0, 4000, "a"),
+        (1000, 3000, "b"),
+        (5000, 6000, "c"),
+    ]))
+    .unwrap();
+    let mut prev_end = 0.0;
+    for s in &t.segments {
+        assert!(s.end >= s.start, "inverted: {s:?}");
+        assert!(s.start >= prev_end, "overlap: {s:?}");
+        prev_end = s.end;
+    }
+    let c = t.segments.last().unwrap();
+    assert_eq!((c.start, c.end), (5.0, 6.0));
+}
+
+#[test]
 fn inverted_segment_dropped() {
     let t = from_whisper_json(&whisper(&[
         (0, 1000, "a"),
@@ -67,6 +85,8 @@ fn inverted_segment_dropped() {
     .unwrap();
     let texts: Vec<&str> = t.segments.iter().map(|s| s.text.as_str()).collect();
     assert_eq!(texts, ["a", "c"]);
+    assert_eq!(t.segments[1].start, 3.0);
+    assert_eq!(t.segments[1].end, 4.0);
 }
 
 #[test]
