@@ -8,11 +8,13 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::error::{Error, Missing, Result};
 
 const STDERR_TAIL_LINES: usize = 20;
+/// How long a `--version` probe may take before the tool counts as broken.
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 /// Options for [`run`].
@@ -185,23 +187,51 @@ fn is_executable(path: &Path) -> bool {
 }
 
 fn find_in(name: &str, search: &OsStr) -> Option<PathBuf> {
+    // Empty and relative entries mean "the current directory"; never run tools from there.
     std::env::split_paths(search)
+        .filter(|dir| dir.is_absolute())
         .map(|dir| dir.join(name))
         .find(|p| is_executable(p))
 }
 
-fn first_line_version(path: &Path, flag: &str) -> String {
+/// Run `<path> <flag>` and return the first non-empty output line, or why that failed.
+fn probe_version(
+    path: &Path,
+    flag: &str,
+    timeout: Duration,
+) -> std::result::Result<String, String> {
+    let done = Arc::new(AtomicBool::new(false));
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let timer = {
+        let (done, timed_out) = (Arc::clone(&done), Arc::clone(&timed_out));
+        std::thread::spawn(move || {
+            let deadline = Instant::now() + timeout;
+            while !done.load(Ordering::SeqCst) {
+                if Instant::now() >= deadline {
+                    timed_out.store(true, Ordering::SeqCst);
+                    return;
+                }
+                std::thread::sleep(POLL_INTERVAL);
+            }
+        })
+    };
     let mut first = None;
     let argv = [path.as_os_str().to_owned(), OsString::from(flag)];
-    let ok = run(&argv, RunOpts::default(), &mut |l| {
+    let opts = RunOpts {
+        interrupt: Some(Arc::clone(&timed_out)),
+        ..RunOpts::default()
+    };
+    let res = run(&argv, opts, &mut |l| {
         if first.is_none() && !l.trim().is_empty() {
             first = Some(l.trim().to_string());
         }
-    })
-    .is_ok();
-    match first {
-        Some(v) if ok => v,
-        _ => "unknown".to_string(),
+    });
+    done.store(true, Ordering::SeqCst);
+    let _ = timer.join();
+    match res {
+        Ok(_) => first.ok_or_else(|| "it printed nothing".to_string()),
+        Err(Error::Interrupted) => Err(format!("it timed out after {}s", timeout.as_secs_f32())),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -214,22 +244,40 @@ fn locate(
     missing: &mut Vec<Missing>,
 ) -> Option<ToolInfo> {
     let found = match configured {
-        Some(p) => is_executable(p).then(|| p.clone()),
-        None => find_in(name, search),
-    };
-    match found {
-        Some(path) => {
-            let version = first_line_version(&path, version_flag);
-            Some(ToolInfo { path, version })
-        }
-        None => {
+        Some(p) if is_executable(p) => Some(p.clone()),
+        Some(p) => {
             missing.push(Missing {
                 name: name.to_string(),
-                hint: hint.to_string(),
+                hint: format!(
+                    "configured path {} does not exist or is not executable",
+                    p.display()
+                ),
             });
-            None
+            return None;
         }
-    }
+        None => find_in(name, search),
+    };
+    let Some(path) = found else {
+        missing.push(Missing {
+            name: name.to_string(),
+            hint: hint.to_string(),
+        });
+        return None;
+    };
+    let version = match probe_version(&path, version_flag, VERSION_PROBE_TIMEOUT) {
+        Ok(v) => v,
+        Err(why) => {
+            missing.push(Missing {
+                name: name.to_string(),
+                hint: format!(
+                    "found at {} but `{version_flag}` failed: {why}",
+                    path.display()
+                ),
+            });
+            "unknown".to_string()
+        }
+    };
+    Some(ToolInfo { path, version })
 }
 
 /// Look at every tool and report what was found and what is missing; never fails.
@@ -261,14 +309,15 @@ pub fn inspect(paths: &ToolPaths, need_model: bool) -> Report {
         "brew install whisper-cpp",
         &mut missing,
     );
-    let model = match &paths.model {
-        Some(p) if p.is_file() => Some(p.clone()),
-        _ => None,
-    };
+    let model = paths.model.clone().filter(|p| p.is_file());
     if need_model && model.is_none() {
+        let hint = match &paths.model {
+            Some(p) => format!("configured path {} is not a file", p.display()),
+            None => "run `minuta models pull base` or set whisper.model".to_string(),
+        };
         missing.push(Missing {
             name: "model".to_string(),
-            hint: "run `minuta models pull base` or set whisper.model".to_string(),
+            hint,
         });
     }
     Report {
@@ -293,5 +342,23 @@ pub fn preflight(paths: &ToolPaths, need_model: bool) -> Result<Toolchain> {
             })
         }
         _ => Err(Error::MissingTools(report.missing)),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn hanging_version_probe_times_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hang");
+        std::fs::write(&path, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let start = Instant::now();
+        let err = probe_version(&path, "--version", Duration::from_millis(200)).unwrap_err();
+        assert!(err.contains("timed out"), "err was {err:?}");
+        assert!(start.elapsed() < Duration::from_secs(2));
     }
 }

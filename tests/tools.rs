@@ -8,8 +8,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use minuta::error::Error;
-use minuta::tools::{preflight, run, RunOpts, ToolPaths};
+use minuta::error::{Error, Result};
+use minuta::tools::{inspect, preflight, run, Output, RunOpts, ToolPaths, Toolchain};
+
+const ETXTBSY: i32 = 26;
 
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
@@ -18,8 +20,52 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     path
 }
 
-fn argv(parts: &[&OsString]) -> Vec<OsString> {
-    parts.iter().map(|p| (*p).clone()).collect()
+/// Retry while a freshly written script is still held open by a concurrent fork in
+/// another test thread (ETXTBSY on Linux).
+fn retry<T>(mut f: impl FnMut() -> Result<T>) -> Result<T> {
+    let mut attempts = 0;
+    loop {
+        let res = f();
+        let busy = match &res {
+            Err(Error::Io(e)) => e.raw_os_error() == Some(ETXTBSY),
+            Err(Error::MissingTools(m)) => m.iter().any(|m| m.hint.contains("Text file busy")),
+            _ => false,
+        };
+        attempts += 1;
+        if !busy || attempts >= 20 {
+            return res;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn run_r(argv: &[OsString], opts: &RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<Output> {
+    retry(|| run(argv, opts.clone(), on_line))
+}
+
+fn preflight_r(paths: &ToolPaths, need_model: bool) -> Result<Toolchain> {
+    retry(|| preflight(paths, need_model))
+}
+
+fn missing_of(err: Error) -> Vec<(String, String)> {
+    match err {
+        Error::MissingTools(m) => m.into_iter().map(|m| (m.name, m.hint)).collect(),
+        other => panic!("expected MissingTools, got {other:?}"),
+    }
+}
+
+/// A dir holding working fake ffmpeg, ffprobe and whisper-cli plus a model file.
+fn fake_toolchain(dir: &Path) -> ToolPaths {
+    script(dir, "ffmpeg", "echo 'ffmpeg version 7.1'");
+    script(dir, "ffprobe", "echo 'ffprobe version 7.1'");
+    script(dir, "whisper-cli", "echo 'whisper 1.7.2'");
+    let model = dir.join("ggml-base.bin");
+    fs::write(&model, b"x").unwrap();
+    ToolPaths {
+        path: Some(dir.as_os_str().to_owned()),
+        model: Some(model),
+        ..ToolPaths::default()
+    }
 }
 
 #[test]
@@ -27,13 +73,12 @@ fn argv_with_shell_metacharacters_is_safe() {
     let dir = tempfile::tempdir().unwrap();
     let echo = script(dir.path(), "echo1", r#"printf '%s\n' "$1""#);
     let name = OsString::from(r#"a b"$(touch pwned)'.mp4"#);
-    let bin = echo.into_os_string();
     let opts = RunOpts {
         cwd: Some(dir.path().to_path_buf()),
         ..RunOpts::default()
     };
     let mut lines = Vec::new();
-    run(&argv(&[&bin, &name]), opts, &mut |l| {
+    run_r(&[echo.into_os_string(), name.clone()], &opts, &mut |l| {
         lines.push(l.to_string())
     })
     .unwrap();
@@ -46,7 +91,7 @@ fn streams_lines() {
     let dir = tempfile::tempdir().unwrap();
     let bin = script(dir.path(), "both", "echo out1\necho err1 >&2\necho out2").into_os_string();
     let mut lines = Vec::new();
-    let out = run(&[bin], RunOpts::default(), &mut |l| {
+    let out = run_r(&[bin], &RunOpts::default(), &mut |l| {
         lines.push(l.to_string())
     })
     .unwrap();
@@ -59,7 +104,7 @@ fn streams_lines() {
 fn nonzero_exit_is_tool_error() {
     let dir = tempfile::tempdir().unwrap();
     let bin = script(dir.path(), "bad", "echo boom >&2\nexit 3").into_os_string();
-    let err = run(&[bin], RunOpts::default(), &mut |_| {}).unwrap_err();
+    let err = run_r(&[bin], &RunOpts::default(), &mut |_| {}).unwrap_err();
     match err {
         Error::Tool { code, stderr, .. } => {
             assert_eq!(code, Some(3));
@@ -70,21 +115,56 @@ fn nonzero_exit_is_tool_error() {
 }
 
 #[test]
-fn interrupt_kills_child() {
+fn stderr_keeps_only_last_20_lines() {
     let dir = tempfile::tempdir().unwrap();
-    let bin = script(dir.path(), "slow", "exec sleep 30").into_os_string();
+    let bin = script(
+        dir.path(),
+        "noisy",
+        "i=1\nwhile [ $i -le 25 ]; do echo line$i >&2; i=$((i+1)); done\nexit 1",
+    )
+    .into_os_string();
+    let err = run_r(&[bin], &RunOpts::default(), &mut |_| {}).unwrap_err();
+    match err {
+        Error::Tool { stderr, .. } => {
+            let expected: Vec<String> = (6..=25).map(|i| format!("line{i}")).collect();
+            assert_eq!(stderr, expected.join("\n"));
+        }
+        other => panic!("expected Tool error, got {other:?}"),
+    }
+}
+
+fn interrupt_after(ms: u64) -> RunOpts {
     let flag = Arc::new(AtomicBool::new(false));
     let setter = Arc::clone(&flag);
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(ms));
         setter.store(true, Ordering::SeqCst);
     });
-    let opts = RunOpts {
+    RunOpts {
         interrupt: Some(flag),
         ..RunOpts::default()
-    };
+    }
+}
+
+#[test]
+fn interrupt_kills_child() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = script(dir.path(), "slow", "exec sleep 30").into_os_string();
+    let opts = interrupt_after(100);
     let start = Instant::now();
-    let err = run(&[bin], opts, &mut |_| {}).unwrap_err();
+    let err = run_r(&[bin], &opts, &mut |_| {}).unwrap_err();
+    assert!(matches!(err, Error::Interrupted), "got {err:?}");
+    assert!(start.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn interrupt_kills_child_that_closed_stdio() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = script(dir.path(), "quiet", "exec >/dev/null 2>&1\nexec sleep 30").into_os_string();
+    // Late enough that the pipes are already closed when the flag is set.
+    let opts = interrupt_after(400);
+    let start = Instant::now();
+    let err = run_r(&[bin], &opts, &mut |_| {}).unwrap_err();
     assert!(matches!(err, Error::Interrupted), "got {err:?}");
     assert!(start.elapsed() < Duration::from_secs(1));
 }
@@ -96,65 +176,114 @@ fn preflight_lists_all_missing() {
         path: Some(dir.path().as_os_str().to_owned()),
         ..ToolPaths::default()
     };
-    match preflight(&paths, true).unwrap_err() {
-        Error::MissingTools(missing) => {
-            let names: Vec<_> = missing.iter().map(|m| m.name.as_str()).collect();
-            assert_eq!(names, vec!["ffmpeg", "ffprobe", "whisper-cli", "model"]);
-            assert!(missing.iter().all(|m| !m.hint.is_empty()));
-        }
-        other => panic!("expected MissingTools, got {other:?}"),
-    }
+    let missing = missing_of(preflight(&paths, true).unwrap_err());
+    let names: Vec<_> = missing.iter().map(|m| m.0.as_str()).collect();
+    assert_eq!(names, vec!["ffmpeg", "ffprobe", "whisper-cli", "model"]);
+    assert!(missing.iter().all(|m| !m.1.is_empty()));
     // The model is only required when asked for.
-    match preflight(&paths, false).unwrap_err() {
-        Error::MissingTools(missing) => assert_eq!(missing.len(), 3),
-        other => panic!("expected MissingTools, got {other:?}"),
-    }
+    assert_eq!(missing_of(preflight(&paths, false).unwrap_err()).len(), 3);
 }
 
 #[test]
 fn version_captured() {
     let dir = tempfile::tempdir().unwrap();
+    let paths = fake_toolchain(dir.path());
     script(
         dir.path(),
         "ffmpeg",
         "echo 'ffmpeg version 7.1 extra'\necho second",
     );
-    script(dir.path(), "ffprobe", "echo 'ffprobe version 7.1'");
-    let whisper = script(dir.path(), "whisper-cli", "echo 'whisper 1.7.2'");
-    let model = dir.path().join("ggml-base.bin");
-    fs::write(&model, b"x").unwrap();
-    // ffmpeg and ffprobe come from PATH, whisper and the model from overrides.
-    let paths = ToolPaths {
-        path: Some(dir.path().as_os_str().to_owned()),
-        whisper: Some(whisper),
-        model: Some(model.clone()),
-        ..ToolPaths::default()
-    };
-    let tc = preflight(&paths, true).unwrap();
+    let tc = preflight_r(&paths, true).unwrap();
     assert_eq!(tc.ffmpeg.version, "ffmpeg version 7.1 extra");
     assert_eq!(tc.ffprobe.version, "ffprobe version 7.1");
     assert_eq!(tc.whisper.version, "whisper 1.7.2");
     assert_eq!(tc.ffmpeg.path, dir.path().join("ffmpeg"));
-    assert_eq!(tc.model, Some(model));
+    assert_eq!(tc.model, paths.model);
 }
 
 #[test]
-fn interrupt_kills_child_that_closed_stdio() {
+fn empty_and_relative_path_entries_are_skipped() {
     let dir = tempfile::tempdir().unwrap();
-    let bin = script(dir.path(), "quiet", "exec >/dev/null 2>&1\nexec sleep 30").into_os_string();
-    let flag = Arc::new(AtomicBool::new(false));
-    let setter = Arc::clone(&flag);
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(400));
-        setter.store(true, Ordering::SeqCst);
-    });
-    let opts = RunOpts {
-        interrupt: Some(flag),
-        ..RunOpts::default()
+    let evil = tempfile::tempdir().unwrap();
+    script(evil.path(), "ffmpeg", "echo evil");
+    let cwd_guard = std::env::current_dir().unwrap();
+    // A relative entry that resolves to a real executable from the current directory.
+    let rel = pathdiff(evil.path(), &cwd_guard);
+    let search = std::env::join_paths([PathBuf::new(), rel, dir.path().to_path_buf()]).unwrap();
+    let paths = ToolPaths {
+        path: Some(search),
+        ..ToolPaths::default()
     };
-    let start = Instant::now();
-    let err = run(&[bin], opts, &mut |_| {}).unwrap_err();
-    assert!(matches!(err, Error::Interrupted), "got {err:?}");
-    assert!(start.elapsed() < Duration::from_secs(1));
-    // The pipes closed long before the flag was set, so this proves the wait is interruptible.
+    let report = inspect(&paths, false);
+    assert!(report.ffmpeg.is_none());
+    assert!(report.missing.iter().any(|m| m.name == "ffmpeg"));
+}
+
+/// Relative path from `base` to `target`, both absolute.
+fn pathdiff(target: &Path, base: &Path) -> PathBuf {
+    let (target, base) = (target.canonicalize().unwrap(), base.canonicalize().unwrap());
+    let t: Vec<_> = target.components().collect();
+    let b: Vec<_> = base.components().collect();
+    let common = t.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let mut out = PathBuf::new();
+    for _ in common..b.len() {
+        out.push("..");
+    }
+    for c in &t[common..] {
+        out.push(c);
+    }
+    out
+}
+
+#[test]
+fn failing_version_probe_is_reported_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = fake_toolchain(dir.path());
+    script(dir.path(), "ffprobe", "echo 'some text'\nexit 1");
+    let report = retry(|| Ok(inspect(&paths, true))).unwrap();
+    // Doctor data still shows where the tool was found.
+    assert_eq!(report.ffprobe.unwrap().path, dir.path().join("ffprobe"));
+    assert_eq!(report.missing.len(), 1);
+    let m = &report.missing[0];
+    assert_eq!(m.name, "ffprobe");
+    assert!(m.hint.contains("found at"), "hint was {:?}", m.hint);
+    assert!(m.hint.contains("--version") || m.hint.contains("-version"));
+    assert!(matches!(
+        preflight(&paths, true).unwrap_err(),
+        Error::MissingTools(_)
+    ));
+}
+
+#[test]
+fn silent_version_probe_is_reported_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = fake_toolchain(dir.path());
+    script(dir.path(), "whisper-cli", "exit 0");
+    let missing = missing_of(preflight_r(&paths, true).unwrap_err());
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0].0, "whisper-cli");
+    assert!(missing[0].1.contains("found at"));
+}
+
+#[test]
+fn configured_bad_paths_get_specific_hints() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut paths = fake_toolchain(dir.path());
+    let bad = dir.path().join("nope");
+    paths.ffmpeg = Some(bad.clone());
+    paths.model = Some(dir.path().to_path_buf());
+    let missing = missing_of(preflight_r(&paths, true).unwrap_err());
+    let names: Vec<_> = missing.iter().map(|m| m.0.as_str()).collect();
+    assert_eq!(names, vec!["ffmpeg", "model"]);
+    assert_eq!(
+        missing[0].1,
+        format!(
+            "configured path {} does not exist or is not executable",
+            bad.display()
+        )
+    );
+    assert_eq!(
+        missing[1].1,
+        format!("configured path {} is not a file", dir.path().display())
+    );
 }
