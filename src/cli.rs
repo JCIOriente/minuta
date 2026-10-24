@@ -70,7 +70,8 @@ pub struct RunArgs {
     /// Recordings, joined in the order given
     #[arg(required = true)]
     pub files: Vec<PathBuf>,
-    /// Job name (default: the first file's name without its media extension)
+    /// Job name (default: the first file's name without its media extension); picks another
+    /// job, never replaces one
     #[arg(short, long)]
     pub name: Option<String>,
     /// Output directory for job folders
@@ -82,7 +83,8 @@ pub struct RunArgs {
     /// Model file or catalog name
     #[arg(long, value_name = "PATH|NAME")]
     pub model: Option<String>,
-    /// Rerun every step, or STEP and every later one (put it after FILES)
+    /// Rerun every step, or STEP and every later one; also replaces a job made from other
+    /// sources (put it after FILES)
     #[arg(long, value_name = "STEP", num_args = 0..=1, value_parser = parse_step)]
     pub force: Option<Option<StepName>>,
     /// Print only warnings and errors

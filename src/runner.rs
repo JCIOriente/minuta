@@ -26,15 +26,18 @@ const SIGNAL_GRACE: Duration = Duration::from_millis(100);
 pub struct Options {
     /// Sources, in join order.
     pub files: Vec<PathBuf>,
-    /// `--name`; the job name is derived from it, or else from the first source.
+    /// `--name`; the job name is derived from it, or else from the first source. It only
+    /// picks the job: a job of that name made from other sources is never replaced.
     pub name: Option<String>,
+    /// `--force`: the steps to rerun. It also lets a job made from other sources be replaced.
     pub force: Option<Force>,
 }
 
-/// Runs the pipeline and returns the job folder. Preflight comes first, so a missing tool or
-/// model stops the run before any file is touched. Steps that are not stale are reported as
-/// cached and not run. When `interrupt` is set the running tool is killed, temp files are
-/// removed and the result is `Error::Interrupted`, with the unfinished step left stale.
+/// Runs the pipeline and returns the job folder. Preflight comes first, and the steps are set
+/// up before the job folder is opened, so a missing tool or model or a failing ffmpeg stops
+/// the run before any file is touched. Steps that are not stale are reported as cached and
+/// not run. When `interrupt` is set the running tool is killed, temp files are removed and
+/// the result is `Error::Interrupted`, with the unfinished step left stale.
 pub fn run(
     options: &Options,
     config: &Config,
@@ -42,7 +45,11 @@ pub fn run(
     progress: &mut Progress,
 ) -> Result<PathBuf> {
     let started = Instant::now();
-    let toolchain = preflight(config)?;
+    let toolchain = preflight(config);
+    if interrupt.load(Ordering::SeqCst) {
+        return Err(Error::Interrupted);
+    }
+    let toolchain = toolchain?;
     let first = options
         .files
         .first()
@@ -54,20 +61,14 @@ pub fn run(
         )));
     }
     let name = job::derive_name(options.name.as_deref().map_or(first.as_path(), Path::new))?;
-    let allow_replace = options.name.is_some() || options.force.is_some();
-    let mut job = Job::open(
-        Path::new(&config.out_dir.value),
-        &name,
-        &options.files,
-        allow_replace,
-    )?;
-    let ctx = job.ctx();
 
     let model = toolchain
         .model
         .clone()
         .expect("preflight requires the model");
     let probe = Probe::new(toolchain.ffprobe.clone());
+    // Runs `ffmpeg -encoders` on every run, cached or not: the encoder is part of the join
+    // fingerprint, so it is needed to decide whether join is stale.
     let join = Join::detect(toolchain.ffmpeg.clone())?;
     let audio = Audio::new(toolchain.ffmpeg.clone());
     let transcribe = Transcribe::new(
@@ -77,6 +78,14 @@ pub fn run(
         None,
     );
     let steps: [&dyn Runnable; 5] = [&probe, &join, &audio, &transcribe, &Outputs];
+
+    let mut job = Job::open(
+        Path::new(&config.out_dir.value),
+        &name,
+        &options.files,
+        options.force.is_some(),
+    )?;
+    let ctx = job.ctx();
 
     let mut current: Vec<(StepName, String)> = Vec::new();
     for step in steps {
@@ -325,16 +334,28 @@ impl Pipeline<'_> {
             }
             ran += 1;
         }
+        // Ctrl-C during a step that runs no tool, or while every step was cached.
+        if self.interrupt.load(Ordering::SeqCst) {
+            return Err(Error::Interrupted);
+        }
         Ok(ran)
     }
 
-    /// Whether `err` is the result of Ctrl-C. The terminal signals the whole process group,
-    /// so the tool can die before the handler has set the flag; give it a moment then.
+    /// Whether `err` is the result of Ctrl-C: the tool was killed for the interrupt, or died
+    /// from a signal while the flag is set. The terminal signals the whole process group, so
+    /// the tool can die before the handler has set the flag; give it a moment then. Any other
+    /// error is reported as it is.
     fn interrupted_by(&self, err: &Error) -> bool {
-        if matches!(err, Error::Tool { code: None, .. }) && !self.interrupt.load(Ordering::SeqCst) {
-            std::thread::sleep(SIGNAL_GRACE);
+        match err {
+            Error::Interrupted => true,
+            Error::Tool { code: None, .. } => {
+                if !self.interrupt.load(Ordering::SeqCst) {
+                    std::thread::sleep(SIGNAL_GRACE);
+                }
+                self.interrupt.load(Ordering::SeqCst)
+            }
+            _ => false,
         }
-        self.interrupt.load(Ordering::SeqCst)
     }
 }
 
@@ -366,6 +387,8 @@ fn detail(step: StepName, ctx: &Ctx) -> Option<String> {
 mod tests {
     use super::*;
     use crate::config::Overrides;
+    use crate::progress::Mode as ProgressMode;
+    use std::cell::Cell;
 
     fn config(env: &[(&str, &str)]) -> Config {
         let lookup = |key: &str| {
@@ -423,5 +446,109 @@ mod tests {
         assert_eq!(hinted[0].hint, "run `minuta models pull small`");
         let kept = with_pull_hint(missing(), &config(&[("MINUTA_WHISPER_MODEL", "/m/x.bin")]));
         assert_eq!(kept, missing());
+    }
+
+    /// A step that records whether it ran and can set the interrupt flag while running.
+    struct FakeStep {
+        ran: Cell<bool>,
+        sets: Option<Arc<AtomicBool>>,
+    }
+
+    impl Step for FakeStep {
+        const NAME: StepName = StepName::Probe;
+        fn params(&self, _: &Ctx) -> Vec<u8> {
+            Vec::new()
+        }
+        fn outputs(&self, _: &Ctx) -> Vec<PathBuf> {
+            Vec::new()
+        }
+        fn run(&self, _: &Ctx) -> Result<()> {
+            self.ran.set(true);
+            if let Some(flag) = &self.sets {
+                flag.store(true, Ordering::SeqCst);
+            }
+            Ok(())
+        }
+    }
+
+    impl Execute for FakeStep {
+        fn execute(&self, ctx: &Ctx, _: RunOpts, _: &mut dyn FnMut(&str)) -> Result<Vec<String>> {
+            self.run(ctx).map(|()| Vec::new())
+        }
+    }
+
+    /// Runs `step` as the only stale step of a fresh job with `interrupt`.
+    fn run_one(step: &FakeStep, interrupt: &Arc<AtomicBool>) -> (Result<usize>, Job) {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("a.mp4");
+        fs::write(&source, "media").unwrap();
+        let mut job = Job::open(tmp.path(), "a", &[source], false).unwrap();
+        let ctx = job.ctx();
+        let current = vec![(StepName::Probe, step.fingerprint(&ctx, None))];
+        let plan = plan_stale(&job, &current, None);
+        let pipeline = Pipeline {
+            ctx: &ctx,
+            plan: &plan,
+            interrupt,
+        };
+        let mut progress = Progress::new(ProgressMode::Quiet);
+        let result = pipeline.run(&mut job, &[step], &current, &mut progress);
+        (result, job)
+    }
+
+    #[test]
+    fn preset_interrupt_runs_no_step() {
+        let step = FakeStep {
+            ran: Cell::new(false),
+            sets: None,
+        };
+        let (result, job) = run_one(&step, &Arc::new(AtomicBool::new(true)));
+        assert!(matches!(result, Err(Error::Interrupted)), "{result:?}");
+        assert!(!step.ran.get());
+        assert!(!job.state.steps.contains_key(&StepName::Probe));
+    }
+
+    #[test]
+    fn interrupt_during_the_last_step_is_reported() {
+        let interrupt = Arc::new(AtomicBool::new(false));
+        let step = FakeStep {
+            ran: Cell::new(false),
+            sets: Some(Arc::clone(&interrupt)),
+        };
+        let (result, _) = run_one(&step, &interrupt);
+        assert!(step.ran.get());
+        assert!(matches!(result, Err(Error::Interrupted)), "{result:?}");
+    }
+
+    #[test]
+    fn only_signal_deaths_count_as_interrupts() {
+        let interrupt = Arc::new(AtomicBool::new(true));
+        let (ctx, plan) = (
+            Ctx {
+                dir: PathBuf::new(),
+                sources: Vec::new(),
+                source_digest: String::new(),
+            },
+            Vec::new(),
+        );
+        let pipeline = Pipeline {
+            ctx: &ctx,
+            plan: &plan,
+            interrupt: &interrupt,
+        };
+        let killed = Error::Tool {
+            tool: "ffmpeg".into(),
+            code: None,
+            stderr: String::new(),
+        };
+        assert!(pipeline.interrupted_by(&killed));
+        assert!(pipeline.interrupted_by(&Error::Interrupted));
+        assert!(!pipeline.interrupted_by(&Error::Io(std::io::Error::other("disk full"))));
+        let failed = Error::Tool {
+            tool: "ffmpeg".into(),
+            code: Some(1),
+            stderr: String::new(),
+        };
+        assert!(!pipeline.interrupted_by(&failed));
     }
 }

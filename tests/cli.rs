@@ -89,7 +89,7 @@ echo '{{"streams":[{{"codec_type":"audio","codec_name":"aac","sample_rate":"4800
             &format!(
                 r#"if [ "$1" = "-version" ]; then echo "ffmpeg version 7.1-fake"; exit 0; fi
 case " $* " in *" -encoders "*) echo " V....D libx264  H.264"; exit 0;; esac
-echo "ffmpeg $*" >> '{log}'
+echo "${{0##*/}} $*" >> '{log}'
 for last; do :; done
 printf 'RIFF' > "$last"
 echo "size=1kB time=00:00:01.00 bitrate=1kbits/s speed=10x" >&2
@@ -441,27 +441,29 @@ fn tool_failure_exits_1_and_marks_step_stale() {
     assert!(!job.join("transcript.json").exists());
 }
 
-#[test]
-fn interrupt_kills_child_cleans_up_and_exits_130() {
-    let env = Env::new();
-    let pid_file = env.path("ffmpeg.pid");
-    // The audio step starts its output, then hangs.
-    env.ffmpeg(&format!(
+/// Shell lines that record the tool's pid in `pid_file`, then hang.
+fn hang(pid_file: &Path) -> String {
+    format!(
         "echo $$ > '{}.part'; /bin/mv '{0}.part' '{0}'\nexec /bin/sleep 30",
         pid_file.display()
-    ));
-    let mut cmd = env.command(&["run", "clase-4.mp4"]);
-    let child = env.spawn(&mut cmd);
+    )
+}
 
+/// Starts `minuta run clase-4.mp4` and waits until the tool writing `pid_file` hangs;
+/// returns the run and the tool's pid.
+fn start_hanging_run(env: &Env, pid_file: &Path) -> (Child, String) {
+    let child = env.spawn(&mut env.command(&["run", "clase-4.mp4"]));
     let deadline = Instant::now() + Duration::from_secs(10);
     while !pid_file.exists() {
-        assert!(Instant::now() < deadline, "ffmpeg never started");
+        assert!(Instant::now() < deadline, "the tool never started");
         std::thread::sleep(Duration::from_millis(20));
     }
-    let ffmpeg_pid = fs::read_to_string(&pid_file).unwrap().trim().to_string();
-    let job = env.job_dir("clase-4");
-    assert!(job.join("audio.wav.tmp").exists());
+    let pid = fs::read_to_string(pid_file).unwrap().trim().to_string();
+    (child, pid)
+}
 
+/// Sends SIGINT to the run, waits for it and checks that it killed the tool.
+fn interrupt(env: &Env, child: Child, tool_pid: &str) -> Output {
     let started = Instant::now();
     let mut kill = Command::new("kill");
     kill.args(["-INT", &child.id().to_string()]);
@@ -472,22 +474,152 @@ fn interrupt_kills_child_cleans_up_and_exits_130() {
     out.clone().assert().code(130).stdout("");
     assert!(stderr(&out).contains("interrupted"), "{}", stderr(&out));
     let mut alive = Command::new("kill");
-    alive.args(["-0", &ffmpeg_pid]).stderr(Stdio::null());
+    alive.args(["-0", tool_pid]).stderr(Stdio::null());
     assert!(
         !env.spawn(&mut alive).wait().unwrap().success(),
-        "ffmpeg was not killed"
+        "the tool was not killed"
     );
-    let leftovers: Vec<_> = fs::read_dir(&job)
+    out
+}
+
+fn tmp_files(job: &Path) -> Vec<String> {
+    fs::read_dir(job)
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .filter(|n| n.ends_with(".tmp"))
-        .collect();
-    assert!(leftovers.is_empty(), "left {leftovers:?}");
+        .collect()
+}
+
+#[test]
+fn interrupt_kills_child_cleans_up_and_exits_130() {
+    let env = Env::new();
+    let pid_file = env.path("ffmpeg.pid");
+    // The audio step starts its output, then hangs.
+    env.ffmpeg(&hang(&pid_file));
+    let (child, pid) = start_hanging_run(&env, &pid_file);
+    let job = env.job_dir("clase-4");
+    assert!(job.join("audio.wav.tmp").exists());
+
+    interrupt(&env, child, &pid);
+    assert_eq!(tmp_files(&job), Vec::<String>::new());
     assert!(!job.join("audio.wav").exists());
     assert_eq!(step_status(&job, "join").as_deref(), Some("done"));
     for step in ["audio", "transcribe", "outputs"] {
         assert_eq!(step_status(&job, step).as_deref(), Some("stale"), "{step}");
     }
+}
+
+#[test]
+fn interrupt_during_transcribe_exits_130_with_outputs_stale() {
+    let env = Env::new();
+    let pid_file = env.path("whisper.pid");
+    env.whisper(&hang(&pid_file));
+    let (child, pid) = start_hanging_run(&env, &pid_file);
+
+    interrupt(&env, child, &pid);
+    let job = env.job_dir("clase-4");
+    assert_eq!(tmp_files(&job), Vec::<String>::new());
+    assert!(!job.join("transcript.json").exists());
+    assert_eq!(step_status(&job, "audio").as_deref(), Some("done"));
+    for step in ["transcribe", "outputs"] {
+        assert_eq!(step_status(&job, step).as_deref(), Some("stale"), "{step}");
+    }
+}
+
+#[test]
+fn failing_encoder_listing_leaves_no_job_folder() {
+    let env = Env::new();
+    script(
+        &env.bin(),
+        "ffmpeg",
+        r#"if [ "$1" = "-version" ]; then echo "ffmpeg version 7.1-fake"; exit 0; fi
+echo "cannot list encoders" >&2
+exit 1"#,
+    );
+    let out = env.minuta(&["run", "clase-4.mp4"]);
+    out.clone().assert().code(1).stdout("");
+    assert!(
+        stderr(&out).contains("cannot list encoders"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!env.path("minuta-out").exists());
+}
+
+#[test]
+fn bare_binary_name_is_looked_up_on_path() {
+    let env = Env::new();
+    fs::rename(env.bin().join("ffmpeg"), env.bin().join("ffmpeg7")).unwrap();
+    let out = env.run_cmd({
+        let mut cmd = env.command(&["run", "clase-4.mp4"]);
+        cmd.env("MINUTA_FFMPEG_BIN", "ffmpeg7");
+        cmd
+    });
+    out.clone().assert().success();
+    assert_eq!(env.tools_called(), ["ffprobe", "ffmpeg7", "whisper-cli"]);
+}
+
+#[test]
+fn different_sources_without_force_is_refused() {
+    let env = Env::new();
+    fs::write(env.path("other.mp4"), "more media").unwrap();
+    env.minuta(&["run", "clase-4.mp4"])
+        .clone()
+        .assert()
+        .success();
+    let job = env.job_dir("clase-4");
+    let state = fs::read_to_string(job.join("job.json")).unwrap();
+    let calls = env.calls();
+
+    let out = env.minuta(&["run", "clase-4.mp4", "other.mp4"]);
+    out.clone().assert().code(1).stdout("");
+    assert!(stderr(&out).contains("--force"), "{}", stderr(&out));
+    assert_eq!(env.calls(), calls);
+    assert_eq!(fs::read_to_string(job.join("job.json")).unwrap(), state);
+}
+
+#[test]
+fn different_sources_with_another_name_is_a_separate_job() {
+    let env = Env::new();
+    fs::write(env.path("other.mp4"), "more media").unwrap();
+    env.minuta(&["run", "clase-4.mp4"])
+        .clone()
+        .assert()
+        .success();
+    let state = fs::read_to_string(env.job_dir("clase-4").join("job.json")).unwrap();
+
+    let out = env.minuta(&["run", "clase-4.mp4", "other.mp4", "--name", "both"]);
+    out.clone().assert().success();
+    assert_eq!(stdout(&out), format!("{}\n", env.job_dir("both").display()));
+    assert_eq!(
+        fs::read_to_string(env.job_dir("clase-4").join("job.json")).unwrap(),
+        state
+    );
+
+    // The same name for yet other sources is refused too: --name never replaces a job.
+    env.minuta(&["run", "other.mp4", "--name", "both"])
+        .clone()
+        .assert()
+        .code(1);
+}
+
+#[test]
+fn different_sources_with_force_replace_the_job() {
+    let env = Env::new();
+    fs::write(env.path("other.mp4"), "more media").unwrap();
+    env.minuta(&["run", "clase-4.mp4"])
+        .clone()
+        .assert()
+        .success();
+
+    let out = env.minuta(&["run", "clase-4.mp4", "other.mp4", "--force"]);
+    out.clone().assert().success();
+    let job = env.job_dir("clase-4");
+    assert_eq!(stdout(&out), format!("{}\n", job.display()));
+    let state: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(job.join("job.json")).unwrap()).unwrap();
+    assert_eq!(state["sources"].as_array().unwrap().len(), 2);
+    assert_eq!(step_status(&job, "outputs").as_deref(), Some("done"));
 }
 
 #[test]
