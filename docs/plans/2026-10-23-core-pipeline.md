@@ -79,7 +79,7 @@ For `baton:parallel`; model and effort chosen by how much judgment the task need
 
 ## Tasks
 
-### T1: Crate skeleton, error type and CI  (#issue once created)
+### T1: Crate skeleton, error type and CI  (#1)
 - Priority: 0
 - Depends on: none
 - Owns: `Cargo.toml`, `rust-toolchain.toml`, `rustfmt.toml`, `.gitignore`, `src/main.rs`, `src/lib.rs`, `src/error.rs`, empty `src/{cli,config,tools,transcript,models,progress,runner}.rs`, empty `src/job/{mod,fingerprint,state}.rs`, empty `src/steps/{mod,probe,join,audio,transcribe,outputs}.rs`, `.github/workflows/ci.yml`
@@ -93,7 +93,7 @@ For `baton:parallel`; model and effort chosen by how much judgment the task need
 - Tests first: `exit_code_usage_is_2`, `exit_code_interrupted_is_130`, `exit_code_other_is_1`
 - Notes: dependencies up front: clap (derive), serde, serde_json, toml, sha2, thiserror, indicatif, ctrlc, directories, ureq (rustls), tempfile (dev), assert_cmd (dev), predicates (dev).
 
-### T2: Config loading and precedence  (#issue once created)
+### T2: Config loading and precedence  (#5)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/config.rs`, `tests/config.rs`
@@ -107,7 +107,7 @@ For `baton:parallel`; model and effort chosen by how much judgment the task need
 - Tests first: `flag_beats_env`, `env_beats_file`, `file_beats_default`, `missing_file_uses_defaults`, `malformed_file_names_line`, `minuta_config_env_overrides_path`
 - Notes: expose `Config::resolve(flags: Overrides, env: &dyn Fn(&str)->Option<String>, file: Option<&str>)` so tests need no real environment.
 
-### T3: Transcript schema, whisper parsing, TXT and SRT  (#issue once created)
+### T3: Transcript schema, whisper parsing, TXT and SRT  (#6)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/transcript.rs`, `tests/transcript.rs`, `tests/fixtures/whisper/*.json`
@@ -122,7 +122,7 @@ For `baton:parallel`; model and effort chosen by how much judgment the task need
 - Tests first: `parses_offsets_to_seconds`, `reads_language`, `overlap_is_clamped`, `inverted_segment_dropped`, `empty_segments_ok`, `srt_timestamp_format`, `srt_over_one_hour`, `srt_preserves_utf8`, `txt_one_line_per_segment`, `json_roundtrip`
 - Notes: capture a real whisper JSON (any language) as a fixture; do not hand-write the shape from memory.
 
-### T4: Job state, naming, fingerprints and staleness  (#issue once created)
+### T4: Job state, naming, fingerprints and staleness  (#7)
 - Priority: 0
 - Depends on: T1
 - Owns: `src/job/**`, `tests/job.rs`
@@ -139,7 +139,7 @@ For `baton:parallel`; model and effort chosen by how much judgment the task need
 - Tests first: `derive_name_strips_extension`, `derive_name_case_insensitive`, `unknown_version_rejected`, `changed_fingerprint_marks_stale`, `stale_propagates_to_later_steps`, `missing_artifact_marks_stale`, `force_all`, `force_step_and_later`, `mtime_change_same_content_stays_cached`, `write_atomic_failure_leaves_nothing`, `tmp_cleaned_on_open`, `name_conflict_different_sources`
 - Notes: depend only on the `Step` trait shape in this plan. Do not run external tools here.
 
-### T5: Process runner, toolchain preflight and doctor data  (#issue once created)
+### T5: Process runner, toolchain preflight and doctor data  (#8)
 - Priority: 0
 - Depends on: T1
 - Owns: `src/tools.rs`, `tests/tools.rs`
@@ -153,7 +153,7 @@ For `baton:parallel`; model and effort chosen by how much judgment the task need
 - Tests first: `argv_with_shell_metacharacters_is_safe`, `streams_lines`, `nonzero_exit_is_tool_error`, `preflight_lists_all_missing`, `version_captured`, `interrupt_kills_child`
 - Notes: tests use small scripts on `PATH` in a temp dir, never the real tools.
 
-### T6: Model catalog and download  (#issue once created)
+### T6: Model catalog and download  (#9)
 - Priority: 2
 - Depends on: T1
 - Owns: `src/models.rs`, `tests/models.rs`
@@ -167,7 +167,7 @@ For `baton:parallel`; model and effort chosen by how much judgment the task need
 - Tests first: `bad_checksum_rejected_and_cleaned`, `good_download_renamed`, `already_present_noop`, `resolve_path_vs_name`
 - Notes: tests serve bytes from a local `TcpListener`; the base URL is injectable. Models dir: `~/.cache/minuta/models`.
 
-### T7: Media steps — probe, join, audio  (#issue once created)
+### T7: Media steps — probe, join, audio  (#10)
 - Priority: 1
 - Depends on: T4, T5
 - Owns: `src/steps/probe.rs`, `src/steps/join.rs`, `src/steps/audio.rs`, `tests/media.rs`
@@ -182,7 +182,7 @@ For `baton:parallel`; model and effort chosen by how much judgment the task need
 - Tests first: `probe_reads_streams`, `no_audio_rejected`, `single_source_links`, `matching_sources_stream_copy`, `mismatched_sources_reencode`, `join_preserves_order`, `audio_is_mono_16k`, `encoder_choice_falls_back_to_x264`
 - Notes: fixtures from `ffmpeg -f lavfi` (`sine`, `testsrc`), generated in test setup, not committed.
 
-### T8: Transcribe and outputs steps  (#issue once created)
+### T8: Transcribe and outputs steps  (#11)
 - Priority: 1
 - Depends on: T3, T4, T5
 - Owns: `src/steps/transcribe.rs`, `src/steps/outputs.rs`, `tests/transcribe.rs`
@@ -196,7 +196,7 @@ For `baton:parallel`; model and effort chosen by how much judgment the task need
 - Tests first: `whisper_args_include_vad_and_json`, `lang_change_changes_params`, `model_change_changes_params`, `empty_transcript_still_writes_outputs`, `whisper_failure_leaves_no_artifact`, `outputs_derive_from_transcript_json`
 - Notes: use a fake `whisper-cli` script that prints a fixture JSON from T3.
 
-### T9: CLI, runner, progress and interrupt  (#issue once created)
+### T9: CLI, runner, progress and interrupt  (#12)
 - Priority: 1
 - Depends on: T2, T6, T7, T8
 - Owns: `src/cli.rs`, `src/runner.rs`, `src/progress.rs`, `src/main.rs`
@@ -212,7 +212,7 @@ For `baton:parallel`; model and effort chosen by how much judgment the task need
 - Tests first: `usage_error_exits_2`, `second_run_all_cached`, `stdout_is_only_job_path`, `preflight_before_first_step`, `quiet_suppresses_progress`, `doctor_exit_code_when_missing`
 - Notes: heavy tests belong to T10; keep these as `assert_cmd` tests with fake tools on `PATH`.
 
-### T10: Integration suite, fixtures and opt-in e2e  (#issue once created)
+### T10: Integration suite, fixtures and opt-in e2e  (#13)
 - Priority: 2
 - Depends on: T9
 - Owns: `tests/integration/**`, `tests/fixtures/bin/**`, `tests/e2e.rs`
