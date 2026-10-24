@@ -14,4 +14,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # Real ffmpeg/ffprobe so the media and integration tests run instead of skipping.
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      # The real-whisper e2e test (tests/e2e.rs) is opt-in and not run here: it needs
+      # whisper-cli and a model. Run it locally with MINUTA_E2E=1 (MINUTA_E2E_MODEL=<file>
+      # to skip the download of the tiny model).
       - run: make ci
+        env:
+          MINUTA_REQUIRE_FFMPEG: "1"
