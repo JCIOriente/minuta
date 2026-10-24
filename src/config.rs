@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -6,6 +8,17 @@ use crate::error::{Error, Result};
 
 const DEFAULT_OUT_DIR: &str = "./minuta-out";
 const DEFAULT_LANG: &str = "auto";
+
+/// Every environment variable minuta reads.
+const ENV_NAMES: [&str; 7] = [
+    "MINUTA_CONFIG",
+    "MINUTA_OUT_DIR",
+    "MINUTA_WHISPER_BIN",
+    "MINUTA_WHISPER_MODEL",
+    "MINUTA_WHISPER_LANG",
+    "MINUTA_FFMPEG_BIN",
+    "MINUTA_FFPROBE_BIN",
+];
 
 /// Where a resolved value came from, highest precedence first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +61,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FileConfig {
     out_dir: Option<String>,
     whisper: Option<ToolTable>,
@@ -56,6 +70,7 @@ struct FileConfig {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ToolTable {
     bin: Option<String>,
     model: Option<String>,
@@ -67,34 +82,56 @@ pub fn default_path() -> Option<PathBuf> {
     directories::BaseDirs::new().map(|dirs| dirs.home_dir().join(".config/minuta/config.toml"))
 }
 
-/// The config file path: `MINUTA_CONFIG` if set, else the default. Does not read the file.
-pub fn resolve_path(env: &dyn Fn(&str) -> Option<String>, file: Option<&str>) -> Option<PathBuf> {
+/// Read every `MINUTA_*` variable up front. A non-UTF-8 value is `Error::Config`
+/// naming the variable; an unset one is simply absent from the map.
+pub fn env_snapshot(read: &dyn Fn(&str) -> Option<OsString>) -> Result<HashMap<String, String>> {
+    let mut vars = HashMap::new();
+    for name in ENV_NAMES {
+        if let Some(raw) = read(name) {
+            let value = raw
+                .into_string()
+                .map_err(|_| Error::Config(format!("{name} is not valid UTF-8")))?;
+            vars.insert(name.to_string(), value);
+        }
+    }
+    Ok(vars)
+}
+
+/// `MINUTA_CONFIG` if set and non-empty.
+fn env_config_path(env: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
     env("MINUTA_CONFIG")
-        .or_else(|| file.map(str::to_string))
+        .filter(|v| !v.is_empty())
         .map(PathBuf::from)
+}
+
+/// The config file path: `MINUTA_CONFIG` if set, else the default. Does not read the file.
+pub fn resolve_path(env: &dyn Fn(&str) -> Option<String>, file: Option<&Path>) -> Option<PathBuf> {
+    env_config_path(env).or_else(|| file.map(Path::to_path_buf))
 }
 
 impl Config {
     /// Resolve the config using the real process environment and default path.
     pub fn load(flags: Overrides) -> Result<Config> {
         let default = default_path();
-        let default = default.as_deref().and_then(Path::to_str);
-        Config::resolve(flags, &|k| std::env::var(k).ok(), default)
+        let vars = env_snapshot(&|k| std::env::var_os(k))?;
+        Config::resolve(flags, &|k| vars.get(k).cloned(), default.as_deref())
     }
 
     /// Merge flags > `MINUTA_*` env > config file > defaults, per key.
     ///
-    /// `file` is the default config path; `MINUTA_CONFIG` in `env` overrides it.
-    /// A missing file yields defaults; a malformed or unreadable file is `Error::Config`.
+    /// `file` is the default config path. A `MINUTA_CONFIG` in `env` replaces it and
+    /// must exist: a missing explicit file is `Error::Config`. A missing default file
+    /// yields defaults. A malformed or unreadable file is `Error::Config`.
     /// Empty values count as unset.
     pub fn resolve(
         flags: Overrides,
         env: &dyn Fn(&str) -> Option<String>,
-        file: Option<&str>,
+        file: Option<&Path>,
     ) -> Result<Config> {
+        let explicit = env_config_path(env).is_some();
         let path = resolve_path(env, file);
         let from_file = match &path {
-            Some(p) => read_file(p)?,
+            Some(p) => read_file(p, explicit)?,
             None => FileConfig::default(),
         };
         let whisper = from_file.whisper.unwrap_or_default();
@@ -176,10 +213,17 @@ fn pick(flag: Option<String>, env: Option<String>, file: Option<String>, default
     })
 }
 
-fn read_file(path: &Path) -> Result<FileConfig> {
+/// Read and parse a config file. `explicit` is true when the path came from `MINUTA_CONFIG`,
+/// where a missing file is an error rather than a fallback to defaults.
+fn read_file(path: &Path, explicit: bool) -> Result<FileConfig> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(FileConfig::default()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && !explicit => {
+            return Ok(FileConfig::default())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(Error::Config(format!("{}: not found", path.display())))
+        }
         Err(e) => return Err(Error::Config(format!("{}: {e}", path.display()))),
     };
     toml::from_str(&text).map_err(|e| {
