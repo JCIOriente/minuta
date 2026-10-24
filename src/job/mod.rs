@@ -10,9 +10,33 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 
-pub use fingerprint::{fingerprint, source_record};
+use fingerprint::source_digest;
+pub use fingerprint::{fingerprint, source_record, step_fingerprint};
 pub use stale::{plan_stale, Force, Reason};
 pub use state::{JobState, Source, Status, StepName, StepState};
+
+/// What a step sees of its job.
+#[derive(Debug, Clone)]
+pub struct Ctx {
+    /// The job folder, where every artifact is written.
+    pub dir: PathBuf,
+    /// Canonical source paths, in join order.
+    pub sources: Vec<PathBuf>,
+    /// Digest of the sources' contents, in order.
+    pub source_digest: String,
+}
+
+/// One stage of a job. The runner fingerprints a step with [`step_fingerprint`], asks
+/// [`plan_stale`] whether it must run, and records the result with [`Job::mark_done`].
+pub trait Step {
+    const NAME: StepName;
+    /// Everything besides the sources that determines the outputs, including the version
+    /// string of any tool the step runs.
+    fn params(&self, ctx: &Ctx) -> Vec<u8>;
+    /// The artifacts the step writes, each with [`write_atomic`].
+    fn outputs(&self, ctx: &Ctx) -> Vec<PathBuf>;
+    fn run(&self, ctx: &Ctx) -> Result<()>;
+}
 
 /// File name of the job state inside the job folder.
 pub const JOB_FILE: &str = "job.json";
@@ -56,7 +80,8 @@ impl Job {
         }
         state.sources = paths
             .iter()
-            .map(|p| source_record(p))
+            .enumerate()
+            .map(|(i, p)| source_record(p, state.sources.get(i)))
             .collect::<Result<_>>()?;
         let job = Job { dir, state };
         job.save()?;
@@ -66,6 +91,15 @@ impl Job {
     /// Writes `job.json` atomically.
     pub fn save(&self) -> Result<()> {
         self.state.save(&self.dir.join(JOB_FILE))
+    }
+
+    /// The context steps of this job run in.
+    pub fn ctx(&self) -> Ctx {
+        Ctx {
+            dir: self.dir.clone(),
+            sources: self.state.sources.iter().map(|s| s.path.clone()).collect(),
+            source_digest: source_digest(&self.state.sources),
+        }
     }
 
     /// Records `step` as done with `fingerprint`, then saves `job.json`. Fails with
