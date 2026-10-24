@@ -1,0 +1,29 @@
+{
+	"result": {
+		"language": "es"
+	},
+	"transcription": [
+		{
+			"timestamps": {
+				"from": "00:00:00,000",
+				"to": "00:00:03,500"
+			},
+			"offsets": {
+				"from": 0,
+				"to": 3500
+			},
+			"text": " Buenos días a todos."
+		},
+		{
+			"timestamps": {
+				"from": "00:00:03,500",
+				"to": "00:00:07,250"
+			},
+			"offsets": {
+				"from": 3500,
+				"to": 7250
+			},
+			"text": " Empecemos la reunión. "
+		}
+	]
+}
