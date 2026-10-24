@@ -238,7 +238,7 @@ fn defaults_apply_without_file() {
 }
 
 #[test]
-fn missing_default_file_uses_defaults() {
+fn missing_file_uses_defaults() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("absent.toml");
     let cfg = Config::resolve(Overrides::default(), &no_env, Some(file.as_path())).unwrap();
@@ -399,4 +399,103 @@ fn env_snapshot_rejects_non_utf8_value() {
         Error::Config(msg) => assert!(msg.contains("MINUTA_FFPROBE_BIN"), "no name: {msg}"),
         other => panic!("expected Error::Config, got {other:?}"),
     }
+}
+
+#[test]
+fn env_snapshot_covers_every_minuta_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = write_config(&dir, "");
+    let values: Vec<(&str, String)> = vec![
+        ("MINUTA_CONFIG", config.display().to_string()),
+        ("MINUTA_OUT_DIR", "env-out".into()),
+        ("MINUTA_WHISPER_BIN", "env-wb".into()),
+        ("MINUTA_WHISPER_MODEL", "env-wm".into()),
+        ("MINUTA_WHISPER_LANG", "env-wl".into()),
+        ("MINUTA_FFMPEG_BIN", "env-ff".into()),
+        ("MINUTA_FFPROBE_BIN", "env-fp".into()),
+    ];
+    let read = |k: &str| {
+        values
+            .iter()
+            .find(|(name, _)| *name == k)
+            .map(|(_, v)| OsString::from(v))
+    };
+    let snapshot = env_snapshot(&read).unwrap();
+    assert_eq!(snapshot.len(), values.len(), "snapshot: {snapshot:?}");
+    for (name, value) in &values {
+        assert_eq!(snapshot.get(*name), Some(value), "name {name}");
+    }
+
+    let cfg = Config::resolve(Overrides::default(), &|k| snapshot.get(k).cloned(), None).unwrap();
+    assert_key(
+        cfg.entries()[0].1,
+        Some(("env-out", Source::Env)),
+        "out_dir",
+    );
+    assert_key(
+        cfg.entries()[1].1,
+        Some(("env-wb", Source::Env)),
+        "whisper.bin",
+    );
+    assert_key(
+        cfg.entries()[2].1,
+        Some(("env-wm", Source::Env)),
+        "whisper.model",
+    );
+    assert_key(
+        cfg.entries()[3].1,
+        Some(("env-wl", Source::Env)),
+        "whisper.lang",
+    );
+    assert_key(
+        cfg.entries()[4].1,
+        Some(("env-ff", Source::Env)),
+        "ffmpeg.bin",
+    );
+    assert_key(
+        cfg.entries()[5].1,
+        Some(("env-fp", Source::Env)),
+        "ffprobe.bin",
+    );
+    assert_eq!(cfg.path, Some(config));
+}
+
+#[test]
+fn entries_map_each_key_to_its_own_file_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_config(
+        &dir,
+        "out_dir = \"out-v\"\n[whisper]\nbin = \"wb-v\"\nmodel = \"wm-v\"\nlang = \"wl-v\"\n[ffmpeg]\nbin = \"ff-v\"\n[ffprobe]\nbin = \"fp-v\"\n",
+    );
+    let cfg = Config::resolve(Overrides::default(), &no_env, Some(file.as_path())).unwrap();
+    let want = [
+        ("out_dir", "out-v"),
+        ("whisper.bin", "wb-v"),
+        ("whisper.model", "wm-v"),
+        ("whisper.lang", "wl-v"),
+        ("ffmpeg.bin", "ff-v"),
+        ("ffprobe.bin", "fp-v"),
+    ];
+    let entries = cfg.entries();
+    assert_eq!(entries.len(), want.len());
+    for ((key, setting), (want_key, want_value)) in entries.iter().zip(want) {
+        assert_eq!(*key, want_key);
+        assert_key(*setting, Some((want_value, Source::File)), want_key);
+    }
+}
+
+#[test]
+fn unknown_key_in_ffmpeg_table_names_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_config(&dir, "[ffmpeg]\nlang = \"x\"\n");
+    let msg = config_err(Config::resolve(
+        Overrides::default(),
+        &no_env,
+        Some(file.as_path()),
+    ));
+    assert!(
+        msg.contains(&file.display().to_string()),
+        "no file name: {msg}"
+    );
+    assert!(msg.contains("line 2"), "no line number: {msg}");
 }
