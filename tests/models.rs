@@ -4,8 +4,7 @@ use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 const BODY: &[u8] = b"pretend these are model weights";
@@ -19,12 +18,15 @@ fn sha(bytes: &[u8]) -> String {
         })
 }
 
-/// Serves `body` to every request on a local port; returns the base URL and a request counter.
-fn serve(body: &'static [u8]) -> (String, Arc<AtomicUsize>) {
+type Requests = Arc<Mutex<Vec<String>>>;
+
+/// Serves `body` at `/ggml-tiny.bin` (404 for any other path) on a local port; returns the
+/// base URL and the request lines received.
+fn serve(body: &'static [u8]) -> (String, Requests) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
-    let hits = Arc::new(AtomicUsize::new(0));
-    let counter = hits.clone();
+    let requests: Requests = Arc::default();
+    let log = requests.clone();
     thread::spawn(move || {
         for stream in listener.incoming() {
             let mut stream = stream.unwrap();
@@ -37,16 +39,27 @@ fn serve(body: &'static [u8]) -> (String, Arc<AtomicUsize>) {
                 }
                 seen.extend_from_slice(&buf[..n]);
             }
-            counter.fetch_add(1, Ordering::SeqCst);
+            let line = String::from_utf8_lossy(&seen)
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_string();
+            let found = line.starts_with("GET /ggml-tiny.bin ");
+            log.lock().unwrap().push(line);
+            let (status, payload) = if found {
+                ("200 OK", body)
+            } else {
+                ("404 Not Found", &b"missing"[..])
+            };
             let head = format!(
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                payload.len()
             );
             stream.write_all(head.as_bytes()).unwrap();
-            stream.write_all(body).unwrap();
+            stream.write_all(payload).unwrap();
         }
     });
-    (base, hits)
+    (base, requests)
 }
 
 fn files_in(dir: &Path) -> Vec<String> {
@@ -79,7 +92,7 @@ fn bad_checksum_rejected_and_cleaned() {
 
 #[test]
 fn good_download_renamed() {
-    let (base, _) = serve(BODY);
+    let (base, requests) = serve(BODY);
     let dir = tempfile::tempdir().unwrap();
     let good = sha(BODY);
     let spec = ModelSpec {
@@ -88,6 +101,7 @@ fn good_download_renamed() {
         size: BODY.len() as u64,
     };
     let out = models::pull(&spec, dir.path(), &base).unwrap();
+    assert_eq!(*requests.lock().unwrap(), ["GET /ggml-tiny.bin HTTP/1.1"]);
     assert_eq!(out, Pulled::Downloaded);
     assert_eq!(files_in(dir.path()), vec!["ggml-tiny.bin".to_string()]);
     assert_eq!(
@@ -98,7 +112,7 @@ fn good_download_renamed() {
 
 #[test]
 fn already_present_noop() {
-    let (base, hits) = serve(BODY);
+    let (base, requests) = serve(BODY);
     let dir = tempfile::tempdir().unwrap();
     let good = sha(BODY);
     let spec = ModelSpec {
@@ -109,7 +123,7 @@ fn already_present_noop() {
     std::fs::write(dir.path().join("ggml-tiny.bin"), BODY).unwrap();
     let out = models::pull(&spec, dir.path(), &base).unwrap();
     assert_eq!(out, Pulled::AlreadyPresent);
-    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    assert!(requests.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -194,4 +208,74 @@ fn corrupt_present_file_removed_when_download_also_bad() {
         "left {:?}",
         files_in(dir.path())
     );
+}
+
+#[test]
+fn trailing_slash_in_base_url_is_ok() {
+    let (base, requests) = serve(BODY);
+    let dir = tempfile::tempdir().unwrap();
+    let good = sha(BODY);
+    let spec = ModelSpec {
+        name: "tiny",
+        sha256: &good,
+        size: BODY.len() as u64,
+    };
+    let url = format!("{base}/");
+    assert_eq!(
+        models::pull(&spec, dir.path(), &url).unwrap(),
+        Pulled::Downloaded
+    );
+    assert_eq!(*requests.lock().unwrap(), ["GET /ggml-tiny.bin HTTP/1.1"]);
+}
+
+#[test]
+fn oversized_download_rejected_and_cleaned() {
+    let (base, _) = serve(BODY);
+    let dir = tempfile::tempdir().unwrap();
+    let good = sha(BODY);
+    let spec = ModelSpec {
+        name: "tiny",
+        sha256: &good,
+        size: BODY.len() as u64 - 5,
+    };
+    let err = models::pull(&spec, dir.path(), &base).unwrap_err();
+    assert_eq!(err.to_string(), "job error: size mismatch for tiny");
+    assert!(
+        files_in(dir.path()).is_empty(),
+        "left {:?}",
+        files_in(dir.path())
+    );
+}
+
+#[test]
+fn download_failure_leaves_no_file() {
+    let (base, _) = serve(BODY);
+    let closed = {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", l.local_addr().unwrap())
+    };
+    let good = sha(BODY);
+    // "base" is not served by the test server, so it answers 404.
+    for (name, url) in [("base", &base), ("tiny", &closed)] {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = ModelSpec {
+            name,
+            sha256: &good,
+            size: BODY.len() as u64,
+        };
+        let err = models::pull(&spec, dir.path(), url).unwrap_err();
+        assert_eq!(err.exit_code(), 1);
+        if name == "base" {
+            let msg = err.to_string();
+            assert!(
+                msg.contains("404") && msg.contains("ggml-base.bin"),
+                "{msg}"
+            );
+        }
+        assert!(
+            files_in(dir.path()).is_empty(),
+            "left {:?}",
+            files_in(dir.path())
+        );
+    }
 }

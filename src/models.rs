@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// Where model files are downloaded from.
 pub const DEFAULT_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
@@ -60,6 +61,11 @@ pub enum Pulled {
     AlreadyPresent,
     Downloaded,
 }
+
+/// How long to wait for a connection and for each read; there is no overall timeout because
+/// large models take a long time on slow links.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// `~/.cache/minuta/models`.
 pub fn default_dir() -> Result<PathBuf> {
@@ -128,25 +134,39 @@ fn file_sha256(path: &Path) -> Result<String> {
 }
 
 /// Streams the model into `part`, returning the SHA-256 of what was written.
-fn download(url: &str, part: &Path) -> Result<String> {
-    let response = ureq::get(url).call().map_err(|e| {
+/// Reads at most `expected_size + 1` bytes and rejects any other length.
+fn download(name: &str, url: &str, part: &Path, expected_size: u64) -> Result<String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(CONNECT_TIMEOUT)
+        .timeout_read(READ_TIMEOUT)
+        .build();
+    let response = agent.get(url).call().map_err(|e| {
+        let reason = match &e {
+            ureq::Error::Status(code, _) => format!("HTTP status {code}"),
+            ureq::Error::Transport(_) => e.to_string(),
+        };
         Error::Io(std::io::Error::other(format!(
-            "download of {url} failed: {e}"
+            "download of {url} failed: {reason}"
         )))
     })?;
-    let mut reader = response.into_reader();
+    let mut reader = response.into_reader().take(expected_size + 1);
     let mut out = File::create(part)?;
     let mut hasher = Sha256::new();
+    let mut total = 0u64;
     let mut buf = [0u8; 64 * 1024];
     loop {
         let n = reader.read(&mut buf)?;
         if n == 0 {
             break;
         }
+        total += n as u64;
         hasher.update(&buf[..n]);
         out.write_all(&buf[..n])?;
     }
     out.sync_all()?;
+    if total != expected_size {
+        return Err(Error::Job(format!("size mismatch for {name}")));
+    }
     Ok(hex_digest(hasher))
 }
 
@@ -167,7 +187,7 @@ pub fn pull(spec: &ModelSpec, dir: &Path, base_url: &str) -> Result<Pulled> {
         base_url.trim_end_matches('/'),
         file_name(spec.name)
     );
-    let result = download(&url, &part).and_then(|digest| {
+    let result = download(spec.name, &url, &part, spec.size).and_then(|digest| {
         if digest == spec.sha256 {
             fs::rename(&part, &target)?;
             Ok(Pulled::Downloaded)
@@ -176,6 +196,7 @@ pub fn pull(spec: &ModelSpec, dir: &Path, base_url: &str) -> Result<Pulled> {
         }
     });
     if result.is_err() {
+        // Best effort: the original error is what the caller needs to see.
         let _ = fs::remove_file(&part);
     }
     result
