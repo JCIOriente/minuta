@@ -65,8 +65,8 @@ pub struct Config {
 struct FileConfig {
     out_dir: Option<String>,
     whisper: Option<ToolTable>,
-    ffmpeg: Option<ToolTable>,
-    ffprobe: Option<ToolTable>,
+    ffmpeg: Option<BinTable>,
+    ffprobe: Option<BinTable>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -75,6 +75,12 @@ struct ToolTable {
     bin: Option<String>,
     model: Option<String>,
     lang: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BinTable {
+    bin: Option<String>,
 }
 
 /// Default config location: `~/.config/minuta/config.toml`.
