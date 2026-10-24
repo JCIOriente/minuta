@@ -185,4 +185,20 @@ and checksum code, limited to one module.
 None at approval time.
 
 ## Implementation status
-- [ ] Plan: docs/plans/ (not yet written)
+Plan: docs/plans/2026-10-23-core-pipeline.md. All tasks merged; deviations and follow-ups are in issue #22.
+- [x] T1 crate skeleton, error type and CI (#1, PR #14)
+- [x] T2 config loading and precedence (#5, PR #17)
+- [x] T3 transcript schema, whisper parsing, TXT and SRT (#6, PR #15)
+- [x] T4 job state, naming, fingerprints and staleness (#7, PR #19)
+- [x] T5 process runner, toolchain preflight, doctor data (#8, PR #18)
+- [x] T6 model catalog and download (#9, PR #16)
+- [x] T7 media steps: probe, join, audio (#10, PR #21)
+- [x] T8 transcribe and outputs steps (#11, PR #20)
+- [x] T9 CLI, runner, progress and interrupt (#12, PR #23)
+- [x] T10 integration suite, fixtures and opt-in e2e (#13, PR #24)
+
+Known deviations from this spec (decided during implementation):
+- Name conflicts: only `--force` replaces an existing job; `--name` picks another name.
+- VAD is off until a VAD model is configured (`whisper-cli --vad` needs `--vad-model`); tracked in #22.
+- An explicit `MINUTA_CONFIG` pointing at a missing file is an error; unknown config keys are rejected.
+- `derive_name` returns `Result<String>`; steps expose `run_with(ctx, RunOpts, on_line)` for interrupt and progress.
