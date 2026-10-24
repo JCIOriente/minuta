@@ -81,7 +81,7 @@ fn file_name(name: &str) -> String {
 /// An existing path is used as is; a catalog name resolves into `dir`.
 pub fn resolve(name_or_path: &str, dir: &Path) -> Result<PathBuf> {
     let as_path = Path::new(name_or_path);
-    if as_path.exists() {
+    if as_path.is_file() {
         return Ok(as_path.to_path_buf());
     }
     match CATALOG.iter().find(|m| m.name == name_or_path) {

@@ -279,3 +279,37 @@ fn download_failure_leaves_no_file() {
         );
     }
 }
+
+#[test]
+fn resolve_does_not_accept_a_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let models_dir = dir.path().join("models");
+    // A directory is not a model file, so it must not be returned as is.
+    let lookalike = dir.path().join("small");
+    std::fs::create_dir(&lookalike).unwrap();
+    assert_eq!(
+        models::resolve(lookalike.to_str().unwrap(), &models_dir)
+            .unwrap_err()
+            .exit_code(),
+        2
+    );
+}
+
+#[test]
+fn undersized_download_rejected_and_cleaned() {
+    let (base, _) = serve(BODY);
+    let dir = tempfile::tempdir().unwrap();
+    let good = sha(BODY);
+    let spec = ModelSpec {
+        name: "tiny",
+        sha256: &good,
+        size: BODY.len() as u64 + 5,
+    };
+    let err = models::pull(&spec, dir.path(), &base).unwrap_err();
+    assert_eq!(err.to_string(), "job error: size mismatch for tiny");
+    assert!(
+        files_in(dir.path()).is_empty(),
+        "left {:?}",
+        files_in(dir.path())
+    );
+}
