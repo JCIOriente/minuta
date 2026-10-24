@@ -13,8 +13,10 @@ use crate::tools::{run, RunOpts, ToolInfo};
 /// File name of the concat demuxer list inside the job folder.
 const CONCAT_FILE: &str = "concat.txt";
 
-/// Extensions that keep their container when several sources are joined.
-const JOIN_EXTENSIONS: [&str; 8] = ["mp4", "m4v", "mov", "mkv", "mp3", "wav", "m4a", "flac"];
+/// Extensions that keep their container when several sources share them.
+const JOIN_EXTENSIONS: [&str; 9] = [
+    "mp4", "m4v", "mov", "mkv", "webm", "mp3", "wav", "m4a", "flac",
+];
 
 /// The H.264 encoder used when sources have to be re-encoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,7 +79,7 @@ pub fn plan_join(probes: &[SourceProbe]) -> Mode {
 
 /// Where the joined file goes: `joined.<ext>` in the job folder. One source keeps its own
 /// extension. Several keep the extension they share when it is a known container, else
-/// the result is `joined.mp4`.
+/// the result is `joined.mkv`, which holds any stream.
 pub fn joined_path(ctx: &Ctx) -> PathBuf {
     let exts: Vec<String> = ctx
         .sources
@@ -94,28 +96,43 @@ pub fn joined_path(ctx: &Ctx) -> PathBuf {
             .iter()
             .find(|j| **j == first)
             .copied()
-            .unwrap_or("mp4"),
-        _ => "mp4",
+            .unwrap_or("mkv"),
+        _ => "mkv",
     };
     ctx.dir.join(format!("joined.{ext}"))
 }
 
-/// The ffmpeg muxer for an output extension.
-fn format_for(path: &Path) -> Result<&'static str> {
-    let ext = path
+/// The ffmpeg muxer for an output extension; unknown extensions get matroska.
+fn muxer_for(path: &Path) -> &'static str {
+    match path
         .extension()
         .and_then(|e| e.to_str())
-        .unwrap_or_default();
-    Ok(match ext {
+        .unwrap_or_default()
+    {
         "mp4" | "m4v" => "mp4",
         "mov" => "mov",
-        "mkv" => "matroska",
+        "webm" => "webm",
         "mp3" => "mp3",
         "wav" => "wav",
         "m4a" => "ipod",
         "flac" => "flac",
-        other => return Err(Error::Usage(format!("cannot join into a .{other} file"))),
-    })
+        _ => "matroska",
+    }
+}
+
+/// The audio encoder that fits the container of `path` when only audio is written.
+fn audio_codec_for(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+    {
+        "wav" => "pcm_s16le",
+        "flac" => "flac",
+        "mp3" => "libmp3lame",
+        "webm" => "libopus",
+        _ => "aac",
+    }
 }
 
 /// Joins the sources into `joined.<ext>`.
@@ -146,7 +163,12 @@ impl Join {
         Ok(Join { ffmpeg, encoder })
     }
 
-    fn ffmpeg(&self, args: Vec<OsString>) -> Result<()> {
+    fn ffmpeg(
+        &self,
+        args: Vec<OsString>,
+        opts: &RunOpts,
+        on_line: &mut dyn FnMut(&str),
+    ) -> Result<()> {
         let mut argv = vec![
             self.ffmpeg.path.clone().into_os_string(),
             "-hide_banner".into(),
@@ -154,96 +176,162 @@ impl Join {
             "-y".into(),
         ];
         argv.extend(args);
-        run(&argv, RunOpts::default(), &mut |_| {})?;
+        run(&argv, opts.clone(), on_line)?;
         Ok(())
     }
 
-    fn stream_copy(&self, ctx: &Ctx, out: &Path, tmp: &Path) -> Result<()> {
+    fn stream_copy(
+        &self,
+        ctx: &Ctx,
+        out: &Path,
+        tmp: &Path,
+        opts: &RunOpts,
+        on_line: &mut dyn FnMut(&str),
+    ) -> Result<()> {
+        let list_text = concat_list(&ctx.sources)?;
         let list = ctx.dir.join(CONCAT_FILE);
         write_atomic(&list, |t| {
-            fs::write(t, concat_list(&ctx.sources))?;
+            fs::write(t, &list_text)?;
             Ok(())
         })?;
-        self.ffmpeg(vec![
-            "-f".into(),
-            "concat".into(),
-            "-safe".into(),
-            "0".into(),
-            "-i".into(),
-            list.into_os_string(),
-            "-c".into(),
-            "copy".into(),
-            "-f".into(),
-            format_for(out)?.into(),
-            tmp.as_os_str().to_owned(),
-        ])
+        self.ffmpeg(
+            vec![
+                "-f".into(),
+                "concat".into(),
+                "-safe".into(),
+                "0".into(),
+                "-i".into(),
+                list.into_os_string(),
+                "-c".into(),
+                "copy".into(),
+                "-f".into(),
+                muxer_for(out).into(),
+                tmp.as_os_str().to_owned(),
+            ],
+            opts,
+            on_line,
+        )
     }
 
-    fn reencode(&self, probes: &[SourceProbe], out: &Path, tmp: &Path) -> Result<()> {
-        let target = match probes[0].video.as_ref() {
-            Some(video) if probes.iter().all(|p| p.video.is_some()) => video,
-            _ => {
-                return Err(Error::Usage(
-                    "cannot join sources that differ when some are audio only".into(),
-                ))
-            }
-        };
-        // Even dimensions, as H.264 needs.
-        let (w, h) = (target.width & !1, target.height & !1);
+    fn reencode(
+        &self,
+        probes: &[SourceProbe],
+        out: &Path,
+        tmp: &Path,
+        opts: &RunOpts,
+        on_line: &mut dyn FnMut(&str),
+    ) -> Result<()> {
+        let videos = probes.iter().filter(|p| p.video.is_some()).count();
         let mut argv = Vec::new();
         let mut filter = String::new();
-        for (i, p) in probes.iter().enumerate() {
-            argv.extend(["-i".into(), p.path.as_os_str().to_owned()]);
-            filter.push_str(&format!(
-                "[{i}:v]scale={w}:{h}:force_original_aspect_ratio=decrease,\
-                 pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}[v{i}];\
-                 [{i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a{i}];",
-                fps = target.fps
+        let mut maps = Vec::new();
+        if videos == 0 {
+            // Audio only: match the first source's rate and channel layout.
+            let first = &probes[0].audio;
+            let layout = if first.channels == 1 {
+                "mono"
+            } else {
+                "stereo"
+            };
+            for (i, p) in probes.iter().enumerate() {
+                argv.extend(["-i".into(), p.path.as_os_str().to_owned()]);
+                filter.push_str(&format!(
+                    "[{i}:a]aresample={rate},aformat=sample_fmts=fltp:sample_rates={rate}:\
+                     channel_layouts={layout}[a{i}];",
+                    rate = first.sample_rate
+                ));
+            }
+            for i in 0..probes.len() {
+                filter.push_str(&format!("[a{i}]"));
+            }
+            filter.push_str(&format!("concat=n={}:v=0:a=1[a]", probes.len()));
+            maps.extend(["-map".into(), "[a]".into()]);
+            maps.extend(["-c:a".into(), audio_codec_for(out).into()]);
+        } else if videos == probes.len() {
+            let target = probes[0].video.as_ref().expect("all sources have video");
+            // Even dimensions, as H.264 needs.
+            let (w, h) = (target.width & !1, target.height & !1);
+            for (i, p) in probes.iter().enumerate() {
+                argv.extend(["-i".into(), p.path.as_os_str().to_owned()]);
+                filter.push_str(&format!(
+                    "[{i}:v]scale={w}:{h}:force_original_aspect_ratio=decrease,\
+                     pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}[v{i}];\
+                     [{i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a{i}];",
+                    fps = target.fps
+                ));
+            }
+            for i in 0..probes.len() {
+                filter.push_str(&format!("[v{i}][a{i}]"));
+            }
+            filter.push_str(&format!("concat=n={}:v=1:a=1[v][a]", probes.len()));
+            maps.extend(["-map".into(), "[v]".into(), "-map".into(), "[a]".into()]);
+            if muxer_for(out) == "webm" {
+                maps.extend(["-c:v".into(), "libvpx-vp9".into()]);
+                maps.extend(["-crf".into(), "32".into(), "-b:v".into(), "0".into()]);
+                maps.extend(["-c:a".into(), "libopus".into()]);
+            } else {
+                maps.extend(["-c:v".into(), self.encoder.name().into()]);
+                match self.encoder {
+                    Encoder::VideoToolbox => maps.extend(["-b:v".into(), "5M".into()]),
+                    Encoder::X264 => maps.extend([
+                        "-crf".into(),
+                        "20".into(),
+                        "-preset".into(),
+                        "veryfast".into(),
+                    ]),
+                }
+                maps.extend(["-pix_fmt".into(), "yuv420p".into()]);
+                maps.extend(["-c:a".into(), "aac".into()]);
+            }
+        } else {
+            return Err(Error::Job(
+                "cannot join audio-only and video sources".into(),
             ));
         }
-        for i in 0..probes.len() {
-            filter.push_str(&format!("[v{i}][a{i}]"));
-        }
-        filter.push_str(&format!("concat=n={}:v=1:a=1[v][a]", probes.len()));
+        argv.extend(["-filter_complex".into(), filter.into()]);
+        argv.extend(maps);
         argv.extend([
-            "-filter_complex".into(),
-            filter.into(),
-            "-map".into(),
-            "[v]".into(),
-            "-map".into(),
-            "[a]".into(),
-            "-c:v".into(),
-            self.encoder.name().into(),
-        ]);
-        match self.encoder {
-            Encoder::VideoToolbox => argv.extend(["-b:v".into(), "5M".into()]),
-            Encoder::X264 => argv.extend([
-                "-crf".into(),
-                "20".into(),
-                "-preset".into(),
-                "veryfast".into(),
-            ]),
-        }
-        argv.extend([
-            "-pix_fmt".into(),
-            "yuv420p".into(),
-            "-c:a".into(),
-            "aac".into(),
             "-f".into(),
-            format_for(out)?.into(),
+            muxer_for(out).into(),
             tmp.as_os_str().to_owned(),
         ]);
-        self.ffmpeg(argv)
+        self.ffmpeg(argv, opts, on_line)
+    }
+
+    /// Joins the sources, passing every ffmpeg line to `on_line` and stopping with
+    /// `Error::Interrupted` when `opts.interrupt` is set. No `joined.<ext>` is left behind
+    /// on failure. The runner uses this; [`Step::run`] is the same without progress or
+    /// interrupt.
+    pub fn run_with(&self, ctx: &Ctx, opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<()> {
+        let probes = read_probe(&ctx.dir)?;
+        let out = joined_path(ctx);
+        write_atomic(&out, |tmp| match plan_join(&probes) {
+            Mode::Link => link_or_copy(&ctx.sources[0], tmp, |s, d| fs::hard_link(s, d)),
+            Mode::StreamCopy => self.stream_copy(ctx, &out, tmp, &opts, on_line),
+            Mode::Reencode => self.reencode(&probes, &out, tmp, &opts, on_line),
+        })
     }
 }
 
 /// The concat demuxer list for `sources`, one `file '<path>'` line each. A single quote in a
-/// path is written as `'\''`.
-fn concat_list(sources: &[PathBuf]) -> String {
-    sources
-        .iter()
-        .map(|s| format!("file '{}'\n", s.to_string_lossy().replace('\'', "'\\''")))
-        .collect()
+/// path is written as `'\''`. A path that is not UTF-8 or holds a line break cannot be
+/// written to the list and is an `Error::Usage`.
+fn concat_list(sources: &[PathBuf]) -> Result<String> {
+    let mut list = String::new();
+    for source in sources {
+        match source.to_str() {
+            Some(path) if !path.contains(['\n', '\r']) => {
+                list.push_str(&format!("file '{}'\n", path.replace('\'', "'\\''")));
+            }
+            _ => {
+                return Err(Error::Usage(format!(
+                    "cannot join {}: the path has a line break or is not valid UTF-8",
+                    source.display()
+                )))
+            }
+        }
+    }
+    Ok(list)
 }
 
 /// Hard-links `src` to `dst` with `link`, copying when that fails (across file systems, for
@@ -283,13 +371,7 @@ impl Step for Join {
     }
 
     fn run(&self, ctx: &Ctx) -> Result<()> {
-        let probes = read_probe(&ctx.dir)?;
-        let out = joined_path(ctx);
-        write_atomic(&out, |tmp| match plan_join(&probes) {
-            Mode::Link => link_or_copy(&ctx.sources[0], tmp, |s, d| fs::hard_link(s, d)),
-            Mode::StreamCopy => self.stream_copy(ctx, &out, tmp),
-            Mode::Reencode => self.reencode(&probes, &out, tmp),
-        })
+        self.run_with(ctx, RunOpts::default(), &mut |_| {})
     }
 }
 
@@ -311,7 +393,43 @@ mod tests {
 
     #[test]
     fn concat_list_escapes_single_quotes() {
-        let list = concat_list(&[PathBuf::from("/a/it's.mp4"), PathBuf::from("/b.mp4")]);
+        let list = concat_list(&[PathBuf::from("/a/it's.mp4"), PathBuf::from("/b.mp4")]).unwrap();
         assert_eq!(list, "file '/a/it'\\''s.mp4'\nfile '/b.mp4'\n");
+    }
+
+    #[test]
+    fn concat_list_rejects_line_breaks_and_non_utf8() {
+        for bad in ["/a\nb.mp4", "/a\rb.mp4"] {
+            let err = concat_list(&[PathBuf::from(bad)]).unwrap_err();
+            assert!(matches!(err, Error::Usage(_)), "{bad:?}");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let bytes = OsString::from_vec(b"/a\xff.mp4".to_vec());
+            let err = concat_list(&[PathBuf::from(bytes)]).unwrap_err();
+            assert!(matches!(err, Error::Usage(_)));
+        }
+    }
+
+    #[test]
+    fn muxer_follows_the_extension() {
+        let muxer = |name: &str| muxer_for(Path::new(name));
+        assert_eq!(muxer("joined.mp4"), "mp4");
+        assert_eq!(muxer("joined.mov"), "mov");
+        assert_eq!(muxer("joined.mkv"), "matroska");
+        assert_eq!(muxer("joined.webm"), "webm");
+        assert_eq!(muxer("joined.m4a"), "ipod");
+        assert_eq!(muxer("joined.wav"), "wav");
+        assert_eq!(muxer("joined.xyz"), "matroska");
+    }
+
+    #[test]
+    fn audio_codec_fits_the_container() {
+        let codec = |name: &str| audio_codec_for(Path::new(name));
+        assert_eq!(codec("joined.wav"), "pcm_s16le");
+        assert_eq!(codec("joined.flac"), "flac");
+        assert_eq!(codec("joined.mp3"), "libmp3lame");
+        assert_eq!(codec("joined.m4a"), "aac");
     }
 }

@@ -61,7 +61,12 @@ impl Probe {
         Probe { ffprobe }
     }
 
-    fn probe_one(&self, path: &Path) -> Result<SourceProbe> {
+    fn probe_one(
+        &self,
+        path: &Path,
+        opts: &RunOpts,
+        on_line: &mut dyn FnMut(&str),
+    ) -> Result<SourceProbe> {
         let argv: Vec<OsString> = vec![
             self.ffprobe.path.clone().into_os_string(),
             "-v".into(),
@@ -73,11 +78,29 @@ impl Probe {
             path.as_os_str().to_owned(),
         ];
         let mut json = String::new();
-        run(&argv, RunOpts::default(), &mut |line| {
+        run(&argv, opts.clone(), &mut |line| {
             json.push_str(line);
             json.push('\n');
+            on_line(line);
         })?;
         parse(path, &json)
+    }
+
+    /// Probes every source and writes `probe.json`, passing every ffprobe line to `on_line`
+    /// and stopping with `Error::Interrupted` when `opts.interrupt` is set. The runner uses
+    /// this; [`Step::run`] is the same without progress or interrupt.
+    pub fn run_with(&self, ctx: &Ctx, opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<()> {
+        let probes = ctx
+            .sources
+            .iter()
+            .map(|s| self.probe_one(s, &opts, on_line))
+            .collect::<Result<Vec<_>>>()?;
+        let json = serde_json::to_string_pretty(&probes)
+            .map_err(|e| Error::Parse(format!("cannot encode probe results: {e}")))?;
+        write_atomic(&ctx.dir.join(PROBE_FILE), |tmp| {
+            fs::write(tmp, json)?;
+            Ok(())
+        })
     }
 }
 
@@ -175,16 +198,6 @@ impl Step for Probe {
     }
 
     fn run(&self, ctx: &Ctx) -> Result<()> {
-        let probes = ctx
-            .sources
-            .iter()
-            .map(|s| self.probe_one(s))
-            .collect::<Result<Vec<_>>>()?;
-        let json = serde_json::to_string_pretty(&probes)
-            .map_err(|e| Error::Parse(format!("cannot encode probe results: {e}")))?;
-        write_atomic(&ctx.dir.join(PROBE_FILE), |tmp| {
-            fs::write(tmp, json)?;
-            Ok(())
-        })
+        self.run_with(ctx, RunOpts::default(), &mut |_| {})
     }
 }

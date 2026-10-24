@@ -20,24 +20,11 @@ impl Audio {
     pub fn new(ffmpeg: ToolInfo) -> Self {
         Audio { ffmpeg }
     }
-}
 
-impl Step for Audio {
-    const NAME: StepName = StepName::Audio;
-
-    fn params(&self, _ctx: &Ctx) -> Vec<u8> {
-        format!(
-            "ffmpeg={}\nformat=pcm_s16le mono 16000\n",
-            self.ffmpeg.version
-        )
-        .into_bytes()
-    }
-
-    fn outputs(&self, ctx: &Ctx) -> Vec<PathBuf> {
-        vec![ctx.dir.join(AUDIO_FILE)]
-    }
-
-    fn run(&self, ctx: &Ctx) -> Result<()> {
+    /// Extracts `audio.wav`, passing every ffmpeg line to `on_line` and stopping with
+    /// `Error::Interrupted` when `opts.interrupt` is set. The runner uses this;
+    /// [`Step::run`] is the same without progress or interrupt.
+    pub fn run_with(&self, ctx: &Ctx, opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<()> {
         let input = joined_path(ctx);
         write_atomic(&ctx.dir.join(AUDIO_FILE), |tmp| {
             let argv = [
@@ -59,8 +46,28 @@ impl Step for Audio {
                 tmp.as_os_str(),
             ]
             .map(ToOwned::to_owned);
-            run(&argv, RunOpts::default(), &mut |_| {})?;
+            run(&argv, opts, on_line)?;
             Ok(())
         })
+    }
+}
+
+impl Step for Audio {
+    const NAME: StepName = StepName::Audio;
+
+    fn params(&self, _ctx: &Ctx) -> Vec<u8> {
+        format!(
+            "ffmpeg={}\nformat=pcm_s16le mono 16000\n",
+            self.ffmpeg.version
+        )
+        .into_bytes()
+    }
+
+    fn outputs(&self, ctx: &Ctx) -> Vec<PathBuf> {
+        vec![ctx.dir.join(AUDIO_FILE)]
+    }
+
+    fn run(&self, ctx: &Ctx) -> Result<()> {
+        self.run_with(ctx, RunOpts::default(), &mut |_| {})
     }
 }

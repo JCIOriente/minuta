@@ -1,6 +1,9 @@
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use minuta::error::Error;
 use minuta::job::{Ctx, Step};
@@ -404,4 +407,192 @@ fn audio_params_change_with_tool_version() {
         Audio::new(tool).params(&ctx),
         Audio::new(newer).params(&ctx)
     );
+}
+
+// ---- audio-only, containers, interrupt ----
+
+/// A one second sine WAV at `rate` Hz.
+fn tone(t: &Tools, dir: &Path, name: &str, rate: u32) -> PathBuf {
+    let path = dir.join(name);
+    let src = format!("sine=frequency=440:sample_rate={rate}:d=1");
+    ffmpeg(t, &["-f", "lavfi", "-i", &src, path.to_str().unwrap()]);
+    path
+}
+
+#[test]
+fn audio_only_sources_reencode_to_wav() {
+    let Some(t) = ffmpeg_available() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let a = tone(&t, tmp.path(), "a.wav", 8000);
+    let b = tone(&t, tmp.path(), "b.wav", 16000);
+    let ctx = probe_all(&t, tmp.path(), &[a, b]);
+    assert_eq!(plan_join(&read_probe(tmp.path()).unwrap()), Mode::Reencode);
+
+    Join::new(t.ffmpeg.clone(), Encoder::X264)
+        .run(&ctx)
+        .unwrap();
+
+    let joined = describe(&t, &tmp.path().join("joined.wav"));
+    assert!(joined.video.is_none());
+    assert_eq!(joined.audio.codec, "pcm_s16le");
+    assert!((joined.duration - 2.0).abs() < 0.3, "{}", joined.duration);
+}
+
+#[test]
+fn audio_only_and_video_sources_rejected() {
+    let Some(t) = ffmpeg_available() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let a = clip(&t, tmp.path(), "a.mp4", "red", "160x120", 1);
+    let b = tone(&t, tmp.path(), "b.wav", 16000);
+    let ctx = probe_all(&t, tmp.path(), &[a, b]);
+
+    let err = Join::new(t.ffmpeg.clone(), Encoder::X264)
+        .run(&ctx)
+        .unwrap_err();
+
+    assert!(
+        matches!(&err, Error::Job(m) if m == "cannot join audio-only and video sources"),
+        "{err}"
+    );
+    assert!(!tmp.path().join("joined.mkv").exists());
+}
+
+#[test]
+fn webm_sources_keep_their_container() {
+    let Some(t) = ffmpeg_available() else { return };
+    let listing = encoders(&t);
+    if !listing.contains("libvpx ") || !listing.contains("libopus") {
+        eprintln!("skipping: this ffmpeg has no libvpx or libopus");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let mut sources = Vec::new();
+    for name in ["a.webm", "b.webm"] {
+        let path = tmp.path().join(name);
+        ffmpeg(
+            &t,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=160x120:r=25:d=1",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:d=1",
+                "-c:v",
+                "libvpx",
+                "-c:a",
+                "libopus",
+                "-shortest",
+                path.to_str().unwrap(),
+            ],
+        );
+        sources.push(path);
+    }
+    let ctx = probe_all(&t, tmp.path(), &sources);
+
+    Join::new(t.ffmpeg.clone(), Encoder::X264)
+        .run(&ctx)
+        .unwrap();
+
+    let joined = describe(&t, &tmp.path().join("joined.webm"));
+    assert_eq!(joined.video.unwrap().codec, "vp8");
+    assert_eq!(joined.audio.codec, "opus");
+    assert!((joined.duration - 2.0).abs() < 0.3, "{}", joined.duration);
+}
+
+/// Retry while a freshly written script is still held open by a fork in another test
+/// thread (ETXTBSY on Linux).
+fn retry<T>(mut f: impl FnMut() -> minuta::error::Result<T>) -> minuta::error::Result<T> {
+    let mut attempts = 0;
+    loop {
+        let res = f();
+        attempts += 1;
+        let busy = matches!(&res, Err(Error::Io(e)) if e.to_string().contains("Text file busy"));
+        if !busy || attempts >= 20 {
+            return res;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn interrupt_stops_join_and_leaves_no_output() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = tmp.path().join("ffmpeg");
+    fs::write(&fake, "#!/bin/sh\nexec sleep 30\n").unwrap();
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    let tool = ToolInfo {
+        path: fake,
+        version: "fake".into(),
+    };
+    let probe = |name: &str| SourceProbe {
+        path: tmp.path().join(name),
+        duration: 1.0,
+        video: None,
+        audio: minuta::steps::probe::AudioStream {
+            codec: "aac".into(),
+            sample_rate: 48000,
+            channels: 2,
+        },
+    };
+    let sources = vec![probe("a.m4a"), probe("b.m4a")];
+    fs::write(
+        tmp.path().join("probe.json"),
+        serde_json::to_string(&sources).unwrap(),
+    )
+    .unwrap();
+    let ctx = Ctx {
+        dir: tmp.path().to_path_buf(),
+        sources: sources.iter().map(|s| s.path.clone()).collect(),
+        source_digest: "d".into(),
+    };
+    let flag = Arc::new(AtomicBool::new(false));
+    let setter = {
+        let flag = Arc::clone(&flag);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            flag.store(true, Ordering::SeqCst);
+        })
+    };
+
+    let started = Instant::now();
+    let res = retry(|| {
+        let opts = RunOpts {
+            interrupt: Some(Arc::clone(&flag)),
+            ..RunOpts::default()
+        };
+        Join::new(tool.clone(), Encoder::X264).run_with(&ctx, opts, &mut |_| {})
+    });
+    setter.join().unwrap();
+
+    assert!(matches!(res, Err(Error::Interrupted)), "{res:?}");
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert!(!tmp.path().join("joined.m4a").exists());
+    assert!(!tmp.path().join("joined.m4a.tmp").exists());
+}
+
+#[test]
+fn run_with_forwards_tool_output() {
+    let Some(t) = ffmpeg_available() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let a = clip(&t, tmp.path(), "a.mp4", "red", "160x120", 1);
+    let ctx = ctx(tmp.path(), &[a]);
+
+    let mut probe_lines = 0;
+    Probe::new(t.ffprobe.clone())
+        .run_with(&ctx, RunOpts::default(), &mut |_| probe_lines += 1)
+        .unwrap();
+    Join::new(t.ffmpeg.clone(), Encoder::X264)
+        .run(&ctx)
+        .unwrap();
+    let mut audio_lines = 0;
+    Audio::new(t.ffmpeg.clone())
+        .run_with(&ctx, RunOpts::default(), &mut |_| audio_lines += 1)
+        .unwrap();
+
+    assert!(probe_lines > 0 && audio_lines > 0);
 }
