@@ -2,7 +2,7 @@
 
 - Spec: docs/specs/2026-10-23-core-pipeline.md
 - Date: 2026-10-23
-- Status: approved
+- Status: in backlog
 
 ## Overview
 One Rust crate (`minuta`, library plus binary). The plan cuts it by module so tasks run in
