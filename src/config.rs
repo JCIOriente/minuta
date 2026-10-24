@@ -16,17 +16,6 @@ pub enum Source {
     Default,
 }
 
-impl Source {
-    pub fn label(self) -> &'static str {
-        match self {
-            Source::Flag => "flag",
-            Source::Env => "env",
-            Source::File => "file",
-            Source::Default => "default",
-        }
-    }
-}
-
 /// A resolved value and the layer it was taken from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Setting {
