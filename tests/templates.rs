@@ -1,0 +1,329 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use minuta::error::Error;
+use minuta::llm::BackendId;
+use minuta::template::discover::{discover, Dirs};
+use minuta::template::{Input, Layer, Template, Vars, VARIABLES};
+use tempfile::TempDir;
+
+fn parse(name: &str, text: &str) -> minuta::error::Result<Template> {
+    Template::parse(name, Layer::Project, None, text)
+}
+
+fn usage(r: minuta::error::Result<impl std::fmt::Debug>) -> String {
+    match r {
+        Err(Error::Usage(m)) => m,
+        other => panic!("expected usage error, got {other:?}"),
+    }
+}
+
+fn vars() -> Vars {
+    Vars {
+        output_lang: "Spanish".into(),
+        output_lang_code: "es".into(),
+        speech_lang: "Catalan".into(),
+        job_name: "reunion".into(),
+        duration: "1:02:03".into(),
+    }
+}
+
+#[test]
+fn frontmatter_defaults() {
+    let t = parse("a", "---\n---\nbody\n").unwrap();
+    assert_eq!(t.input, Input::Transcript);
+    assert_eq!(t.description, None);
+    assert_eq!(t.llm, None);
+    assert_eq!(t.lang, None);
+    assert_eq!(t.body, "body\n");
+}
+
+#[test]
+fn frontmatter_each_key() {
+    let t = parse("a", "---\ndescription: Short\n---\nx").unwrap();
+    assert_eq!(t.description.as_deref(), Some("Short"));
+    let t = parse("a", "---\ninput: b\n---\nx").unwrap();
+    assert_eq!(t.input, Input::Template("b".into()));
+    let t = parse("a", "---\ninput: transcript\n---\nx").unwrap();
+    assert_eq!(t.input, Input::Transcript);
+    assert!(parse("a", "---\noutput: markdown\n---\nx").is_ok());
+    let t = parse("a", "---\nllm: claude:sonnet\n---\nx").unwrap();
+    assert_eq!(
+        t.llm,
+        Some(BackendId::Claude {
+            model: Some("sonnet".into())
+        })
+    );
+    let t = parse("a", "---\nlang: es\n---\nx").unwrap();
+    assert_eq!(t.lang.as_deref(), Some("es"));
+}
+
+#[test]
+fn frontmatter_errors_name_the_template() {
+    for text in [
+        "---\nllm: gpt\n---\nx",
+        "---\nlang: xx\n---\nx",
+        "---\ninput: Bad Name\n---\nx",
+        "---\noutput: html\n---\nx",
+        "---\ndescription: x\nbody\n",
+    ] {
+        let m = usage(parse("mine", text));
+        assert!(m.contains("template mine"), "{text:?}: {m}");
+    }
+}
+
+#[test]
+fn no_frontmatter_is_body() {
+    let t = parse("a", "Just a prompt.\n---\nnot a fence\n").unwrap();
+    assert_eq!(t.body, "Just a prompt.\n---\nnot a fence\n");
+    assert_eq!(t.input, Input::Transcript);
+    assert_eq!(t.raw, t.body);
+}
+
+#[test]
+fn fields_output_rejected() {
+    let m = usage(parse("a", "---\noutput: fields\n---\nx"));
+    assert!(m.contains("later version"), "{m}");
+    assert!(m.contains("template a"), "{m}");
+}
+
+#[test]
+fn unknown_key_rejected() {
+    let m = usage(parse("a", "---\nlimits: 3\n---\nx"));
+    assert!(m.contains("template a"), "{m}");
+    assert!(m.contains("limits"), "{m}");
+}
+
+#[test]
+fn yaml_error_has_line() {
+    let path = Path::new("/t/a.md").to_path_buf();
+    let r = Template::parse(
+        "a",
+        Layer::User,
+        Some(path),
+        "---\ndescription: ok\nllm: [unclosed\n---\nx",
+    );
+    let m = usage(r);
+    assert!(m.contains("/t/a.md"), "{m}");
+    assert!(m.contains("line 3"), "{m}");
+}
+
+#[test]
+fn invalid_names_rejected() {
+    for name in ["", "A", "-a", "_a", "a b", "a.b", "é", "a/b"] {
+        let m = usage(parse(name, "x"));
+        assert!(m.contains("invalid template name"), "{name:?}: {m}");
+    }
+}
+
+#[test]
+fn valid_names_accepted() {
+    for name in ["a", "0a", "a-b_c", "minutes2"] {
+        assert!(parse(name, "x").is_ok(), "{name}");
+    }
+}
+
+#[test]
+fn reserved_names_rejected() {
+    for name in [
+        "transcript",
+        "chapters",
+        "probe",
+        "join",
+        "audio",
+        "transcribe",
+        "outputs",
+        "job",
+    ] {
+        let m = usage(parse(name, "x"));
+        assert!(m.contains("reserved"), "{name}: {m}");
+    }
+}
+
+#[test]
+fn renders_each_variable() {
+    let v = vars();
+    for (var, expected) in [
+        ("output_lang", "Spanish"),
+        ("output_lang_code", "es"),
+        ("speech_lang", "Catalan"),
+        ("job_name", "reunion"),
+        ("duration", "1:02:03"),
+    ] {
+        let t = parse("a", &format!("[{{{{{var}}}}}]")).unwrap();
+        assert_eq!(t.render(&v), format!("[{expected}]"), "{var}");
+    }
+}
+
+#[test]
+fn variables_allow_spaces_and_repeat() {
+    let t = parse("a", "{{ job_name }} / {{job_name}} / {{  duration  }}").unwrap();
+    assert_eq!(t.render(&vars()), "reunion / reunion / 1:02:03");
+}
+
+#[test]
+fn unknown_variable_rejected() {
+    let m = usage(parse("a", "hello {{ nope }}"));
+    assert!(m.contains("nope"), "{m}");
+    for v in VARIABLES {
+        assert!(m.contains(v), "{m}");
+    }
+}
+
+fn write(dir: &Path, file: &str, text: &str) {
+    fs::create_dir_all(dir).unwrap();
+    fs::write(dir.join(file), text).unwrap();
+}
+
+struct Env {
+    _tmp: TempDir,
+    user: PathBuf,
+    project: PathBuf,
+}
+
+fn env() -> Env {
+    let tmp = TempDir::new().unwrap();
+    let user = tmp.path().join("user");
+    let project = tmp.path().join("project");
+    Env {
+        _tmp: tmp,
+        user,
+        project,
+    }
+}
+
+impl Env {
+    fn dirs(&self) -> Dirs {
+        Dirs {
+            user: Some(self.user.clone()),
+            project: self.project.clone(),
+        }
+    }
+}
+
+#[test]
+fn user_overrides_builtin() {
+    let e = env();
+    write(&e.user, "summary.md", "user prompt");
+    let c = discover(&e.dirs()).unwrap();
+    let t = c.get("summary").unwrap();
+    assert_eq!(t.layer, Layer::User);
+    assert_eq!(t.body, "user prompt");
+    assert_eq!(t.path.as_deref(), Some(e.user.join("summary.md").as_path()));
+}
+
+#[test]
+fn project_overrides_user() {
+    let e = env();
+    write(&e.user, "minutes.md", "user prompt");
+    write(&e.project, "minutes.md", "project prompt");
+    let c = discover(&e.dirs()).unwrap();
+    let t = c.get("minutes").unwrap();
+    assert_eq!(t.layer, Layer::Project);
+    assert_eq!(t.body, "project prompt");
+}
+
+#[test]
+fn missing_dir_is_empty() {
+    let e = env();
+    let c = discover(&e.dirs()).unwrap();
+    assert_eq!(c.templates.keys().collect::<Vec<_>>(), ["summary"]);
+    assert_eq!(c.get("summary").unwrap().layer, Layer::BuiltIn);
+    assert!(c.get("summary").unwrap().path.is_none());
+    assert!(c.invalid.is_empty());
+}
+
+#[test]
+fn unreadable_dir_is_error() {
+    let e = env();
+    // A regular file where a directory is expected cannot be listed.
+    fs::create_dir_all(e.user.parent().unwrap()).unwrap();
+    fs::write(&e.user, "x").unwrap();
+    let err = discover(&e.dirs()).unwrap_err();
+    assert!(matches!(err, Error::Io(_)), "{err:?}");
+    assert!(err.to_string().contains(e.user.to_str().unwrap()), "{err}");
+}
+
+#[test]
+fn non_md_files_and_dirs_are_ignored() {
+    let e = env();
+    write(&e.project, "notes.txt", "x");
+    fs::create_dir_all(e.project.join("sub.md")).unwrap();
+    let c = discover(&e.dirs()).unwrap();
+    assert_eq!(c.templates.len(), 1);
+    assert!(c.invalid.is_empty());
+}
+
+#[test]
+fn invalid_file_listed_not_fatal() {
+    let e = env();
+    write(&e.project, "Bad Name.md", "x");
+    write(&e.project, "broken.md", "---\nnope: 1\n---\nx");
+    write(&e.project, "good.md", "x");
+    let c = discover(&e.dirs()).unwrap();
+    assert!(c.templates.contains_key("good"));
+    let mut files: Vec<_> = c
+        .invalid
+        .iter()
+        .map(|i| i.path.file_name().unwrap().to_str().unwrap().to_string())
+        .collect();
+    files.sort();
+    assert_eq!(files, ["Bad Name.md", "broken.md"]);
+    assert!(c.invalid.iter().all(|i| i.layer == Layer::Project));
+    let m = usage(c.get("broken"));
+    assert!(m.contains("nope"), "{m}");
+}
+
+#[test]
+fn invalid_override_shadows_lower_layer() {
+    let e = env();
+    write(&e.project, "summary.md", "{{ nope }}");
+    let c = discover(&e.dirs()).unwrap();
+    let m = usage(c.get("summary"));
+    assert!(m.contains("nope"), "{m}");
+}
+
+#[test]
+fn non_utf8_file_names_the_path() {
+    let e = env();
+    fs::create_dir_all(&e.project).unwrap();
+    fs::write(e.project.join("bin.md"), [0xff, 0xfe, 0x00]).unwrap();
+    let c = discover(&e.dirs()).unwrap();
+    assert_eq!(c.invalid.len(), 1);
+    assert!(
+        c.invalid[0].error.contains("bin.md"),
+        "{}",
+        c.invalid[0].error
+    );
+    let m = usage(c.get("bin"));
+    assert!(m.contains("not valid UTF-8"), "{m}");
+}
+
+#[test]
+fn get_unknown_lists_names() {
+    let e = env();
+    write(&e.project, "minutes.md", "x");
+    let c = discover(&e.dirs()).unwrap();
+    let m = usage(c.get("nope"));
+    assert!(m.contains("nope"), "{m}");
+    assert!(m.contains("minutes, summary"), "{m}");
+}
+
+#[test]
+fn builtin_summary_parses() {
+    let e = env();
+    let c = discover(&Dirs {
+        user: None,
+        project: e.project.clone(),
+    })
+    .unwrap();
+    let t = c.get("summary").unwrap();
+    assert_eq!(t.input, Input::Transcript);
+    let out = t.render(&vars());
+    assert!(out.contains("reunion"), "{out}");
+    assert!(out.contains("1:02:03"), "{out}");
+    for word in ["overview", "Key points", "Decisions", "Action items"] {
+        assert!(out.contains(word), "{word}");
+    }
+    assert!(!out.contains("{{"), "{out}");
+}
