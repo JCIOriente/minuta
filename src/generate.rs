@@ -21,10 +21,12 @@ use crate::steps::transcribe::TRANSCRIPT_FILE;
 use crate::template::{Input, Template, Vars};
 use crate::transcript::Transcript;
 
-/// The output language code: `flag` > `template` > `config` > `detected` (the speech
-/// language in `transcript.json`). The chosen code is validated; an unknown detected code with
-/// no other source is a usage error that suggests `--output-lang`.
+/// The output language code for template `name`: `flag` > `template` > `config` > `detected`
+/// (the speech language in `transcript.json`). A chosen flag, template or config code that is
+/// unknown is a usage error. An unknown detected code with no other source fails the template
+/// with a hint to pass `--output-lang`.
 pub fn output_lang(
+    name: &str,
     flag: Option<&str>,
     template: Option<&str>,
     config: Option<&str>,
@@ -35,10 +37,13 @@ pub fn output_lang(
         return Ok(code.to_owned());
     }
     if lang::name(detected).is_none() {
-        return Err(Error::Usage(format!(
-            "the transcript's language '{detected}' is not a known language code; \
-             choose the output language with --output-lang"
-        )));
+        return Err(Error::Template {
+            name: name.to_owned(),
+            message: format!(
+                "the transcript's language '{detected}' is not a known language code; \
+                 choose the output language with --output-lang"
+            ),
+        });
     }
     Ok(detected.to_owned())
 }
@@ -68,10 +73,12 @@ impl TemplateRun<'_> {
         PathBuf::from(format!("{}.md", self.template.name))
     }
 
-    /// The template's fingerprint. It hashes the content of the input artifact, so call it
-    /// only once that artifact exists, never ahead of time for a chain of templates.
-    pub fn fingerprint(&self, ctx: &Ctx) -> Result<String> {
+    /// The template's fingerprint. It hashes the content of the input artifact and the
+    /// rendered variable values (which come from `transcript.json` even for a template input),
+    /// so call it only once the input exists, never ahead of time for a chain of templates.
+    pub fn fingerprint(&self, ctx: &Ctx, job_name: &str) -> Result<String> {
         let input = self.read_input(ctx)?;
+        let vars = self.vars(&read_transcript(&ctx.dir)?, job_name)?;
         let t = self.template;
         Ok(fingerprint(&[
             b"template",
@@ -82,6 +89,11 @@ impl TemplateRun<'_> {
             self.backend.context_tokens().to_string().as_bytes(),
             self.output_lang.as_bytes(),
             &Sha256::digest(&input),
+            vars.output_lang.as_bytes(),
+            vars.output_lang_code.as_bytes(),
+            vars.speech_lang.as_bytes(),
+            vars.job_name.as_bytes(),
+            vars.duration.as_bytes(),
         ]))
     }
 
@@ -111,20 +123,11 @@ impl TemplateRun<'_> {
             }
         };
 
-        let output_lang = lang::validate(&self.output_lang)?;
-        let vars = Vars {
-            output_lang: output_lang.to_owned(),
-            output_lang_code: self.output_lang.clone(),
-            speech_lang: lang::name(&transcript.language)
-                .unwrap_or(&transcript.language)
-                .to_owned(),
-            job_name: job_name.to_owned(),
-            duration: duration(&transcript),
-        };
+        let vars = self.vars(&transcript, job_name)?;
         let body = self.template.render(&vars);
         let request = Request {
             body: &body,
-            output_lang,
+            output_lang: &vars.output_lang,
             input: &input,
             context_tokens: self.backend.context_tokens(),
             concurrency,
@@ -155,6 +158,18 @@ impl TemplateRun<'_> {
             Ok(())
         })?;
         Ok(generated)
+    }
+
+    fn vars(&self, transcript: &Transcript, job_name: &str) -> Result<Vars> {
+        Ok(Vars {
+            output_lang: lang::validate(&self.output_lang)?.to_owned(),
+            output_lang_code: self.output_lang.clone(),
+            speech_lang: lang::name(&transcript.language)
+                .unwrap_or(&transcript.language)
+                .to_owned(),
+            job_name: job_name.to_owned(),
+            duration: duration(transcript),
+        })
     }
 
     fn error(&self, message: String) -> Error {

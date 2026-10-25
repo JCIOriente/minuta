@@ -87,19 +87,12 @@ fn execute(r: &TemplateRun, dir: &Path) -> minuta::error::Result<minuta::llm::ch
     )
 }
 
-fn usage(r: minuta::error::Result<String>) -> String {
-    match r {
-        Err(Error::Usage(m)) => m,
-        other => panic!("expected usage error, got {other:?}"),
-    }
-}
-
 // ---- output language precedence ----
 
 #[test]
 fn output_lang_flag_wins() {
     assert_eq!(
-        output_lang(Some("fr"), Some("de"), Some("pt"), "es").unwrap(),
+        output_lang("summary", Some("fr"), Some("de"), Some("pt"), "es").unwrap(),
         "fr"
     );
 }
@@ -107,38 +100,57 @@ fn output_lang_flag_wins() {
 #[test]
 fn output_lang_template_beats_config() {
     assert_eq!(
-        output_lang(None, Some("de"), Some("pt"), "es").unwrap(),
+        output_lang("summary", None, Some("de"), Some("pt"), "es").unwrap(),
         "de"
     );
 }
 
 #[test]
 fn output_lang_config_beats_detected() {
-    assert_eq!(output_lang(None, None, Some("pt"), "es").unwrap(), "pt");
+    assert_eq!(
+        output_lang("summary", None, None, Some("pt"), "es").unwrap(),
+        "pt"
+    );
 }
 
 #[test]
 fn output_lang_detected_default() {
-    assert_eq!(output_lang(None, None, None, "es").unwrap(), "es");
+    assert_eq!(
+        output_lang("summary", None, None, None, "es").unwrap(),
+        "es"
+    );
 }
 
 #[test]
-fn output_lang_unknown_detected_is_usage() {
-    let m = usage(output_lang(None, None, None, "xx"));
-    assert!(m.contains("--output-lang"), "{m}");
+fn output_lang_unknown_detected_fails_the_template() {
+    let err = output_lang("summary", None, None, None, "xx").unwrap_err();
+    assert!(
+        matches!(err, Error::Template { ref name, ref message }
+            if name == "summary" && message.contains("'xx'") && message.contains("--output-lang")),
+        "{err}"
+    );
 }
 
 #[test]
 fn output_lang_unknown_detected_is_fine_when_another_source_is_set() {
-    assert_eq!(output_lang(None, None, Some("pt"), "xx").unwrap(), "pt");
+    assert_eq!(
+        output_lang("summary", None, None, Some("pt"), "xx").unwrap(),
+        "pt"
+    );
 }
 
 #[test]
 fn output_lang_validates_the_chosen_code() {
     for (case, result) in [
-        ("flag", output_lang(Some("zz"), None, None, "es")),
-        ("template", output_lang(None, Some("zz"), None, "es")),
-        ("config", output_lang(None, None, Some("zz"), "es")),
+        ("flag", output_lang("summary", Some("zz"), None, None, "es")),
+        (
+            "template",
+            output_lang("summary", None, Some("zz"), None, "es"),
+        ),
+        (
+            "config",
+            output_lang("summary", None, None, Some("zz"), "es"),
+        ),
     ] {
         assert!(
             matches!(result, Err(Error::Usage(ref m)) if m.contains("zz")),
@@ -197,9 +209,16 @@ fn fingerprint_matches_spec_composition() {
         CONTEXT.to_string().as_bytes(),
         b"es",
         &Sha256::digest(&input),
+        b"Spanish",
+        b"es",
+        b"Spanish",
+        b"reunion",
+        b"0:00:40",
     ]);
     assert_eq!(
-        run(&t, &b, "es").fingerprint(&ctx(dir.path())).unwrap(),
+        run(&t, &b, "es")
+            .fingerprint(&ctx(dir.path()), "reunion")
+            .unwrap(),
         want
     );
 }
@@ -210,7 +229,7 @@ fn fingerprint_sensitive_to_each_part() {
     let base_t = tpl("summary", TEXT);
     let base_b = ScriptedBackend::new(ID, CONTEXT, vec![]);
     let base = run(&base_t, &base_b, "es")
-        .fingerprint(&ctx(dir.path()))
+        .fingerprint(&ctx(dir.path()), "reunion")
         .unwrap();
 
     let renamed = tpl("notes", TEXT);
@@ -225,7 +244,9 @@ fn fingerprint_sensitive_to_each_part() {
         ("output language", &base_t, &base_b, "en"),
     ];
     for (case, t, b, lang) in cases {
-        let fp = run(t, b, lang).fingerprint(&ctx(dir.path())).unwrap();
+        let fp = run(t, b, lang)
+            .fingerprint(&ctx(dir.path()), "reunion")
+            .unwrap();
         assert_ne!(fp, base, "{case}");
     }
 
@@ -235,7 +256,7 @@ fn fingerprint_sensitive_to_each_part() {
         &transcript("es", &[(0.0, 12.0, "Otra cosa.")]),
     );
     let fp = run(&base_t, &base_b, "es")
-        .fingerprint(&ctx(changed.path()))
+        .fingerprint(&ctx(changed.path()), "reunion")
         .unwrap();
     assert_ne!(fp, base, "input artifact content");
 }
@@ -247,15 +268,41 @@ fn fingerprint_template_input_hashes_upstream_markdown() {
     let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
     let r = run(&t, &b, "es");
     fs::write(dir.path().join("summary.md"), "first").unwrap();
-    let first = r.fingerprint(&ctx(dir.path())).unwrap();
+    let first = r.fingerprint(&ctx(dir.path()), "reunion").unwrap();
 
-    write_transcript(dir.path(), &transcript("es", &[(0.0, 1.0, "Cambio.")]));
-    let same = r.fingerprint(&ctx(dir.path())).unwrap();
+    // Same language and end time, so the same variables: only the text changed.
+    write_transcript(dir.path(), &transcript("es", &[(0.0, 40.5, "Cambio.")]));
+    let same = r.fingerprint(&ctx(dir.path()), "reunion").unwrap();
     assert_eq!(same, first, "transcript.json is not the input");
 
     fs::write(dir.path().join("summary.md"), "second").unwrap();
-    let changed = r.fingerprint(&ctx(dir.path())).unwrap();
+    let changed = r.fingerprint(&ctx(dir.path()), "reunion").unwrap();
     assert_ne!(changed, first, "upstream markdown changed");
+}
+
+#[test]
+fn fingerprint_sensitive_to_each_variable() {
+    // A chained template: its upstream Markdown stays identical in every case, so only the
+    // rendered variables can change the fingerprint.
+    let (dir, _) = job();
+    fs::write(dir.path().join("summary.md"), "same").unwrap();
+    let t = tpl("brief", "---\ninput: summary\n---\nShorten it.\n");
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
+    let r = run(&t, &b, "es");
+    let base = r.fingerprint(&ctx(dir.path()), "reunion").unwrap();
+
+    let cases: [(&str, &str, &str, f64); 3] = [
+        ("job_name", "otra", "es", 40.5),
+        ("speech_lang", "reunion", "ca", 40.5),
+        ("duration", "reunion", "es", 99.0),
+    ];
+    for (case, job_name, speech, end) in cases {
+        let other = TempDir::new().unwrap();
+        fs::write(other.path().join("summary.md"), "same").unwrap();
+        write_transcript(other.path(), &transcript(speech, &[(0.0, end, "Hola.")]));
+        let fp = r.fingerprint(&ctx(other.path()), job_name).unwrap();
+        assert_ne!(fp, base, "{case}");
+    }
 }
 
 #[test]
@@ -270,7 +317,9 @@ fn fingerprint_missing_input_is_error() {
         ),
     ];
     for (t, file) in &cases {
-        let err = run(t, &b, "es").fingerprint(&ctx(dir.path())).unwrap_err();
+        let err = run(t, &b, "es")
+            .fingerprint(&ctx(dir.path()), "reunion")
+            .unwrap_err();
         assert!(err.to_string().contains(file), "{file}: {err}");
     }
 }
