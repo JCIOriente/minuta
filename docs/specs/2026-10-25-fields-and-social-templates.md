@@ -437,5 +437,5 @@ Updated by the PRs that implement this spec.
 - [x] T8 `generate_with` final-call hook (#71)
 - [x] T9 built-in youtube, linkedin and instagram templates (#76)
 - [x] T10 fields template step with repair loop (#77)
-- [ ] T11 integration suite and opt-in e2e (#66)
+- [x] T11 integration suite and opt-in e2e (#78)
 - [x] Lessons: docs/conventions.md, docs/common-issues.md (this PR)
