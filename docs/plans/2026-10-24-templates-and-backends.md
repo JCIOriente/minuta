@@ -42,7 +42,7 @@ impl FromStr for BackendId { type Err = Error; }   // Usage error on anything el
 impl Display for BackendId;                        // round-trips: "ollama:gemma4:26b", "claude", "claude:sonnet"
 impl BackendId { pub fn sends_off_machine(&self) -> bool; }  // Claude => true
 pub const DEFAULT_LLM: &str = "ollama:gemma4:26b";
-#[cfg(test)] pub mod fake;   // ScriptedBackend: Vec of replies/errors, records (system, user)
+#[doc(hidden)] pub mod fake;   // ScriptedBackend: Vec of replies/errors, records (system, user). Not cfg(test): tests/generate.rs (an integration test) needs it
 
 // lang.rs (T1)
 pub fn name(code: &str) -> Option<&'static str>;       // "es" -> Some("Spanish"); whisper's table

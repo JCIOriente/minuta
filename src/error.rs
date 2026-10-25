@@ -27,6 +27,14 @@ pub enum Error {
     Config(String),
     #[error("job error: {0}")]
     Job(String),
+    #[error("{backend}: {message}")]
+    Llm {
+        backend: String,
+        message: String,
+        transient: bool,
+    },
+    #[error("template {name}: {message}")]
+    Template { name: String, message: String },
     #[error("interrupted")]
     Interrupted,
 }
@@ -61,5 +69,26 @@ mod tests {
     fn exit_code_other_is_1() {
         assert_eq!(Error::Parse("x".into()).exit_code(), 1);
         assert_eq!(Error::MissingTools(vec![]).exit_code(), 1);
+    }
+
+    #[test]
+    fn llm_error_exit_code_is_1() {
+        let e = Error::Llm {
+            backend: "ollama".into(),
+            message: "down".into(),
+            transient: true,
+        };
+        assert_eq!(e.exit_code(), 1);
+        assert_eq!(e.to_string(), "ollama: down");
+    }
+
+    #[test]
+    fn template_error_exit_code_is_1() {
+        let e = Error::Template {
+            name: "minutes".into(),
+            message: "bad".into(),
+        };
+        assert_eq!(e.exit_code(), 1);
+        assert_eq!(e.to_string(), "template minutes: bad");
     }
 }
