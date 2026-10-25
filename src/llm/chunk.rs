@@ -387,7 +387,7 @@ fn run_all(
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Barrier, Mutex};
+    use std::sync::{Condvar, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -418,6 +418,36 @@ mod tests {
             .map(|i| format!("line {i:03}"))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    const DEADLINE: Duration = Duration::from_secs(10);
+
+    /// A counter threads can raise and wait on, failing instead of hanging after DEADLINE.
+    struct Gate {
+        count: Mutex<usize>,
+        changed: Condvar,
+    }
+
+    impl Gate {
+        fn new() -> Self {
+            Gate {
+                count: Mutex::new(0),
+                changed: Condvar::new(),
+            }
+        }
+        fn raise(&self) {
+            *self.count.lock().unwrap() += 1;
+            self.changed.notify_all();
+        }
+        /// Block until the count reaches `n`; panic with `failure` after DEADLINE.
+        fn wait_for(&self, n: usize, failure: &str) {
+            let guard = self.count.lock().unwrap();
+            let (_count, timeout) = self
+                .changed
+                .wait_timeout_while(guard, DEADLINE, |count| *count < n)
+                .unwrap();
+            assert!(!timeout.timed_out(), "{failure}");
+        }
     }
 
     fn request<'a>(input: &'a str, context_tokens: usize, concurrency: usize) -> Request<'a> {
@@ -693,14 +723,32 @@ mod tests {
 
     #[test]
     fn huge_single_line_splits_quickly() {
-        let line = "abcdefg hij klmnopqrs tu ".repeat(80_000); // 2 MB, one line
-        let started = Instant::now();
-        let pieces = pack([line.as_str()], "\n", 30);
-        let elapsed = started.elapsed();
-        assert!(elapsed < Duration::from_secs(2), "took {elapsed:?}");
+        const WORDS: &str = "abcdefg hij klmnopqrs tu "; // 25 bytes
+        let small = WORDS.repeat(20_000); // 500 KB, one line
+        let large = WORDS.repeat(80_000); // 2 MB, one line
+                                          // Best of three runs, floored at 1 ms so tiny timings do not make a noisy ratio.
+        let time = |line: &str| {
+            (0..3)
+                .map(|_| {
+                    let started = Instant::now();
+                    pack([line], "\n", 30);
+                    started.elapsed()
+                })
+                .min()
+                .unwrap()
+                .max(Duration::from_millis(1))
+        };
+        let (t_small, t_large) = (time(&small), time(&large));
+        // Linear growth gives a ratio near 4, quadratic near 16.
+        let ratio = t_large.as_secs_f64() / t_small.as_secs_f64();
+        assert!(
+            ratio < 8.0,
+            "4x input took {ratio:.1}x as long ({t_small:?} -> {t_large:?})"
+        );
+        let pieces = pack([large.as_str()], "\n", 30);
         assert!(pieces.iter().all(|p| p.chars().count() <= 30));
         let got: String = pieces.concat().split_whitespace().collect();
-        let want: String = line.split_whitespace().collect();
+        let want: String = large.split_whitespace().collect();
         assert_eq!(got, want);
     }
 
@@ -736,14 +784,14 @@ mod tests {
         let peak = AtomicUsize::new(0);
         // The first CONCURRENCY calls wait for each other, so they overlap for certain; a
         // worker beyond the limit would start a call while they wait and raise the peak.
-        let barrier = Barrier::new(CONCURRENCY);
+        let arrived = Gate::new();
         let complete = |s: &str, _: &str| {
             if !is_final(s) {
                 let now = current.fetch_add(1, Ordering::SeqCst) + 1;
                 peak.fetch_max(now, Ordering::SeqCst);
                 if started.fetch_add(1, Ordering::SeqCst) < CONCURRENCY {
-                    barrier.wait();
-                    thread::sleep(Duration::from_millis(20));
+                    arrived.raise();
+                    arrived.wait_for(CONCURRENCY, "fewer than 3 calls overlapped");
                 }
                 current.fetch_sub(1, Ordering::SeqCst);
             }
@@ -908,12 +956,19 @@ mod tests {
         let input = numbered_lines(200);
         let started = AtomicUsize::new(0);
         let finished = AtomicUsize::new(0);
+        // Chunk 0 fails only once chunk 1 is in flight; chunk 1 ends only after chunk 0 failed,
+        // so generate must wait for it. No timing decides the outcome.
+        let second_started = Gate::new();
+        let failed = Gate::new();
         let complete = |_: &str, u: &str| {
             started.fetch_add(1, Ordering::SeqCst);
             let result = if u.starts_with("line 000") {
+                second_started.wait_for(1, "the second call never started");
+                failed.raise();
                 Err(boom())
             } else {
-                thread::sleep(Duration::from_millis(50));
+                second_started.raise();
+                failed.wait_for(1, "the first call never failed");
                 Ok("n".to_string())
             };
             finished.fetch_add(1, Ordering::SeqCst);
@@ -922,7 +977,7 @@ mod tests {
         let err = generate(&request(&input, 300, 2), &complete, &mut |_| {}).unwrap_err();
         assert!(matches!(err, Error::Llm { .. }), "{err}");
         let started = started.load(Ordering::SeqCst);
-        assert!(started <= 2, "{started} calls started after the error");
+        assert!(started >= 2, "only {started} calls started");
         assert_eq!(finished.load(Ordering::SeqCst), started);
     }
 
