@@ -715,6 +715,7 @@ impl TemplatePhase<'_> {
             backend,
             output_lang,
             forced,
+            repairs: self.config.repairs(),
         };
         let fingerprint = run.fingerprint(self.ctx, self.job_name)?;
         let Some(reason) = template_reason(job, name, &fingerprint, forced)? else {
@@ -738,7 +739,7 @@ impl TemplatePhase<'_> {
             &mut |event| progress.event(event),
         )?;
         let seconds = started.elapsed().as_secs_f64();
-        job.mark_template_done(name, &fingerprint, seconds, &[run.artifact()])?;
+        job.mark_template_done(name, &fingerprint, seconds, &run.artifacts())?;
         let detail = template_detail(&id, generated.calls);
         progress.done(index, name, Some(&detail), seconds);
         Ok(true)
