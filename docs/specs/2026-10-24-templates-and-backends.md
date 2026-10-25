@@ -268,7 +268,8 @@ The backend for a template is chosen by `--llm` > template `llm:` > `llm.default
   transient failure.
 
 ### Call cache
-`<job>/llm-cache/<key>.txt` holds one call's cleaned output, written with `write_atomic`.
+`<job>/llm-cache/<key>.txt` holds one call's cleaned output. It is written atomically: to a unique temp file in
+`llm-cache/` (so concurrent calls never share one), synced, then renamed.
 Key = SHA-256 of (backend id, context budget, system, user). Every call checks the cache
 first, except calls of a template whose stale reason is `forced`. Those calls skip the read
 and overwrite the entry.

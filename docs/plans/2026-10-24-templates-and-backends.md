@@ -96,6 +96,7 @@ pub fn run_capture(argv: &[OsString], stdin: &[u8], opts: RunOpts, on_stderr: &m
 pub struct Policy { pub retries: u32, pub backoff: Duration }
 pub struct CallCache { /* <job>/llm-cache */ }
 impl CallCache { pub fn new(job_dir: &Path) -> CallCache; }
+impl CallCache { pub fn clean_tmp(&self) -> Result<()>; }  // removes leftover *.tmp in llm-cache; call only when no calls are in flight (at the start of a run)
 pub fn call(backend: &dyn Backend, cache: &CallCache, policy: &Policy, system: &str, user: &str,
             refresh: bool, interrupt: &AtomicBool) -> Result<String>;   // refresh = skip cache read
 pub fn clean(output: &str) -> String;
@@ -295,7 +296,7 @@ Reviews run on opus.
 - Acceptance:
   - [ ] the cache key is `fingerprint([backend.id(), context_tokens, system, user])`; changing any one part changes the key (one assertion per part)
   - [ ] a hit returns the stored text without calling the backend; `refresh: true` calls the backend and overwrites the entry
-  - [ ] entries are `<job>/llm-cache/<key>.txt`, written with `write_atomic`; the directory is created on first write; a read error other than NotFound is returned, not treated as a miss
+  - [ ] entries are `<job>/llm-cache/<key>.txt`, written atomically (unique temp file in `llm-cache/`, synced, renamed); the directory is created on first write; a read error other than NotFound is returned, not treated as a miss
   - [ ] transient errors are retried up to `policy.retries` attempts in total, sleeping `backoff * 2^(n-1)` between them; non-transient errors and `Interrupted` are returned at once; after the last attempt the last error is returned
   - [ ] the backoff sleep wakes within 100 ms of `interrupt` and returns `Error::Interrupted`
   - [ ] `clean` trims, removes a leading `<think>…</think>` block, and unwraps output that is one fenced block (with or without a language tag); output that is empty after cleaning is a transient `Error::Llm`; only cleaned, non-empty text is cached

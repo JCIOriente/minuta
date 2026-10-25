@@ -71,6 +71,10 @@ impl CallCache {
                 .map_err(|e| with_path(&tmp, e))?;
             fs::rename(&tmp, &path).map_err(|e| with_path(&path, e))
         })();
+        if result.is_ok() {
+            // Best effort: persist the rename. Some platforms cannot sync a directory.
+            let _ = fs::File::open(&self.dir).and_then(|d| d.sync_all());
+        }
         if result.is_err() {
             // Best effort: `clean_tmp` removes whatever survives.
             let _ = fs::remove_file(&tmp);
@@ -78,7 +82,8 @@ impl CallCache {
         result
     }
 
-    /// Removes temp files left by interrupted writes. A missing cache dir is fine.
+    /// Removes leftover `*.tmp` files in `llm-cache`; call only when no calls are in flight
+    /// (at the start of a run). A missing cache dir is fine.
     pub fn clean_tmp(&self) -> Result<()> {
         let entries = match fs::read_dir(&self.dir) {
             Ok(entries) => entries,
@@ -428,6 +433,16 @@ mod tests {
         let cache = CallCache::new(dir.path());
         let err = cache.write("k", "text").unwrap_err();
         assert!(err.to_string().contains("llm-cache"), "{err}");
+    }
+
+    #[test]
+    fn rename_error_names_entry_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CallCache::new(dir.path());
+        let entry = dir.path().join("llm-cache").join("k.txt");
+        fs::create_dir_all(entry.join("child")).unwrap();
+        let err = cache.write("k", "text").unwrap_err();
+        assert!(err.to_string().contains("k.txt"), "{err}");
     }
 
     #[test]
