@@ -12,14 +12,26 @@ use std::sync::atomic::AtomicBool;
 use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
+use crate::fields::prompt::{fields_block, repair_system, repair_user, schema};
+use crate::fields::render::{artifact_json, render};
+use crate::fields::validate::parse_answer;
+use crate::fields::{FieldsSpec, Values, Violation, FIELDS_VERSION};
 use crate::job::{fingerprint, write_atomic, Ctx};
 use crate::lang;
-use crate::llm::call::{call, CallCache, Policy};
+use crate::llm::call::{call, call_json, Answer, CallCache, Policy};
 use crate::llm::chunk::{self, transcript_text, Event, Generated, Request, PROMPT_VERSION};
 use crate::llm::{Backend, BackendId};
 use crate::steps::transcribe::TRANSCRIPT_FILE;
-use crate::template::{Input, Template, Vars};
+use crate::template::{Input, Output, Template, Vars};
 use crate::transcript::Transcript;
+
+/// What to try when a fields answer still breaks its limits after every repair call.
+const REPAIRS_HINT: &str = "raise llm.repairs, relax the limit in a project template, \
+                            or use a stronger backend with --llm";
+
+/// One `call_json` with the fields schema: the accepted values and the answer text, or the
+/// rejected answer and its violations.
+type Ask<'a> = &'a dyn Fn(&str, &str) -> Result<Answer<(Values, String)>>;
 
 /// The output language code for template `name`: `flag` > `template` > `config` > `detected`
 /// (the speech language in `transcript.json`). A chosen flag, template or config code that is
@@ -65,39 +77,56 @@ pub struct TemplateRun<'a> {
     pub output_lang: String,
     /// The template's stale reason is `forced`: its calls skip the cache read.
     pub forced: bool,
+    /// Repair calls after a rejected fields answer (`llm.repairs`); unused for Markdown.
+    pub repairs: u32,
 }
 
 impl TemplateRun<'_> {
-    /// The artifact the template writes, relative to the job folder: `<name>.md`.
-    pub fn artifact(&self) -> PathBuf {
-        PathBuf::from(format!("{}.md", self.template.name))
+    /// The artifacts the template writes, relative to the job folder, in write order:
+    /// `<name>.md`, or `<name>.json` then `<name>.md` for a fields template (ADR-0007).
+    pub fn artifacts(&self) -> Vec<PathBuf> {
+        let file = |ext: &str| PathBuf::from(format!("{}.{ext}", self.template.name));
+        match self.template.output {
+            Output::Markdown => vec![file("md")],
+            Output::Fields(_) => vec![file("json"), file("md")],
+        }
     }
 
     /// The template's fingerprint. It hashes the content of the input artifact and the
     /// rendered variable values (which come from `transcript.json` even for a template input),
     /// so call it only once the input exists, never ahead of time for a chain of templates.
+    /// A fields template adds `FIELDS_VERSION`; Markdown templates keep their parts.
     pub fn fingerprint(&self, ctx: &Ctx, job_name: &str) -> Result<String> {
         let input = self.read_input(ctx)?;
         let vars = self.vars(&read_transcript(&ctx.dir)?, job_name)?;
         let t = self.template;
-        Ok(fingerprint(&[
+        let input_digest = Sha256::digest(&input);
+        let prompt_version = PROMPT_VERSION.to_string();
+        let context_tokens = self.backend.context_tokens().to_string();
+        let fields_version = FIELDS_VERSION.to_string();
+        let mut parts: Vec<&[u8]> = vec![
             b"template",
             t.name.as_bytes(),
             t.raw.as_bytes(),
-            PROMPT_VERSION.to_string().as_bytes(),
+            prompt_version.as_bytes(),
             self.backend.id().as_bytes(),
-            self.backend.context_tokens().to_string().as_bytes(),
+            context_tokens.as_bytes(),
             self.output_lang.as_bytes(),
-            &Sha256::digest(&input),
+            &input_digest,
             vars.output_lang.as_bytes(),
             vars.output_lang_code.as_bytes(),
             vars.speech_lang.as_bytes(),
             vars.job_name.as_bytes(),
             vars.duration.as_bytes(),
-        ]))
+        ];
+        if let Output::Fields(_) = t.output {
+            parts.push(fields_version.as_bytes());
+        }
+        Ok(fingerprint(&parts))
     }
 
-    /// Runs the template and writes `<name>.md` atomically. Nothing is written on failure.
+    /// Runs the template and writes its [`artifacts`](Self::artifacts) atomically, in order.
+    /// Nothing is written on failure.
     pub fn execute(
         &self,
         ctx: &Ctx,
@@ -146,20 +175,117 @@ impl TemplateRun<'_> {
                 interrupt,
             )
         };
-        let generated = chunk::generate(&request, &complete, on_event).map_err(|e| match e {
+        let named = |e| match e {
             Error::Template { message, .. } => self.error(message),
             other => other,
-        })?;
+        };
+        // One text per artifact, in `artifacts()` order.
+        let (generated, contents) = match &self.template.output {
+            Output::Markdown => {
+                let generated = chunk::generate(&request, &complete, on_event).map_err(named)?;
+                let mut text = generated.text.clone();
+                if !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                (generated, vec![text])
+            }
+            Output::Fields(spec) => {
+                let schema = schema(spec);
+                let accept =
+                    |text: &str| parse_answer(text, spec).map(|values| (values, text.to_owned()));
+                let ask = |system: &str, user: &str| {
+                    call_json(
+                        self.backend,
+                        &cache,
+                        policy,
+                        system,
+                        user,
+                        &schema,
+                        self.forced,
+                        interrupt,
+                        &accept,
+                    )
+                };
+                let (generated, values) = self
+                    .generate_fields(spec, &request, &complete, &ask, on_event)
+                    .map_err(named)?;
+                let json = artifact_json(&self.template.name, &self.output_lang, &values);
+                (generated, vec![json, render(&values, spec.format)])
+            }
+        };
 
-        let mut text = generated.text.clone();
-        if !text.ends_with('\n') {
-            text.push('\n');
+        for (file, text) in self.artifacts().iter().zip(&contents) {
+            write_atomic(&ctx.dir.join(file), |tmp| {
+                fs::write(tmp, text)?;
+                Ok(())
+            })?;
         }
-        write_atomic(&ctx.dir.join(self.artifact()), |tmp| {
-            fs::write(tmp, &text)?;
-            Ok(())
-        })?;
         Ok(generated)
+    }
+
+    /// Generates a fields template: the final call asks for JSON, and a rejected answer gets
+    /// up to `repairs` repair calls, each built from the previous answer and its violations
+    /// (ADR-0006). Map calls use `complete` as for Markdown.
+    fn generate_fields(
+        &self,
+        spec: &FieldsSpec,
+        request: &Request,
+        complete: &(dyn Fn(&str, &str) -> Result<String> + Sync),
+        ask: Ask,
+        on_event: &mut dyn FnMut(Event),
+    ) -> Result<(Generated, Values)> {
+        let mut accepted = None;
+        let mut repair_calls = 0;
+        let mut finish = |system: &str, user: &str, on_event: &mut dyn FnMut(Event)| {
+            let mut answer = ask(system, user)?;
+            loop {
+                let (text, violations) = match answer {
+                    Answer::Accepted((values, text)) => {
+                        accepted = Some(values);
+                        return Ok(text);
+                    }
+                    Answer::Rejected { text, violations } => (text, violations),
+                };
+                if repair_calls == self.repairs {
+                    return Err(self.repairs_exhausted(&violations));
+                }
+                repair_calls += 1;
+                on_event(Event::Repair {
+                    attempt: repair_calls as usize,
+                    total: self.repairs as usize,
+                });
+                answer = ask(
+                    &repair_system(spec, request.output_lang),
+                    &repair_user(&text, &violations),
+                )?;
+            }
+        };
+        let block = fields_block(spec);
+        let mut generated =
+            chunk::generate_with(request, Some(&block), complete, &mut finish, on_event)?;
+        // `generate_with` counts the final call once; add the repair calls.
+        generated.calls += repair_calls as usize;
+        let values = accepted.expect("finish returned Ok only after accepting an answer");
+        Ok((generated, values))
+    }
+
+    fn repairs_exhausted(&self, violations: &[Violation]) -> Error {
+        let count = violations.len();
+        let limits = if count == 1 { "limit" } else { "limits" };
+        let repairs = if self.repairs == 1 {
+            "repair"
+        } else {
+            "repairs"
+        };
+        let list: Vec<&str> = violations
+            .iter()
+            .map(|v| v.0.trim_end_matches('.'))
+            .collect();
+        self.error(format!(
+            "the answer still breaks {count} {limits} after {} {repairs}: {}; {REPAIRS_HINT}",
+            self.repairs,
+            list.join("; ")
+        ))
     }
 
     fn vars(&self, transcript: &Transcript, job_name: &str) -> Result<Vars> {

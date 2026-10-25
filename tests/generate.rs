@@ -1,17 +1,19 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use minuta::error::Error;
+use minuta::fields::prompt::{fields_block, repair_system, repair_user, schema};
+use minuta::fields::{FieldsSpec, Violation, FIELDS_VERSION};
 use minuta::generate::{backend_id, output_lang, TemplateRun};
 use minuta::job::{fingerprint, Ctx};
 use minuta::llm::call::Policy;
-use minuta::llm::chunk::{transcript_text, PROMPT_VERSION};
+use minuta::llm::chunk::{language_instruction, transcript_text, Event, PROMPT_VERSION};
 use minuta::llm::fake::ScriptedBackend;
 use minuta::llm::{Backend, BackendId};
 use minuta::steps::transcribe::TRANSCRIPT_FILE;
-use minuta::template::{Layer, Template};
+use minuta::template::{Layer, Output, Template};
 use minuta::transcript::{Segment, Transcript};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
@@ -73,6 +75,7 @@ fn run<'a>(template: &'a Template, backend: &'a dyn Backend, lang: &str) -> Temp
         backend,
         output_lang: lang.into(),
         forced: false,
+        repairs: 2,
     }
 }
 
@@ -186,12 +189,61 @@ fn backend_default() {
 // ---- fingerprint ----
 
 const TEXT: &str = "Summarize {{job_name}}.\n";
+const FIELDS: &str = "---\noutput: fields\nfields: [title, body]\nlimits:\n  body: { max_chars: 10 }\n---\nWrite about {{job_name}}.\n";
 
 #[test]
-fn artifact_is_name_dot_md() {
+fn markdown_artifacts() {
     let t = tpl("summary", TEXT);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
-    assert_eq!(run(&t, &b, "es").artifact(), Path::new("summary.md"));
+    assert_eq!(
+        run(&t, &b, "es").artifacts(),
+        vec![PathBuf::from("summary.md")]
+    );
+}
+
+#[test]
+fn fields_artifacts() {
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
+    assert_eq!(
+        run(&t, &b, "es").artifacts(),
+        vec![PathBuf::from("social.json"), PathBuf::from("social.md")]
+    );
+}
+
+#[test]
+fn fields_fingerprint_includes_version() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
+    let input = fs::read(dir.path().join(TRANSCRIPT_FILE)).unwrap();
+    let with_version = |version: u32| {
+        fingerprint(&[
+            b"template",
+            b"social",
+            FIELDS.as_bytes(),
+            PROMPT_VERSION.to_string().as_bytes(),
+            ID.as_bytes(),
+            CONTEXT.to_string().as_bytes(),
+            b"es",
+            &Sha256::digest(&input),
+            b"Spanish",
+            b"es",
+            b"Spanish",
+            b"reunion",
+            b"0:00:40",
+            version.to_string().as_bytes(),
+        ])
+    };
+    let got = run(&t, &b, "es")
+        .fingerprint(&ctx(dir.path()), "reunion")
+        .unwrap();
+    assert_eq!(got, with_version(FIELDS_VERSION));
+    assert_ne!(
+        got,
+        with_version(FIELDS_VERSION + 1),
+        "a new version reruns"
+    );
 }
 
 #[test]
@@ -520,4 +572,309 @@ fn forced_execute_refreshes_cache() {
     let generated = execute(&run(&t, &after, "es"), dir.path()).unwrap();
     assert!(after.calls().is_empty(), "{:?}", after.calls());
     assert_eq!(generated.text, "new", "the forced call overwrote the entry");
+}
+
+// ---- fields templates ----
+
+const VALID: &str = r#"{"title": "Hola", "body": "Corto."}"#;
+const OVER: &str = r#"{"title": "Hola", "body": "Demasiado largo"}"#;
+const OVER_VIOLATION: &str =
+    "\"body\" has 15 characters; the limit is 10. Shorten it to at most 10 characters.";
+const HINT: &str = "raise llm.repairs, relax the limit in a project template, \
+                    or use a stronger backend with --llm";
+
+fn fields_spec(t: &Template) -> &FieldsSpec {
+    match &t.output {
+        Output::Fields(spec) => spec,
+        Output::Markdown => panic!("{} is not a fields template", t.name),
+    }
+}
+
+fn execute_events(
+    r: &TemplateRun,
+    dir: &Path,
+) -> (
+    minuta::error::Result<minuta::llm::chunk::Generated>,
+    Vec<Event>,
+) {
+    let mut events = Vec::new();
+    let result = r.execute(
+        &ctx(dir),
+        "reunion",
+        &policy(),
+        1,
+        &AtomicBool::new(false),
+        &mut |e| events.push(e),
+    );
+    (result, events)
+}
+
+fn assert_no_artifacts(dir: &Path) {
+    for file in ["social.json", "social.md"] {
+        assert!(!dir.join(file).try_exists().unwrap(), "{file} was written");
+    }
+}
+
+#[test]
+fn fields_first_answer_valid() {
+    let (dir, transcript) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    let (result, events) = execute_events(&run(&t, &b, "es"), dir.path());
+    assert_eq!(result.unwrap().calls, 1);
+    assert!(events.is_empty(), "{events:?}");
+    assert_eq!(b.schemas(), vec![Some(schema(fields_spec(&t)))]);
+
+    let calls = b.calls();
+    let (system, user) = &calls[0];
+    let block = fields_block(fields_spec(&t));
+    assert!(
+        system.ends_with(&format!("{block}\n\n{}", language_instruction("Spanish"))),
+        "{system}"
+    );
+    assert_eq!(user, &transcript_text(&transcript));
+
+    let json = fs::read_to_string(dir.path().join("social.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        parsed,
+        serde_json::json!({
+            "version": 1,
+            "template": "social",
+            "output_lang": "es",
+            "fields": {"title": "Hola", "body": "Corto."}
+        })
+    );
+    let md = fs::read_to_string(dir.path().join("social.md")).unwrap();
+    assert_eq!(md, "Hola\n\nCorto.\n");
+}
+
+#[test]
+fn fields_repair_then_valid() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(OVER.into()), Ok(VALID.into())]);
+    let (result, events) = execute_events(&run(&t, &b, "es"), dir.path());
+    assert_eq!(result.unwrap().calls, 2);
+    assert_eq!(
+        events,
+        vec![Event::Repair {
+            attempt: 1,
+            total: 2
+        }]
+    );
+
+    let spec = fields_spec(&t);
+    let calls = b.calls();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[1].0, repair_system(spec, "Spanish"));
+    assert_eq!(
+        calls[1].1,
+        repair_user(OVER, &[Violation(OVER_VIOLATION.into())])
+    );
+    assert_eq!(b.schemas(), vec![Some(schema(spec)), Some(schema(spec))]);
+    let md = fs::read_to_string(dir.path().join("social.md")).unwrap();
+    assert_eq!(md, "Hola\n\nCorto.\n");
+    assert!(dir.path().join("social.json").try_exists().unwrap());
+}
+
+#[test]
+fn fields_repairs_exhausted_writes_nothing() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(
+        ID,
+        CONTEXT,
+        vec![Ok(OVER.into()), Ok(OVER.into()), Ok(OVER.into())],
+    );
+    let (result, events) = execute_events(&run(&t, &b, "es"), dir.path());
+    let err = result.unwrap_err();
+    let want = format!(
+        "the answer still breaks 1 limit after 2 repairs: {}; {HINT}",
+        OVER_VIOLATION.trim_end_matches('.')
+    );
+    assert!(
+        matches!(err, Error::Template { ref name, ref message }
+            if name == "social" && *message == want),
+        "{err}"
+    );
+    assert_eq!(b.calls().len(), 3);
+    assert_eq!(
+        events,
+        vec![
+            Event::Repair {
+                attempt: 1,
+                total: 2
+            },
+            Event::Repair {
+                attempt: 2,
+                total: 2
+            },
+        ]
+    );
+    assert_no_artifacts(dir.path());
+}
+
+#[test]
+fn fields_zero_repairs_fails_first() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(
+        ID,
+        CONTEXT,
+        vec![
+            Ok(r#"{"body": "Demasiado largo"}"#.into()),
+            Ok(VALID.into()),
+        ],
+    );
+    let mut r = run(&t, &b, "es");
+    r.repairs = 0;
+    let (result, events) = execute_events(&r, dir.path());
+    let err = result.unwrap_err();
+    let want = format!(
+        "the answer still breaks 2 limits after 0 repairs: missing key \"title\"; {}; {HINT}",
+        OVER_VIOLATION.trim_end_matches('.')
+    );
+    assert!(
+        matches!(err, Error::Template { ref message, .. } if *message == want),
+        "{err}"
+    );
+    assert_eq!(b.calls().len(), 1);
+    assert!(events.is_empty(), "{events:?}");
+    assert_no_artifacts(dir.path());
+}
+
+#[test]
+fn fields_one_repair_message_is_singular() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(OVER.into()), Ok(OVER.into())]);
+    let mut r = run(&t, &b, "es");
+    r.repairs = 1;
+    let (result, _) = execute_events(&r, dir.path());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, Error::Template { ref message, .. }
+            if message.starts_with("the answer still breaks 1 limit after 1 repair: ")),
+        "{err}"
+    );
+}
+
+#[test]
+fn fields_invalid_json_then_valid() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(
+        ID,
+        CONTEXT,
+        vec![Ok("not json at all".into()), Ok(VALID.into())],
+    );
+    let (result, events) = execute_events(&run(&t, &b, "es"), dir.path());
+    assert_eq!(result.unwrap().calls, 2);
+    assert_eq!(
+        events,
+        vec![Event::Repair {
+            attempt: 1,
+            total: 2
+        }]
+    );
+    let calls = b.calls();
+    assert!(
+        calls[1].1.starts_with(
+            "Previous answer:\nnot json at all\n\nProblems:\n- the answer is not a JSON object ("
+        ),
+        "{}",
+        calls[1].1
+    );
+    assert!(dir.path().join("social.json").try_exists().unwrap());
+    assert!(dir.path().join("social.md").try_exists().unwrap());
+}
+
+#[test]
+fn fields_interrupt_during_repair_writes_nothing() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(OVER.into()), Err(Error::Interrupted)]);
+    let (result, _) = execute_events(&run(&t, &b, "es"), dir.path());
+    let err = result.unwrap_err();
+    assert!(matches!(err, Error::Interrupted), "{err}");
+    assert_eq!(b.calls().len(), 2);
+    assert_no_artifacts(dir.path());
+}
+
+#[test]
+fn fields_forced_refreshes() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let forced_run = |b: &ScriptedBackend| {
+        let mut r = run(&t, b, "es");
+        r.forced = true;
+        execute(&r, dir.path()).unwrap()
+    };
+    // The final call's answer is cached.
+    let first = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    execute(&run(&t, &first, "es"), dir.path()).unwrap();
+
+    // Forced: the cached final answer is not read. The repair answer is cached.
+    let second = ScriptedBackend::new(ID, CONTEXT, vec![Ok(OVER.into()), Ok(VALID.into())]);
+    assert_eq!(forced_run(&second).calls, 2);
+    assert_eq!(second.calls().len(), 2, "final call refreshed");
+
+    // Forced again: the cached repair answer is not read either.
+    let newer = r#"{"title": "Nuevo", "body": "Breve."}"#;
+    let third = ScriptedBackend::new(ID, CONTEXT, vec![Ok(OVER.into()), Ok(newer.into())]);
+    assert_eq!(forced_run(&third).calls, 2);
+    assert_eq!(third.calls().len(), 2, "repair call refreshed");
+    let md = fs::read_to_string(dir.path().join("social.md")).unwrap();
+    assert_eq!(md, "Nuevo\n\nBreve.\n");
+}
+
+#[test]
+fn fields_second_execute_hits_cache() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let first = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    execute(&run(&t, &first, "es"), dir.path()).unwrap();
+
+    let second = ScriptedBackend::new(ID, CONTEXT, vec![]);
+    execute(&run(&t, &second, "es"), dir.path()).unwrap();
+    assert!(second.calls().is_empty(), "{:?}", second.calls());
+}
+
+#[test]
+fn fields_chunked_only_final_call_asks_for_json() {
+    let dir = TempDir::new().unwrap();
+    let segments: Vec<(f64, f64, String)> = (0..60)
+        .map(|i| {
+            (
+                i as f64,
+                i as f64 + 1.0,
+                format!("Frase numero {i} de la reunion."),
+            )
+        })
+        .collect();
+    let segments: Vec<(f64, f64, &str)> = segments
+        .iter()
+        .map(|(s, e, t)| (*s, *e, t.as_str()))
+        .collect();
+    write_transcript(dir.path(), &transcript("es", &segments));
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(
+        ID,
+        800,
+        vec![Ok("nota".into()), Ok("nota".into()), Ok(VALID.into())],
+    );
+    let (result, events) = execute_events(&run(&t, &b, "es"), dir.path());
+    assert_eq!(
+        events,
+        vec![
+            Event::Chunk { done: 1, total: 2 },
+            Event::Chunk { done: 2, total: 2 },
+            Event::Consolidating,
+        ]
+    );
+    assert_eq!(result.unwrap().calls, 3);
+    assert_eq!(b.schemas(), vec![None, None, Some(schema(fields_spec(&t)))]);
+    let md = fs::read_to_string(dir.path().join("social.md")).unwrap();
+    assert_eq!(md, "Hola\n\nCorto.\n");
 }
