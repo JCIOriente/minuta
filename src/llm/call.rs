@@ -153,14 +153,33 @@ pub fn clean(output: &str) -> String {
     unwrap_fence(text).unwrap_or(text).to_string()
 }
 
+fn backtick_run(line: &str) -> usize {
+    line.chars().take_while(|&c| c == '`').count()
+}
+
+/// A line made only of backticks (a bare fence run), as its length.
+fn bare_run(line: &str) -> Option<usize> {
+    let line = line.trim();
+    (!line.is_empty() && line.chars().all(|c| c == '`')).then_some(line.len())
+}
+
+/// Unwraps one fenced block: an opening run of n >= 3 backticks (plus an optional info
+/// string), a last line that is a bare run of at least n, and no earlier bare run of at
+/// least n (that would close the block early, so the text is several blocks).
 fn unwrap_fence(text: &str) -> Option<&str> {
     let (first, rest) = text.split_once('\n')?;
-    if !first.starts_with("```") {
+    let open = backtick_run(first);
+    if open < 3 {
         return None;
     }
-    let body = rest.strip_suffix("```")?;
-    let body = body.strip_suffix('\n').unwrap_or(body);
-    if body.lines().any(|l| l.trim_start().starts_with("```")) {
+    let (body, last) = match rest.rsplit_once('\n') {
+        Some((body, last)) => (body, last),
+        None => ("", rest),
+    };
+    if bare_run(last)? < open {
+        return None;
+    }
+    if body.lines().any(|l| bare_run(l).is_some_and(|n| n >= open)) {
         return None;
     }
     Some(body)
@@ -310,16 +329,19 @@ mod tests {
             backoff: Duration::from_secs(30),
         };
         let stop = AtomicBool::new(false);
-        let started = Instant::now();
-        let result = thread::scope(|s| {
-            s.spawn(|| {
+        let (result, set_at) = thread::scope(|s| {
+            let setter = s.spawn(|| {
                 thread::sleep(Duration::from_millis(50));
                 stop.store(true, Ordering::SeqCst);
+                Instant::now()
             });
-            call(&b, &cache, &p, "sys", "usr", false, &stop)
+            let result = call(&b, &cache, &p, "sys", "usr", false, &stop);
+            let returned = Instant::now();
+            (result, (setter.join().unwrap(), returned))
         });
         assert!(matches!(result, Err(Error::Interrupted)));
-        assert!(started.elapsed() < Duration::from_secs(2));
+        let (set, returned) = set_at;
+        assert!(returned.duration_since(set) < Duration::from_millis(250));
         assert_eq!(b.calls().len(), 1);
     }
 
@@ -332,6 +354,11 @@ mod tests {
     fn clean_unwraps_fence() {
         assert_eq!(clean("```markdown\n# T\n\ntext\n```"), "# T\n\ntext");
         assert_eq!(clean("  ```\nplain\n```\n"), "plain");
+        assert_eq!(clean("````\nplain\n````"), "plain");
+        assert_eq!(
+            clean("````markdown\n# N\n```sh\nls\n```\n````"),
+            "# N\n```sh\nls\n```"
+        );
     }
 
     #[test]
