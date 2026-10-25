@@ -316,7 +316,7 @@ impl Template {
             };
             if is_fields {
                 tpl.output =
-                    Output::Fields(fields_spec(fm.fields, fm.limits, fm.format).map_err(&fail)?);
+                    Output::Fields(fields_spec(fm.fields, fm.limits, fm.format).map_err(fail)?);
             } else {
                 for (key, present) in [
                     ("fields", fm.fields.is_some()),
