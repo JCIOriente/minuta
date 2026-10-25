@@ -197,7 +197,8 @@ pub trait Backend: Send + Sync {
 }
 ```
 - Backend ids: `ollama:<model>` (split on the first `:`, so `ollama:gemma4:26b` is model
-  `gemma4:26b`), `claude`, `claude:<model>`. Anything else is a usage error.
+  `gemma4:26b`), `claude`, `claude:<model>`. Anything else is a usage error. Model names may contain only
+  letters, digits and `._:/-[]@`, and may not start with `-`.
 - **Ollama**: `POST {url}/api/chat` with `stream: false`, `options.num_ctx`, and
   `think: false` when `/api/show` lists the `thinking` capability. Context budget =
   min(`ollama.num_ctx`, the model's `context_length` from `/api/show`). minuta must enforce

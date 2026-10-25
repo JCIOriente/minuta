@@ -51,10 +51,11 @@ pub fn check(url: &str, model: &str) -> std::result::Result<OllamaInfo, Missing>
         .call()
         .map_err(|e| server_down(describe(&e)))?;
     let tags = read_json(tags)
-        .map_err(|e| server_down(format!("unreadable /api/tags response ({})", e.0)))?;
+        .map_err(|e| server_down(format!("unreadable /api/tags response ({})", e.message())))?;
     let Some(models) = tags["models"].as_array() else {
         return Err(server_down(format!(
-            "unexpected /api/tags response ({tags})"
+            "unexpected /api/tags response ({})",
+            excerpt(&tags.to_string())
         )));
     };
     let pulled = models
@@ -71,7 +72,7 @@ pub fn check(url: &str, model: &str) -> std::result::Result<OllamaInfo, Missing>
         .send_string(&json!({ "model": model }).to_string())
         .map_err(|e| model_problem(format!("ollama show {model} failed: {}", describe(&e))))?;
     let shown = read_json(shown)
-        .map_err(|e| model_problem(format!("unreadable /api/show response ({})", e.0)))?;
+        .map_err(|e| model_problem(format!("unreadable /api/show response ({})", e.message())))?;
     let context_length = shown["model_info"].as_object().and_then(|info| {
         info.iter()
             .find(|(key, _)| key.ends_with(".context_length"))
@@ -92,11 +93,36 @@ fn name_matches(listed: &str, wanted: &str) -> bool {
     listed == wanted || (!wanted.contains(':') && listed == format!("{wanted}:latest"))
 }
 
-/// Reads a JSON body. The error carries whether it is transient: a failed body read is,
-/// a body that is not JSON is not.
-fn read_json(response: ureq::Response) -> std::result::Result<Value, (String, bool)> {
-    let text = response.into_string().map_err(|e| (e.to_string(), true))?;
-    serde_json::from_str(&text).map_err(|e| (e.to_string(), false))
+/// Why a response body could not be used.
+enum BodyError {
+    /// Reading the body failed (I/O, timeout).
+    Read(String),
+    /// The body was read but is not JSON.
+    NotJson(String),
+}
+
+impl BodyError {
+    fn is_transient(&self) -> bool {
+        matches!(self, BodyError::Read(_))
+    }
+
+    fn message(&self) -> &str {
+        match self {
+            BodyError::Read(m) | BodyError::NotJson(m) => m,
+        }
+    }
+}
+
+fn read_json(response: ureq::Response) -> std::result::Result<Value, BodyError> {
+    let text = response
+        .into_string()
+        .map_err(|e| BodyError::Read(e.to_string()))?;
+    serde_json::from_str(&text).map_err(|e| BodyError::NotJson(e.to_string()))
+}
+
+/// At most 200 characters of untrusted text, for messages.
+fn excerpt(text: &str) -> String {
+    text.trim().chars().take(200).collect()
 }
 
 fn describe(e: &ureq::Error) -> String {
@@ -180,8 +206,12 @@ impl Ollama {
                 return Err(self.error(format!("request failed: {t}"), transient));
             }
         };
-        let parsed = read_json(response)
-            .map_err(|(e, transient)| self.error(format!("unreadable response: {e}"), transient))?;
+        let parsed = read_json(response).map_err(|e| {
+            self.error(
+                format!("unreadable response: {}", e.message()),
+                e.is_transient(),
+            )
+        })?;
         if parsed["done_reason"] == "length" {
             return Err(self.error(
                 "response cut off at the context limit; raise ollama.num_ctx".into(),
@@ -200,7 +230,7 @@ impl Ollama {
                 let from_json = serde_json::from_str::<Value>(&text)
                     .ok()
                     .and_then(|v| v["error"].as_str().map(str::to_string));
-                let shown = from_json.unwrap_or_else(|| text.trim().chars().take(200).collect());
+                let shown = from_json.unwrap_or_else(|| excerpt(&text));
                 if shown.is_empty() {
                     String::new()
                 } else {

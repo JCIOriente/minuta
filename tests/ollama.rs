@@ -318,4 +318,26 @@ fn show_failure_after_tags_names_the_model() {
     let fake = FakeOllama::start_with_show(&["m"], None, ok_chat());
     let missing = check(&fake.url(), "m").unwrap_err();
     assert_eq!(missing.name, "ollama:m");
+    assert!(
+        missing.hint.contains("ollama show m failed"),
+        "{}",
+        missing.hint
+    );
+}
+
+#[test]
+fn long_error_body_is_truncated() {
+    let responder: Responder = Arc::new(|_| Reply::Status(400, "x".repeat(500)));
+    let fake = FakeOllama::start(&["m"], show(None, false), responder);
+    let o = Ollama::new(&fake.url(), "m", 1024, &info(None, false));
+    let (message, _) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert!(message.contains(&"x".repeat(200)), "{message}");
+    assert!(!message.contains(&"x".repeat(201)), "{message}");
+}
+
+#[test]
+fn long_tags_body_is_truncated_in_hint() {
+    let fake = FakeOllama::start_with_tags(json!({"unexpected": "y".repeat(500)}), ok_chat());
+    let missing = check(&fake.url(), "m").unwrap_err();
+    assert!(!missing.hint.contains(&"y".repeat(201)), "{}", missing.hint);
 }

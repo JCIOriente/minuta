@@ -32,12 +32,12 @@ pub enum BackendId {
 const VALID_FORMS: &str = "valid forms: ollama:<model>, claude, claude:<model>";
 
 fn invalid(s: &str) -> Error {
-    Error::Usage(format!("invalid LLM backend '{s}' ({VALID_FORMS})"))
+    Error::Usage(format!("invalid LLM backend {s:?} ({VALID_FORMS})"))
 }
 
 /// Model names come from untrusted template frontmatter and are echoed in hints and URLs.
 fn is_model_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '-')
+    c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '-' | '[' | ']' | '@')
 }
 
 impl FromStr for BackendId {
@@ -48,7 +48,11 @@ impl FromStr for BackendId {
             return Ok(BackendId::Claude { model: None });
         }
         match s.split_once(':') {
-            Some((_, model)) if !model.chars().all(is_model_char) => Err(invalid(s)),
+            Some((_, model)) if model.starts_with('-') || !model.chars().all(is_model_char) => {
+                Err(Error::Usage(format!(
+                    "invalid LLM backend {s:?}: model names may contain only letters, digits and `._:/-[]@`, and may not start with `-`"
+                )))
+            }
             Some(("ollama", model)) if !model.is_empty() => Ok(BackendId::Ollama {
                 model: model.to_string(),
             }),
@@ -134,6 +138,27 @@ mod tests {
     }
 
     #[test]
+    fn backend_id_accepts_real_model_names() {
+        for good in [
+            "claude:sonnet[1m]",
+            "claude:claude-sonnet-4-5@20250929",
+            "ollama:hf.co/user/repo:Q4_K_M",
+        ] {
+            assert!(good.parse::<BackendId>().is_ok(), "{good}");
+        }
+    }
+
+    #[test]
+    fn backend_id_unsafe_name_error_names_allowed_chars_and_escapes() {
+        let err = "ollama:a\u{7}b"
+            .parse::<BackendId>()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("`._:/-[]@`"), "{err}");
+        assert!(!err.contains('\u{7}'), "{err:?}");
+    }
+
+    #[test]
     fn backend_id_rejects_unsafe_model_names() {
         for bad in [
             "ollama:a b",
@@ -141,6 +166,8 @@ mod tests {
             "ollama:a\nb",
             "ollama:a\u{7}b",
             "claude:a b",
+            "ollama:-rf",
+            "claude:--flag",
         ] {
             let err = bad.parse::<BackendId>().unwrap_err();
             assert!(matches!(err, Error::Usage(_)), "{bad:?}: {err}");
