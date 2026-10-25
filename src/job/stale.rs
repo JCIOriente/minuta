@@ -3,7 +3,7 @@
 use std::fmt;
 
 use super::{Job, Status, StepName, StepState};
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 /// `--force`: every step, or the named step and every later one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,7 +115,11 @@ pub fn template_reason(
         return Ok(Some(reason));
     }
     for artifact in recorded.iter().flat_map(|r| &r.artifacts) {
-        if !job.dir.join(artifact).try_exists()? {
+        let path = job.dir.join(artifact);
+        let exists = path
+            .try_exists()
+            .map_err(|e| Error::Job(format!("cannot check {}: {e}", path.display())))?;
+        if !exists {
             return Ok(Some(Reason::MissingArtifact(
                 artifact.display().to_string(),
             )));

@@ -166,7 +166,11 @@ impl Job {
         artifacts: &[PathBuf],
     ) -> Result<()> {
         for artifact in artifacts {
-            if !self.dir.join(artifact).try_exists()? {
+            let path = self.dir.join(artifact);
+            let exists = path
+                .try_exists()
+                .map_err(|e| Error::Job(format!("cannot check {}: {e}", path.display())))?;
+            if !exists {
                 return Err(Error::Job(format!(
                     "template {name} finished without writing {}",
                     artifact.display()

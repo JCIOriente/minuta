@@ -749,3 +749,23 @@ fn mark_template_stale_records_reason() {
     job.mark_template_stale("new", &Reason::NotRun).unwrap();
     assert_eq!(job.state.templates["new"].status, Status::Stale);
 }
+
+#[test]
+fn template_reason_surfaces_io_error() {
+    let (_root, mut job) = done_template_job();
+    // `summary.md` is a regular file, so checking `summary.md/child` fails with NotADirectory.
+    job.state.templates.get_mut("summary").unwrap().artifacts =
+        vec![PathBuf::from("summary.md/child")];
+    let err = template_reason(&job, "summary", "fp-summary", false).unwrap_err();
+    assert!(err.to_string().contains("summary.md/child"), "{err}");
+}
+
+#[test]
+fn mark_template_done_surfaces_io_error() {
+    let (_root, mut job) = done_template_job();
+    let err = job
+        .mark_template_done("other", "fp", 1.0, &[PathBuf::from("summary.md/child")])
+        .unwrap_err();
+    assert!(err.to_string().contains("summary.md/child"), "{err}");
+    assert!(!job.state.templates.contains_key("other"));
+}
