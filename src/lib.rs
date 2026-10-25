@@ -1,10 +1,14 @@
 pub mod cli;
 pub mod config;
 pub mod error;
+pub mod generate;
 pub mod job;
+pub mod lang;
+pub mod llm;
 pub mod models;
 pub mod progress;
 pub mod runner;
 pub mod steps;
+pub mod template;
 pub mod tools;
 pub mod transcript;
