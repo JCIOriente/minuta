@@ -670,6 +670,8 @@ fn numeric_keys_reject_garbage() {
         ("llm.backoff_ms", "[llm]\nbackoff_ms = \"abc\"\n"),
         ("ollama.num_ctx", "[ollama]\nnum_ctx = \"abc\"\n"),
         ("ollama.num_ctx", "[ollama]\nnum_ctx = 0\n"),
+        ("llm.backoff_ms", "[llm]\nbackoff_ms = 1.5\n"),
+        ("llm.retries", "[llm]\nretries = true\n"),
     ];
     for (key, toml) in rows {
         let dir = tempfile::tempdir().unwrap();
