@@ -98,6 +98,8 @@ pub struct Generated {
 }
 
 type Complete<'c> = &'c (dyn Fn(&str, &str) -> Result<String> + Sync);
+/// Makes the final call: `finish(system, user, on_event)`.
+type Finish<'f> = &'f mut dyn FnMut(&str, &str, &mut dyn FnMut(Event)) -> Result<String>;
 /// The system prompt for part i of n.
 type SystemFor<'f> = &'f (dyn Fn(usize, usize) -> String + Sync);
 
@@ -127,7 +129,7 @@ pub fn generate_with(
     req: &Request,
     final_block: Option<&str>,
     complete: Complete,
-    finish: &mut dyn FnMut(&str, &str, &mut dyn FnMut(Event)) -> Result<String>,
+    finish: Finish,
     on_event: &mut dyn FnMut(Event),
 ) -> Result<Generated> {
     let context = req.context_tokens;
