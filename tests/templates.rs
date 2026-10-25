@@ -394,7 +394,7 @@ mod symlinks {
     }
 
     #[test]
-    fn project_dir_symlinked_outside_cwd_is_invalid() {
+    fn project_dir_symlinked_outside_is_invalid() {
         let tmp = TempDir::new().unwrap();
         let cwd = tmp.path().join("cwd");
         let outside = tmp.path().join("outside");
@@ -409,24 +409,28 @@ mod symlinks {
         assert!(!c.templates.contains_key("evil"));
         assert_eq!(c.invalid.len(), 1);
         assert!(
-            c.invalid[0].error.contains("current directory"),
+            c.invalid[0].error.contains("is a symlink"),
             "{}",
             c.invalid[0].error
         );
     }
 
     #[test]
-    fn project_dir_symlinked_inside_cwd_loads() {
+    fn templates_symlinked_to_cwd_does_not_leak() {
         let tmp = TempDir::new().unwrap();
         let cwd = tmp.path().join("cwd");
-        write(&cwd.join("shared"), "ok.md", "fine");
-        symlink(cwd.join("shared"), cwd.join("templates")).unwrap();
+        fs::create_dir_all(&cwd).unwrap();
+        fs::write(cwd.join(".env"), "SECRET=1").unwrap();
+        symlink(".", cwd.join("templates")).unwrap();
+        symlink(".env", cwd.join("summary.md")).unwrap();
         let dirs = Dirs {
             user: None,
             project: cwd.join("templates"),
         };
         let c = discover(&dirs).unwrap();
-        assert_eq!(c.get("ok").unwrap().body, "fine");
+        let m = usage(c.get("summary"));
+        assert!(m.contains("is a symlink"), "{m}");
+        assert!(!m.contains("SECRET"), "{m}");
     }
 
     #[test]

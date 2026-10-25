@@ -61,38 +61,30 @@ pub fn discover(dirs: &Dirs) -> Result<Catalog> {
         catalog.templates.insert(t.name.clone(), t);
     }
     if let Some(user) = &dirs.user {
-        load_layer(&mut catalog, user, Layer::User, None)?;
+        load_layer(&mut catalog, user, Layer::User, false)?;
     }
-    // The project layer is untrusted (a cloned repo): its files must stay inside its
-    // directory, and the directory inside the current directory, taken as the parent
-    // of `./templates`. User-layer symlinks (dotfiles, nix store) are followed.
-    let root = match dirs.project.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p,
-        _ => Path::new("."),
-    };
-    load_layer(&mut catalog, &dirs.project, Layer::Project, Some(root))?;
+    // The project layer is untrusted (a cloned repo). If `./templates` is itself a
+    // symlink it is not loaded at all: whatever it points at could be a broad
+    // directory (`templates -> .`), and no containment rule on its files would
+    // then protect anything. Inside a real directory, a file's symlink target must
+    // stay inside that directory. User-layer symlinks (dotfiles, nix store) are
+    // followed.
+    load_layer(&mut catalog, &dirs.project, Layer::Project, true)?;
     Ok(catalog)
 }
 
-fn load_layer(
-    catalog: &mut Catalog,
-    dir: &Path,
-    layer: Layer,
-    confine_to: Option<&Path>,
-) -> Result<()> {
+fn load_layer(catalog: &mut Catalog, dir: &Path, layer: Layer, untrusted: bool) -> Result<()> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(io_err(dir, e)),
     };
     let canonical_dir = fs::canonicalize(dir).map_err(|e| io_err(dir, e))?;
-    let dir_outside = match confine_to {
-        Some(root) => {
-            let root = fs::canonicalize(root).map_err(|e| io_err(root, e))?;
-            !canonical_dir.starts_with(root)
-        }
-        None => false,
-    };
+    let dir_outside = untrusted
+        && fs::symlink_metadata(dir)
+            .map_err(|e| io_err(dir, e))?
+            .file_type()
+            .is_symlink();
     let mut paths = Vec::new();
     for entry in entries {
         let path = entry.map_err(|e| io_err(dir, e))?.path();
@@ -105,7 +97,7 @@ fn load_layer(
     for path in paths {
         match fs::metadata(&path) {
             Ok(m) if m.is_file() => {
-                let confine = confine_to.map(|_| canonical_dir.as_path());
+                let confine = untrusted.then_some(canonical_dir.as_path());
                 load_file(catalog, path, layer, confine, dir_outside)
             }
             Ok(_) => {}
@@ -141,7 +133,7 @@ fn load_file(
     };
     let result = if dir_outside {
         Err(format!(
-            "{}: templates directory resolves outside the current directory",
+            "{}: the project templates directory is a symlink; it is not loaded",
             path.display()
         ))
     } else if valid_stem(&stem) {
