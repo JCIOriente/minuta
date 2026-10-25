@@ -792,3 +792,16 @@ fn numeric_keys_accept_toml_strings() {
     assert_eq!(cfg.retries(), 5);
     assert_eq!(cfg.num_ctx(), 8192);
 }
+
+#[test]
+fn datetime_numeric_value_message_names_key_without_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_config(&dir, "[llm]\nretries = 1979-05-27\n");
+    let msg = config_err(Config::resolve(
+        Overrides::default(),
+        &no_env,
+        Some(file.as_path()),
+    ));
+    assert!(msg.contains("llm.retries"), "message does not name the key: {msg}");
+    assert!(!msg.contains("$__toml_private"), "leaked toml marker: {msg}");
+}
