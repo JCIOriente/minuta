@@ -3,11 +3,13 @@
 pub mod discover;
 pub mod graph;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::Deserialize;
 
 use crate::error::{Error, Result};
+use crate::fields::{Field, FieldSpec, FieldsSpec, Format, Kind, Limit};
 use crate::lang;
 use crate::llm::BackendId;
 
@@ -26,6 +28,13 @@ pub enum Input {
     Template(String),
 }
 
+/// What a template produces: free Markdown or a set of structured fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Output {
+    Markdown,
+    Fields(FieldsSpec),
+}
+
 #[derive(Debug, Clone)]
 pub struct Template {
     pub name: String,
@@ -36,6 +45,7 @@ pub struct Template {
     pub raw: String,
     pub description: Option<String>,
     pub input: Input,
+    pub output: Output,
     pub llm: Option<BackendId>,
     pub lang: Option<String>,
     pub body: String,
@@ -80,6 +90,16 @@ struct Frontmatter {
     output: Option<String>,
     llm: Option<String>,
     lang: Option<String>,
+    fields: Option<Vec<String>>,
+    limits: Option<BTreeMap<String, LimitYaml>>,
+    format: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LimitYaml {
+    max_chars: Option<u64>,
+    max: Option<u64>,
 }
 
 /// True when `name` matches `^[a-z0-9][a-z0-9_-]*$`.
@@ -146,6 +166,72 @@ fn expand(body: &str, mut f: impl FnMut(&str) -> String) -> String {
     out
 }
 
+/// Build the fields spec from the frontmatter keys, checked against the shared field set.
+fn fields_spec(
+    names: Option<Vec<String>>,
+    limits: Option<BTreeMap<String, LimitYaml>>,
+    format: Option<String>,
+) -> std::result::Result<FieldsSpec, String> {
+    let names = names.ok_or("'output: fields' requires 'fields'")?;
+    if names.is_empty() {
+        return Err("'fields' must not be empty".into());
+    }
+    let mut declared: Vec<Field> = Vec::new();
+    for name in &names {
+        let field = match Field::from_name(name) {
+            Some(f) => f,
+            None if name == "chapters" => {
+                return Err("field 'chapters' arrives in a later version".into())
+            }
+            None => {
+                let known: Vec<&str> = Field::ALL.iter().map(|f| f.name()).collect();
+                return Err(format!(
+                    "unknown field {name:?} (known: {})",
+                    known.join(", ")
+                ));
+            }
+        };
+        if declared.contains(&field) {
+            return Err(format!("duplicate field {name:?}"));
+        }
+        declared.push(field);
+    }
+    let mut specs: Vec<FieldSpec> = declared
+        .iter()
+        .map(|&field| FieldSpec {
+            field,
+            limit: Limit::default(),
+        })
+        .collect();
+    for (key, raw) in limits.unwrap_or_default() {
+        let Some(spec) =
+            Field::from_name(&key).and_then(|f| specs.iter_mut().find(|s| s.field == f))
+        else {
+            return Err(format!("limit for {key:?}, which is not in 'fields'"));
+        };
+        let positive = |what: &str, v: Option<u64>| match v {
+            Some(0) => Err(format!("'{what}' of {key:?} must be at least 1")),
+            other => Ok(other.map(|n| usize::try_from(n).unwrap_or(usize::MAX))),
+        };
+        spec.limit.max_chars = positive("max_chars", raw.max_chars)?;
+        spec.limit.max = positive("max", raw.max)?;
+        if spec.limit.max.is_some() && spec.field.kind() == Kind::Text {
+            return Err(format!(
+                "{key:?} is a text field; 'max' applies to lists only"
+            ));
+        }
+    }
+    let format = match format.as_deref() {
+        None | Some("plain") => Format::Plain,
+        Some("markdown") => Format::Markdown,
+        Some(other) => return Err(format!("unknown format '{other}' (use plain or markdown)")),
+    };
+    Ok(FieldsSpec {
+        fields: specs,
+        format,
+    })
+}
+
 impl Template {
     /// Parse a template file. Every problem is a usage error naming the template.
     pub fn parse(name: &str, layer: Layer, path: Option<PathBuf>, text: &str) -> Result<Template> {
@@ -181,6 +267,7 @@ impl Template {
             raw: text.to_string(),
             description: None,
             input: Input::Transcript,
+            output: Output::Markdown,
             llm: None,
             lang: None,
             body: body.to_string(),
@@ -188,18 +275,27 @@ impl Template {
 
         if let Some(fm) = fm {
             tpl.description = fm.description;
-            match fm.output.as_deref() {
-                None | Some("markdown") => {}
-                Some("fields") => {
-                    return Err(fail(
-                        "'output: fields' arrives in a later version; only 'markdown' is supported"
-                            .into(),
-                    ))
-                }
+            let is_fields = match fm.output.as_deref() {
+                None | Some("markdown") => false,
+                Some("fields") => true,
                 Some(other) => {
                     return Err(fail(format!(
-                        "unknown output '{other}' (only 'markdown' is supported)"
+                        "unknown output '{other}' (use 'markdown' or 'fields')"
                     )))
+                }
+            };
+            if is_fields {
+                tpl.output =
+                    Output::Fields(fields_spec(fm.fields, fm.limits, fm.format).map_err(&fail)?);
+            } else {
+                for (key, present) in [
+                    ("fields", fm.fields.is_some()),
+                    ("limits", fm.limits.is_some()),
+                    ("format", fm.format.is_some()),
+                ] {
+                    if present {
+                        return Err(fail(format!("'{key}' requires 'output: fields'")));
+                    }
                 }
             }
             match fm.input.as_deref() {

@@ -14,7 +14,7 @@ use crate::models::{self, Pulled};
 use crate::progress::{Mode, Progress};
 use crate::runner::{self, ForceArg};
 use crate::template::discover::{discover, Dirs};
-use crate::template::{Input, Layer};
+use crate::template::{Input, Layer, Output};
 use crate::tools::ToolInfo;
 
 #[derive(Debug, Parser)]
@@ -285,6 +285,7 @@ fn templates_list() -> Result<()> {
         "NAME".to_string(),
         "LAYER".to_string(),
         "INPUT".to_string(),
+        "OUTPUT".to_string(),
         "LLM".to_string(),
         "DESCRIPTION".to_string(),
     ]];
@@ -296,6 +297,11 @@ fn templates_list() -> Result<()> {
                 Input::Transcript => "transcript".to_string(),
                 Input::Template(dep) => sanitize(dep),
             },
+            match &t.output {
+                Output::Markdown => "markdown",
+                Output::Fields(_) => "fields",
+            }
+            .to_string(),
             t.llm
                 .as_ref()
                 .map_or("(default)".to_string(), |id| sanitize(&id.to_string())),
@@ -308,19 +314,21 @@ fn templates_list() -> Result<()> {
             .max()
             .unwrap_or(0)
     };
-    let widths = [width(0), width(1), width(2), width(3)];
+    let widths = [width(0), width(1), width(2), width(3), width(4)];
     for row in &rows {
         let line = format!(
-            "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {}",
+            "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {:<w4$}  {}",
             row[0],
             row[1],
             row[2],
             row[3],
             row[4],
+            row[5],
             w0 = widths[0],
             w1 = widths[1],
             w2 = widths[2],
             w3 = widths[3],
+            w4 = widths[4],
         );
         println!("{}", line.trim_end());
     }
