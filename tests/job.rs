@@ -4,8 +4,8 @@ use std::time::{Duration, SystemTime};
 
 use minuta::error::Error;
 use minuta::job::{
-    derive_name, fingerprint, plan_stale, source_record, step_fingerprint, write_atomic, Ctx,
-    Force, Job, Reason, Source, Status, Step, StepName,
+    derive_name, fingerprint, plan_stale, source_record, step_fingerprint, template_reason,
+    write_atomic, Ctx, Force, Job, Reason, Source, Status, Step, StepName,
 };
 use tempfile::TempDir;
 
@@ -631,4 +631,121 @@ fn mtime_before_epoch_always_rehashes() {
         again.hash, real.hash,
         "an unknown mtime must not trust the cache"
     );
+}
+
+/// A job where template `summary` is done with fingerprint `fp-summary` and artifact `summary.md`.
+fn done_template_job() -> (TempDir, Job) {
+    let (root, out, source) = setup();
+    let mut job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    fs::write(job.dir.join("summary.md"), "notes").unwrap();
+    job.mark_template_done("summary", "fp-summary", 1.5, &[PathBuf::from("summary.md")])
+        .unwrap();
+    (root, job)
+}
+
+#[test]
+fn old_job_json_loads_without_templates() {
+    let (_root, out, source) = setup();
+    let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
+    let file = job.dir.join("job.json");
+    let mut json = read_json(&file);
+    json.as_object_mut().unwrap().remove("templates");
+    fs::write(&file, serde_json::to_vec(&json).unwrap()).unwrap();
+    let job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    assert!(job.state.templates.is_empty());
+    let saved = read_json(&file);
+    assert_eq!(saved["templates"], serde_json::json!({}));
+    assert_eq!(saved["version"], 1);
+}
+
+#[test]
+fn template_not_run() {
+    let (_root, job) = done_template_job();
+    assert_eq!(
+        template_reason(&job, "other", "fp", false).unwrap(),
+        Some(Reason::NotRun)
+    );
+}
+
+#[test]
+fn template_unfinished() {
+    let (_root, mut job) = done_template_job();
+    job.mark_template_stale("summary", &Reason::FingerprintChanged)
+        .unwrap();
+    assert_eq!(
+        template_reason(&job, "summary", "fp-summary", false).unwrap(),
+        Some(Reason::Unfinished)
+    );
+}
+
+#[test]
+fn template_forced() {
+    let (_root, job) = done_template_job();
+    assert_eq!(
+        template_reason(&job, "summary", "fp-summary", true).unwrap(),
+        Some(Reason::Forced)
+    );
+}
+
+#[test]
+fn template_fingerprint_changed() {
+    let (_root, job) = done_template_job();
+    assert_eq!(
+        template_reason(&job, "summary", "other", false).unwrap(),
+        Some(Reason::FingerprintChanged)
+    );
+}
+
+#[test]
+fn template_missing_artifact() {
+    let (_root, job) = done_template_job();
+    fs::remove_file(job.dir.join("summary.md")).unwrap();
+    assert_eq!(
+        template_reason(&job, "summary", "fp-summary", false).unwrap(),
+        Some(Reason::MissingArtifact("summary.md".to_owned()))
+    );
+}
+
+#[test]
+fn template_current_is_none() {
+    let (_root, job) = done_template_job();
+    assert_eq!(
+        template_reason(&job, "summary", "fp-summary", false).unwrap(),
+        None
+    );
+}
+
+#[test]
+fn mark_template_done_requires_artifacts() {
+    let (_root, out, source) = setup();
+    let mut job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    let err = job
+        .mark_template_done("summary", "fp", 1.0, &[PathBuf::from("summary.md")])
+        .unwrap_err();
+    assert!(matches!(err, Error::Job(_)));
+    assert!(job.state.templates.is_empty());
+    assert!(read_json(&job.dir.join("job.json"))["templates"]
+        .as_object()
+        .unwrap()
+        .is_empty());
+
+    let absolute = job.dir.join("summary.md");
+    fs::write(&absolute, "notes").unwrap();
+    job.mark_template_done("summary", "fp", 1.0, &[absolute])
+        .unwrap();
+    assert_eq!(
+        read_json(&job.dir.join("job.json"))["templates"]["summary"]["artifacts"],
+        serde_json::json!(["summary.md"])
+    );
+}
+
+#[test]
+fn mark_template_stale_records_reason() {
+    let (_root, mut job) = done_template_job();
+    job.mark_template_stale("summary", &Reason::Forced).unwrap();
+    let saved = read_json(&job.dir.join("job.json"));
+    assert_eq!(saved["templates"]["summary"]["status"], "stale");
+    assert_eq!(saved["templates"]["summary"]["reason"], "forced");
+    job.mark_template_stale("new", &Reason::NotRun).unwrap();
+    assert_eq!(job.state.templates["new"].status, Status::Stale);
 }

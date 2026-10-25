@@ -114,7 +114,7 @@ pub fn generate(req: &Request, complete: &(dyn Fn(&str, &str) -> Result<String> 
 
 // job/ (T9)
 JobState { #[serde(default)] pub templates: BTreeMap<String, StepState>, ..existing }
-pub fn template_reason(job: &Job, name: &str, fingerprint: &str, forced: bool) -> Option<Reason>;
+pub fn template_reason(job: &Job, name: &str, fingerprint: &str, forced: bool) -> Result<Option<Reason>>;
 impl Job { pub fn mark_template_stale(&mut self, name: &str, reason: &Reason) -> Result<()>;
            pub fn mark_template_done(&mut self, name: &str, fingerprint: &str, seconds: f64,
                                      artifacts: &[PathBuf]) -> Result<()>; }
