@@ -759,3 +759,36 @@ fn unknown_llm_key_rejected() {
         assert!(msg.contains("line 2"), "[{table}] no line number: {msg}");
     }
 }
+
+#[test]
+fn numeric_env_rejects_garbage() {
+    let rows = [
+        ("llm.retries", "MINUTA_LLM_RETRIES"),
+        ("llm.backoff_ms", "MINUTA_LLM_BACKOFF_MS"),
+        ("llm.concurrency", "MINUTA_LLM_CONCURRENCY"),
+        ("ollama.num_ctx", "MINUTA_OLLAMA_NUM_CTX"),
+    ];
+    for (key, env) in rows {
+        let msg = config_err(Config::resolve(
+            Overrides::default(),
+            &env_with(env, "abc"),
+            None,
+        ));
+        assert!(
+            msg.contains(key),
+            "{env}=abc: message does not name {key}: {msg}"
+        );
+    }
+}
+
+#[test]
+fn numeric_keys_accept_toml_strings() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_config(
+        &dir,
+        "[llm]\nretries = \"5\"\n[ollama]\nnum_ctx = \"8192\"\n",
+    );
+    let cfg = Config::resolve(Overrides::default(), &no_env, Some(file.as_path())).unwrap();
+    assert_eq!(cfg.retries(), 5);
+    assert_eq!(cfg.num_ctx(), 8192);
+}
