@@ -316,8 +316,9 @@ minuta config show                                 # lists llm.repairs
 - **Frontmatter errors** (exit 2 at resolution, each naming the template):
   `fields`, `limits` or `format` without `output: fields`; `output: fields` without `fields`
   or with an empty list; an unknown field (the message lists the shared set); `chapters`
-  ("arrives in a later version"); a duplicate field; a limit for an undeclared field; an
-  unknown limit key; `max` on a text field; a limit of 0; an unknown `format`.
+  ("arrives in a later version"); a duplicate field; a limit for an undeclared field; a
+  repeated key under `limits` (added in #75); an unknown limit key; `max` on a text field; a
+  limit of 0; an unknown `format`.
 - **Repairs exhausted**: exit 1, no artifacts, the template is not marked done. Accepted
   answers of other templates and map calls stay cached.
 - **`llm.repairs = 0`**: the first violation fails the template.
@@ -425,4 +426,16 @@ None.
 
 ## Implementation status
 Updated by the PRs that implement this spec.
-- [ ] Plan: docs/plans/2026-10-25-fields-and-social-templates.md
+- [x] Plan: docs/plans/2026-10-25-fields-and-social-templates.md (#67)
+- [x] T1 foundations: fields types, `complete_json`, repair event (#69)
+- [x] T2 config key `llm.repairs` (#68)
+- [x] T3 fields frontmatter and `templates list` OUTPUT column (#75)
+- [x] T4 answer parsing, normalization and violations (#74)
+- [x] T5 prompts, schema, rendering and JSON artifact (#72)
+- [x] T6 Ollama structured output (#70)
+- [x] T7 `call_json`, accepted-only caching (#73)
+- [x] T8 `generate_with` final-call hook (#71)
+- [x] T9 built-in youtube, linkedin and instagram templates (#76)
+- [x] T10 fields template step with repair loop (#77)
+- [x] T11 integration suite and opt-in e2e (#78)
+- [x] Lessons: docs/conventions.md, docs/common-issues.md (this PR)

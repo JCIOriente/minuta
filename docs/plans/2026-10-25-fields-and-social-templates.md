@@ -2,7 +2,7 @@
 
 - Spec: docs/specs/2026-10-25-fields-and-social-templates.md
 - Date: 2026-10-25
-- Status: in backlog
+- Status: done (all tasks merged)
 
 ## Overview
 New logic goes in a new module, `src/fields/`: the shared field set and its types, answer
@@ -262,7 +262,7 @@ Reviews run on opus.
   - [ ] Violations from several fields come back together, in declared field order.
   - [ ] Boundaries: exactly `max_chars` passes and `max_chars + 1` fails; `é` and an emoji
         made of one scalar value count as one character each.
-  - [ ] Normalization: `\r\n` becomes `\n`; C0 controls other than `\n`/`\t` and DEL are
+  - [ ] Normalization: `\r\n` becomes `\n`; every control character (C0, DEL and C1) other than `\n`/`\t` is
         removed; values are trimmed; empty list items are dropped; leading `#`s are stripped
         from hashtags (`##rust` becomes `rust`); keys that were not declared are dropped from
         `Values`.
