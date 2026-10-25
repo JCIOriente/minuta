@@ -4,8 +4,9 @@ pub mod prompt;
 pub mod render;
 pub mod validate;
 
-/// Bumped when the chapters block, repair prompt, validation or rendering changes; part of
-/// the fingerprint of the chapters template only. (The artifact's own `"version"` is separate, ADR-0009.)
+/// Bumped when the chapters block, repair prompt, parsing, snapping, the rules or chapter-line
+/// rendering changes; part of the fingerprint of the chapters template and of every fields
+/// template that declares the `chapters` field. (The artifact's own `"version"` is separate, ADR-0009.)
 pub const CHAPTERS_VERSION: u32 = 1;
 /// The template name.
 pub const NAME: &str = "chapters";
@@ -16,7 +17,7 @@ pub const MIN_CHAPTERS: usize = 3;
 /// The shortest chapter, in seconds.
 pub const MIN_SECONDS: u64 = 10;
 /// The shortest transcript that can be chaptered: `MIN_CHAPTERS * MIN_SECONDS`.
-pub const MIN_TRANSCRIPT_SECONDS: u64 = 30;
+pub const MIN_TRANSCRIPT_SECONDS: u64 = MIN_CHAPTERS as u64 * MIN_SECONDS;
 
 /// One chapter: where it starts (whole seconds) and its title.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -32,16 +33,17 @@ pub struct ChaptersSpec {
     pub max_chars: Option<usize>,
 }
 
-/// `h:mm:ss`, `hh:mm:ss`, `m:ss`, `mm:ss`; seconds 0-59; minutes 0-59 when hours are given;
-/// checked arithmetic. `None` for anything else.
+/// `h:mm:ss`, `hh:mm:ss`, `m:ss`, `mm:ss`; seconds 0-59; minutes 0-59 when hours are given
+/// (0-99 in the two-group forms); checked arithmetic. `None` for anything else.
 pub fn parse_stamp(s: &str) -> Option<u64> {
     let groups: Vec<&str> = s.split(':').collect();
     let digits = |g: &str, min: usize, max: usize| {
         (min..=max).contains(&g.len()) && g.bytes().all(|b| b.is_ascii_digit())
     };
     let number = |g: &str| g.parse::<u64>().ok().filter(|n| *n < 60);
+    let any = |g: &str| g.parse::<u64>().ok();
     let (hours, minutes, seconds) = match groups.as_slice() {
-        [m, s] if digits(m, 1, 2) && digits(s, 2, 2) => (0, number(m)?, number(s)?),
+        [m, s] if digits(m, 1, 2) && digits(s, 2, 2) => (0, any(m)?, number(s)?),
         [h, m, s] if digits(h, 1, 2) && digits(m, 2, 2) && digits(s, 2, 2) => {
             (h.parse::<u64>().ok()?, number(m)?, number(s)?)
         }
@@ -105,6 +107,26 @@ mod tests {
     #[test]
     fn parse_stamp_accepts_zero_hours() {
         assert_eq!(parse_stamp("00:00:00"), Some(0));
+    }
+
+    #[test]
+    fn parse_stamp_accepts_minutes_over_59() {
+        assert_eq!(parse_stamp("75:30"), Some(4530));
+    }
+
+    #[test]
+    fn parse_stamp_accepts_sixty_minutes_without_hours() {
+        assert_eq!(parse_stamp("60:00"), Some(3600));
+    }
+
+    #[test]
+    fn parse_stamp_rejects_three_digit_hours() {
+        assert_eq!(parse_stamp("100:00:00"), None);
+    }
+
+    #[test]
+    fn min_transcript_seconds_is_thirty() {
+        assert_eq!(MIN_TRANSCRIPT_SECONDS, 30);
     }
 
     #[test]
