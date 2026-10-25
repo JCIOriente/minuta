@@ -102,13 +102,20 @@ impl CallCache {
 }
 
 fn cache_key(backend: &dyn Backend, system: &str, user: &str) -> String {
+    key(backend, system, user, &[])
+}
+
+/// Fingerprint of (backend id, context tokens, system, user) followed by `extra` parts.
+fn key(backend: &dyn Backend, system: &str, user: &str, extra: &[&[u8]]) -> String {
     let context = backend.context_tokens().to_string();
-    fingerprint(&[
+    let mut parts: Vec<&[u8]> = vec![
         backend.id().as_bytes(),
         context.as_bytes(),
         system.as_bytes(),
         user.as_bytes(),
-    ])
+    ];
+    parts.extend_from_slice(extra);
+    fingerprint(&parts)
 }
 
 /// Runs one LLM call through the cache. `refresh` skips the cache read and overwrites the
@@ -142,15 +149,7 @@ fn json_cache_key(
     user: &str,
     schema: &serde_json::Value,
 ) -> String {
-    let context = backend.context_tokens().to_string();
-    let schema = schema.to_string();
-    fingerprint(&[
-        backend.id().as_bytes(),
-        context.as_bytes(),
-        system.as_bytes(),
-        user.as_bytes(),
-        schema.as_bytes(),
-    ])
+    key(backend, system, user, &[schema.to_string().as_bytes()])
 }
 
 /// Outcome of a `call_json` answer checked by `accept`.
@@ -168,6 +167,7 @@ pub enum Answer<T> {
 /// JSON). `accept` gets the cleaned, non-empty text; only an accepted answer is written to
 /// the cache, and a cache hit that `accept` rejects counts as a miss (ADR-0006). `refresh`
 /// skips the cache read. Transient failures, including empty output, are retried per `policy`.
+// Signature fixed by the plan's shared interfaces.
 #[allow(clippy::too_many_arguments)]
 pub fn call_json<T>(
     backend: &dyn Backend,
