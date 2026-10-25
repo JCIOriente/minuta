@@ -17,7 +17,7 @@
 
 ## Timing assertions that pass locally and flake on CI
 - Symptom: a test fails on a GitHub runner with "assertion failed: elapsed < 100ms" (or a concurrency peak of 1 instead of N) and passes on rerun.
-- Cause: shared runners pause threads for tens to hundreds of milliseconds; fixed sleeps and tight wall-clock bounds assume a quiet machine. Seen in #44 (100 ms interrupt bound, fixed in #48), #49 (sleep-based concurrency and first-error tests) and #43 (fixed 200 ms sleep before an interrupt).
+- Cause: shared runners pause threads for tens to hundreds of milliseconds; fixed sleeps and tight wall-clock bounds assume a quiet machine. Seen in #44 (100 ms interrupt bound, fixed in #48) and #49 (sleep-based concurrency and first-error tests).
 - Avoid: wait on observable state with a generous deadline (10–30 s) that panics with a clear message; order threads with gates or condvars, not sleeps; for "is it fast enough", compare a ratio (t(4N)/t(N)) instead of an absolute time; keep any absolute bound at 10x the expected value.
 
 ## Untrusted text from `./templates` or a server reaches prompts or the terminal

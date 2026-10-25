@@ -8,7 +8,7 @@ Project rules that override the baton guides. `baton:retro` appends lessons here
 - Local toolchain is pinned to `stable` (`rust-toolchain.toml`) so `make ci` locally runs the same clippy as CI. Why: a lint added in newer clippy (`cloned_ref_to_slice_refs`) passed locally on 1.80 and failed CI on PR #19.
 - Never test by writing a script and executing it from a parallel test thread without protection. Prefer a committed, already-executable fixture (`tests/fixtures/bin/whisper-cli`); otherwise hold a shared mutex across write and spawn, or retry on `ETXTBSY`. Why: Linux can fail `exec` of a file another thread's fork still holds open for writing (hit in T5 and T10).
 - Do not assert the relative order of lines from two different streams (stdout vs stderr). They are read by separate threads. Assert per stream, or on set membership.
-- No fixed sleeps or tight wall-clock bounds in tests; see "Timing assertions" in docs/common-issues.md. Why: three separate tests flaked or would flake on shared CI runners in sub-project 2.
+- Never use a sleep to order threads or to wait for a state, and no tight wall-clock bounds in tests; poll observable state under a generous deadline instead (see "Timing assertions" in docs/common-issues.md). Why: tests in #44 and #49 flaked or would have flaked on shared CI runners.
 - External tools run only through `tools::run` (or `tools::run_capture`) with an argv array, never through a shell. Tests that spawn tools must be hermetic: temp `HOME`/XDG, explicit `MINUTA_CONFIG`, `env_clear()` for anything that must reach the real binary.
 
 ## Security
@@ -21,6 +21,6 @@ Project rules that override the baton guides. `baton:retro` appends lessons here
 
 ## Process
 - Tests for a table of cases (per-key config, per-name env var, per-extension muxer) need one assertion per case, not one representative case. Why: the tests reviewer returned CHANGES_REQUIRED for this on T2, T3 and T9; a swapped key or dropped name passed every test.
-- Implementers report the failing test run before the fix (the red output), not just "tests pass". Why: in sub-project 2, six of twelve implementers wrote tests and code together and never saw the tests fail; two of those tests later turned out not to catch the regression they were named for (#49 concurrency test, #46 raw text).
+- Implementers report the failing test run before the fix (the red output), not just "tests pass". Why: in sub-project 2, half of the implementers reported writing tests and code together without seeing the tests fail, and reviewers later found tests that did not cover what they claimed (#49 concurrency limit, #46 `raw` field).
 - A review fix that tightens a constraint (a time bound, an allowlist, a stricter writer) needs a test with real-world values before it is accepted. Why: three controller-requested fixes regressed in sub-project 2: a 100 ms bound flaked on CI (#48), a model-name allowlist rejected real Claude names like `opus[1m]` (#45), and inlining an atomic write dropped the directory fsync (#44).
 - Plan interfaces between parallel tasks must name the hooks later tasks need up front. Steps need `run_with(ctx, RunOpts, on_line)` for interrupt and progress; T7 had to be reworked after review because the plan only had `Step::run`.
