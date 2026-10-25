@@ -3,7 +3,6 @@
 pub mod discover;
 pub mod graph;
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -91,8 +90,34 @@ struct Frontmatter {
     llm: Option<String>,
     lang: Option<String>,
     fields: Option<Vec<String>>,
-    limits: Option<BTreeMap<String, LimitYaml>>,
+    limits: Option<Limits>,
     format: Option<String>,
+}
+
+/// The `limits` map as written, keeping repeated keys so they can be rejected.
+struct Limits(Vec<(String, LimitYaml)>);
+
+impl<'de> Deserialize<'de> for Limits {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = Limits;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a map from field name to limits")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> std::result::Result<Limits, A::Error> {
+                let mut pairs = Vec::new();
+                while let Some(pair) = map.next_entry()? {
+                    pairs.push(pair);
+                }
+                Ok(Limits(pairs))
+            }
+        }
+        d.deserialize_map(V)
+    }
 }
 
 #[derive(Deserialize)]
@@ -169,7 +194,7 @@ fn expand(body: &str, mut f: impl FnMut(&str) -> String) -> String {
 /// Build the fields spec from the frontmatter keys, checked against the shared field set.
 fn fields_spec(
     names: Option<Vec<String>>,
-    limits: Option<BTreeMap<String, LimitYaml>>,
+    limits: Option<Limits>,
     format: Option<String>,
 ) -> std::result::Result<FieldsSpec, String> {
     let names = names.ok_or("'output: fields' requires 'fields'")?;
@@ -203,7 +228,12 @@ fn fields_spec(
             limit: Limit::default(),
         })
         .collect();
-    for (key, raw) in limits.unwrap_or_default() {
+    let mut seen: Vec<String> = Vec::new();
+    for (key, raw) in limits.map_or_else(Vec::new, |l| l.0) {
+        if seen.contains(&key) {
+            return Err(format!("duplicate limit for {key:?}"));
+        }
+        seen.push(key.clone());
         let Some(spec) =
             Field::from_name(&key).and_then(|f| specs.iter_mut().find(|s| s.field == f))
         else {

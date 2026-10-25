@@ -178,6 +178,12 @@ fn format_markdown() {
 }
 
 #[test]
+fn format_plain_explicit() {
+    let t = parse("a", &fields_tpl("fields: [body]\nformat: plain\n")).unwrap();
+    assert_eq!(spec(&t).format, Format::Plain);
+}
+
+#[test]
 fn markdown_template_output_markdown() {
     let text = "---\noutput: markdown\n---\nBody {{ job_name }}";
     let t = parse("a", text).unwrap();
@@ -259,6 +265,15 @@ fn fields_error_limit_for_undeclared() {
         m.contains("limit for \"title\", which is not in 'fields'"),
         "{m}"
     );
+}
+
+#[test]
+fn fields_error_duplicate_limit() {
+    let m = fields_error(
+        "fields: [title]\nlimits:\n  title: { max_chars: 10 }\n  title: { max_chars: 100 }\n",
+    );
+    assert_names_template(&m);
+    assert!(m.contains("duplicate limit for \"title\""), "{m}");
 }
 
 #[test]
