@@ -111,13 +111,15 @@ struct OllamaTable {
     num_ctx: Option<Scalar>,
 }
 
-/// A numeric key may be written as a TOML integer or as a string. Validation happens in
-/// `Config::resolve`, so both forms get the same error message.
+/// A numeric key may be written as a TOML integer or as a string. Any other TOML value
+/// (float, bool, ...) is kept as its text, so `Config::resolve` rejects it by key name
+/// like any other non-integer.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum Scalar {
     Int(i64),
     Text(String),
+    Other(toml::Value),
 }
 
 impl Scalar {
@@ -125,6 +127,7 @@ impl Scalar {
         match self {
             Scalar::Int(n) => n.to_string(),
             Scalar::Text(text) => text,
+            Scalar::Other(value) => value.to_string(),
         }
     }
 }
