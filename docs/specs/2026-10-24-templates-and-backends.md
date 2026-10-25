@@ -1,6 +1,6 @@
 # Templates and LLM backends (sub-project 2 of 6) — Spec
 
-- Status: draft
+- Status: approved
 - Date: 2026-10-24
 - Owner: Arnold Gandarillas Castillo
 - Related: docs/brief.md, docs/specs/2026-10-23-core-pipeline.md, ADR-0001, ADR-0003,

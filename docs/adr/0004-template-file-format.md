@@ -1,6 +1,6 @@
 # ADR-0004: Template files are Markdown with YAML frontmatter, named by file stem
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-24
 - Deciders: Arnold Gandarillas Castillo
 - Related: docs/specs/2026-10-24-templates-and-backends.md, ADR-0001, docs/brief.md
