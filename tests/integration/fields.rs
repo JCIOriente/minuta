@@ -291,23 +291,30 @@ fn fields_chunked_format_only_final() {
         .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
     let sent = chats(&fake);
-    let (maps, structured): (Vec<_>, Vec<_>) = sent.iter().partition(|r| !has_format(r));
+    let by_role = |is_role: &dyn Fn(&str) -> bool| -> Vec<&Request> {
+        sent.iter().filter(|r| is_role(message(r, 0))).collect()
+    };
+    let maps = by_role(&|s| s.contains("This is part "));
+    let consolidations = by_role(&|s| s.contains("consecutive parts"));
+    let repairs = by_role(&|s| s.starts_with("You correct a JSON object."));
     assert!(maps.len() >= 2, "the input needed several map calls");
-    for map in &maps {
-        assert!(message(map, 0).contains("part "), "{}", message(map, 0));
-        assert!(map.body["format"].is_null());
-    }
-    assert_eq!(structured.len(), 2, "the consolidation and one repair");
-    assert!(message(structured[0], 0).contains("consecutive parts"));
-    assert!(!is_repair(structured[0]));
-    assert!(is_repair(structured[1]));
+    assert_eq!(consolidations.len(), 1);
+    assert_eq!(repairs.len(), 1);
+    assert_eq!(
+        maps.len() + consolidations.len() + repairs.len(),
+        sent.len(),
+        "every request has one role"
+    );
     let schema = serde_json::json!({
         "type": "object",
         "properties": {"title": {"type": "string"}},
         "required": ["title"],
     });
-    assert_eq!(structured[0].body["format"], schema);
-    assert_eq!(structured[1].body["format"], schema);
+    for map in &maps {
+        assert!(map.body["format"].is_null(), "{}", map.body["format"]);
+    }
+    assert_eq!(consolidations[0].body["format"], schema);
+    assert_eq!(repairs[0].body["format"], schema);
     assert_eq!(
         read_json(env.job_dir("a").join("headline.json"))["fields"]["title"],
         "Short"
