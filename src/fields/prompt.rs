@@ -5,7 +5,7 @@ use serde_json::{json, Value as Json};
 use super::{Field, FieldSpec, FieldsSpec, Format, Kind, Limit, Violation};
 use crate::llm::chunk::language_instruction;
 
-const REPAIR_INTRO: &str = "You correct a JSON object. Fix only the problems listed in the input, keep everything else unchanged, and return only the corrected JSON object.";
+pub(crate) const REPAIR_INTRO: &str = "You correct a JSON object. Fix only the problems listed in the input, keep everything else unchanged, and return only the corrected JSON object.";
 const BLOCK_INTRO: &str =
     "Return only a JSON object with exactly these keys, and no text before or after it:";
 const PLAIN_SENTENCE: &str = "Write the values as plain text without Markdown.";

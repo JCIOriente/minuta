@@ -28,7 +28,7 @@ pub fn parse_answer(answer: &str, spec: &FieldsSpec) -> Result<Values, Vec<Viola
 
 /// The whole text, else the text from the first `{` to the last `}`. On failure, the message
 /// of the last attempt (the more specific one when there is an object-like span).
-fn parse_object(text: &str) -> Result<Map<String, Json>, String> {
+pub(crate) fn parse_object(text: &str) -> Result<Map<String, Json>, String> {
     let mut message = match parse_whole(text) {
         Ok(object) => return Ok(object),
         Err(message) => message,
@@ -147,7 +147,7 @@ fn list_items(field: Field, items: Vec<&str>) -> Vec<String> {
 }
 
 /// CRLF to LF, drops every control character (C0, DEL, C1) other than `\n` and `\t`, then trims.
-fn normalize(text: &str) -> String {
+pub(crate) fn normalize(text: &str) -> String {
     text.replace("\r\n", "\n")
         .chars()
         .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
