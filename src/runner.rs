@@ -305,15 +305,15 @@ fn resolve_force(
 }
 
 /// What preflight found: the media tools and a ready backend per backend id in the run.
-pub struct Ready {
-    pub toolchain: Toolchain,
+pub(crate) struct Ready {
+    toolchain: Toolchain,
     /// Keyed by backend id.
-    pub backends: BTreeMap<String, Box<dyn Backend>>,
+    backends: BTreeMap<String, Box<dyn Backend>>,
 }
 
 /// Resolves the toolchain for `config` and checks every backend in `backends`, listing every
 /// missing tool, the model and every unreachable backend or missing LLM model at once.
-pub fn preflight(config: &Config, backends: &[BackendId]) -> Result<Ready> {
+pub(crate) fn preflight(config: &Config, backends: &[BackendId]) -> Result<Ready> {
     let mut missing = Vec::new();
     let toolchain = match tools::preflight(&tool_paths(config)?, true) {
         Ok(toolchain) => Some(toolchain),
@@ -387,8 +387,11 @@ pub fn llm_status(config: &Config) -> String {
     match &id {
         BackendId::Ollama { model } => match ollama::check(&config.ollama_url.value, model) {
             Ok(_) => "ok".to_string(),
-            // The server is named `ollama`; a model problem is named by the backend id.
-            Err(m) if m.name == id.to_string() => format!("model missing: {}", m.hint),
+            // Only a model absent from /api/tags is missing; any other failure, such as
+            // /api/show failing, means the model cannot be reached.
+            Err(m) if m.hint == format!("ollama pull {model}") => {
+                format!("model missing: {}", m.hint)
+            }
             Err(m) => format!("not reachable: {}", m.hint),
         },
         BackendId::Claude { .. } => match claude::check(&config.claude_bin.value) {

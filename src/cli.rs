@@ -285,16 +285,16 @@ fn templates_list() -> Result<()> {
     ]];
     for t in catalog.templates.values() {
         rows.push([
-            t.name.clone(),
+            sanitize(&t.name),
             layer_name(t.layer).to_string(),
             match &t.input {
                 Input::Transcript => "transcript".to_string(),
-                Input::Template(dep) => dep.clone(),
+                Input::Template(dep) => sanitize(dep),
             },
             t.llm
                 .as_ref()
-                .map_or("(default)".to_string(), ToString::to_string),
-            t.description.clone().unwrap_or_default(),
+                .map_or("(default)".to_string(), |id| sanitize(&id.to_string())),
+            sanitize(t.description.as_deref().unwrap_or_default()),
         ]);
     }
     let width = |col: usize| {
@@ -322,8 +322,8 @@ fn templates_list() -> Result<()> {
     for invalid in &catalog.invalid {
         println!(
             "invalid  {}  {}",
-            invalid.path.display(),
-            single_line(&invalid.error)
+            sanitize(&invalid.path.display().to_string()),
+            sanitize(&single_line(&invalid.error))
         );
     }
     Ok(())
@@ -348,6 +348,15 @@ fn layer_name(layer: Layer) -> &'static str {
         Layer::User => "user",
         Layer::Project => "project",
     }
+}
+
+/// Template files can come from a cloned repository: every control character (newlines,
+/// carriage returns, escape sequences) becomes `?`, so a listing entry stays one line and
+/// cannot drive the terminal.
+fn sanitize(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { '?' } else { c })
+        .collect()
 }
 
 /// An error message on one line, for listings.
@@ -456,6 +465,12 @@ mod tests {
             let err = Cli::try_parse_from(argv).unwrap_err();
             assert_eq!(err.exit_code(), 2, "{flag:?}");
         }
+    }
+
+    #[test]
+    fn sanitize_replaces_control_characters() {
+        assert_eq!(sanitize("a\u{1b}[2K\rb\nc\td"), "a?[2K?b?c?d");
+        assert_eq!(sanitize("acta · ñ"), "acta · ñ");
     }
 
     #[test]

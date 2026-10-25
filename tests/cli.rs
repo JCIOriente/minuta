@@ -12,6 +12,9 @@ use std::time::{Duration, Instant};
 use assert_cmd::assert::OutputAssertExt;
 use predicates::str::contains;
 
+/// An address no test server ever binds (port 9, discard), so no real Ollama is reached.
+const NO_OLLAMA: &str = "http://127.0.0.1:9";
+
 const FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/whisper/sample.json"
@@ -152,6 +155,11 @@ echo "[00:00:00.000 --> 00:00:03.500]   Buenos dias a todos."
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // Never probe a real local Ollama. `config` is left alone: `config show` lists the
+        // default URL.
+        if args.first() != Some(&"config") {
+            cmd.env("MINUTA_OLLAMA_URL", NO_OLLAMA);
+        }
         cmd
     }
 
@@ -742,14 +750,6 @@ fn ollama_with(responder: fake_ollama::Responder) -> FakeOllama {
     )
 }
 
-/// An address nothing listens on.
-fn closed_url() -> String {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-    format!("http://{addr}")
-}
-
 impl Env {
     /// Writes `<dir>/<name>.md`, where `dir` is relative to the temp dir.
     fn template(&self, dir: &str, name: &str, text: &str) {
@@ -925,7 +925,7 @@ fn resolution_problems_exit_2_before_job_folder() {
         (&["-t", "summary", "--llm", "gpt:4"], "gpt:4"),
         (&["-t", "summary", "--output-lang", "xx"], "'xx'"),
         (&["--output-lang", "xx"], "'xx'"),
-        (&["-t", "bad"], "bad"),
+        (&["-t", "bad"], "gpt:4"),
     ];
     for (extra, expected) in cases {
         let mut args = vec!["run", "clase-4.mp4"];
@@ -948,7 +948,7 @@ fn preflight_reports_backend_and_tools_together() {
     fs::remove_file(env.bin().join("whisper-cli")).unwrap();
     let out = env.run_cmd({
         let mut cmd = env.command(&["run", "clase-4.mp4", "-t", "summary"]);
-        cmd.env("MINUTA_OLLAMA_URL", closed_url());
+        cmd.env("MINUTA_OLLAMA_URL", NO_OLLAMA);
         cmd
     });
     out.clone().assert().code(1).stdout("");
@@ -1305,7 +1305,7 @@ fn doctor_reports_llm_without_affecting_exit_code() {
 
     let out = env.run_cmd({
         let mut cmd = env.command(&["doctor"]);
-        cmd.env("MINUTA_OLLAMA_URL", closed_url());
+        cmd.env("MINUTA_OLLAMA_URL", NO_OLLAMA);
         cmd
     });
     out.clone().assert().success();
@@ -1314,4 +1314,53 @@ fn doctor_reports_llm_without_affecting_exit_code() {
         "{}",
         stdout(&out)
     );
+}
+
+/// Every char that could move the cursor or start an escape sequence.
+fn control_chars(text: &str) -> Vec<char> {
+    text.chars()
+        .filter(|c| c.is_control() && *c != '\n')
+        .collect()
+}
+
+#[test]
+fn templates_list_neutralizes_control_characters() {
+    let env = Env::new();
+    env.template(
+        "templates",
+        "evil",
+        "---\ndescription: \"ok\\e[2K\\rfake\\nsummary  built-in\"\n---\nX.",
+    );
+    // An ignored file whose name, shown in the path and the error, has a control character.
+    env.template("templates", "bro\x1b[31mken", "X.");
+    let out = env.minuta(&["templates", "list"]);
+    out.clone().assert().success();
+    let text = stdout(&out);
+    assert_eq!(control_chars(&text), Vec::<char>::new(), "{text:?}");
+    let evil: Vec<&str> = text.lines().filter(|l| l.contains("fake")).collect();
+    assert_eq!(evil.len(), 1, "{text}");
+    assert!(evil[0].starts_with("evil "), "{text}");
+    let broken: Vec<&str> = text.lines().filter(|l| l.contains("bro?[31mken")).collect();
+    assert_eq!(broken.len(), 1, "{text}");
+    assert!(broken[0].starts_with("invalid "), "{text}");
+    assert_eq!(
+        text.lines().filter(|l| l.starts_with("summary")).count(),
+        1,
+        "no fake row: {text}"
+    );
+}
+
+#[test]
+fn doctor_reports_ollama_show_failure_as_not_reachable() {
+    let env = Env::new();
+    let fake =
+        FakeOllama::start_with_show(&["gemma4:26b"], None, Arc::new(|_| Reply::chat("unused")));
+    let out = env.minuta_llm(&["doctor"], &fake);
+    out.clone().assert().success();
+    let report = stdout(&out);
+    assert!(
+        report.contains("llm          ollama:gemma4:26b (not reachable: "),
+        "{report}"
+    );
+    assert!(!report.contains("model missing"), "{report}");
 }
