@@ -125,8 +125,11 @@ impl TemplateRun<'_> {
         Ok(fingerprint(&parts))
     }
 
-    /// Runs the template and writes its [`artifacts`](Self::artifacts) atomically, in order.
-    /// Nothing is written on failure.
+    /// Runs the template and writes its [`artifacts`](Self::artifacts) in order, each with
+    /// `write_atomic`. A failure before the writes leaves the job folder untouched. If a write
+    /// fails, the artifacts this call already wrote are removed (an earlier run's version of
+    /// them is not restored), and the write error is returned, naming any file that could not
+    /// be removed.
     pub fn execute(
         &self,
         ctx: &Ctx,
@@ -214,11 +217,17 @@ impl TemplateRun<'_> {
             }
         };
 
+        let mut written: Vec<PathBuf> = Vec::new();
         for (file, text) in self.artifacts().iter().zip(&contents) {
-            write_atomic(&ctx.dir.join(file), |tmp| {
+            let path = ctx.dir.join(file);
+            let result = write_atomic(&path, |tmp| {
                 fs::write(tmp, text)?;
                 Ok(())
-            })?;
+            });
+            if let Err(e) = result {
+                return Err(remove_written(&written, e));
+            }
+            written.push(path);
         }
         Ok(generated)
     }
@@ -329,6 +338,31 @@ fn read_transcript(dir: &Path) -> Result<Transcript> {
     let path = dir.join(TRANSCRIPT_FILE);
     let json = fs::read_to_string(&path).map_err(|e| io_error(&path, e))?;
     serde_json::from_str(&json).map_err(|e| Error::Parse(format!("{TRANSCRIPT_FILE}: {e}")))
+}
+
+/// Removes `written`, newest first, after `error` stopped the writes, so no partial set of
+/// artifacts is left. Returns `error`, with any file that could not be removed added to it.
+fn remove_written(written: &[PathBuf], error: Error) -> Error {
+    let failures: Vec<String> = written
+        .iter()
+        .rev()
+        .filter_map(|path| {
+            fs::remove_file(path)
+                .err()
+                .map(|e| format!("could not remove {}: {e}", path.display()))
+        })
+        .collect();
+    if failures.is_empty() {
+        return error;
+    }
+    let kind = match &error {
+        Error::Io(e) => e.kind(),
+        _ => io::ErrorKind::Other,
+    };
+    Error::Io(io::Error::new(
+        kind,
+        format!("{error}; {}", failures.join("; ")),
+    ))
 }
 
 fn io_error(path: &Path, e: io::Error) -> Error {

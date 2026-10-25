@@ -878,3 +878,19 @@ fn fields_chunked_only_final_call_asks_for_json() {
     let md = fs::read_to_string(dir.path().join("social.md")).unwrap();
     assert_eq!(md, "Hola\n\nCorto.\n");
 }
+
+#[test]
+fn fields_markdown_write_failure_removes_json() {
+    let (dir, _) = job();
+    // A non-empty directory where `social.md` goes: renaming the temp file onto it fails.
+    fs::create_dir(dir.path().join("social.md")).unwrap();
+    fs::write(dir.path().join("social.md").join("keep"), "x").unwrap();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    let err = execute(&run(&t, &b, "es"), dir.path()).unwrap_err();
+    assert!(matches!(err, Error::Io(_)), "{err}");
+    assert!(
+        !dir.path().join("social.json").try_exists().unwrap(),
+        "social.json left behind"
+    );
+}
