@@ -191,14 +191,14 @@ impl Ollama {
     }
 
     /// One blocking round trip; runs on a worker thread.
-    fn request(&self, body: Value) -> Result<String> {
+    fn request(&self, body: Value, structured: bool) -> Result<String> {
         let response = agent(self.timeout)
             .post(&format!("{}/api/chat", self.url))
             .set("Content-Type", "application/json")
             .send_string(&body.to_string());
         let response = match response {
             Ok(r) => r,
-            Err(ureq::Error::Status(code, r)) => return Err(self.status_error(code, r)),
+            Err(ureq::Error::Status(code, r)) => return Err(self.status_error(code, r, structured)),
             Err(ureq::Error::Transport(t)) => {
                 let transient = matches!(
                     t.kind(),
@@ -228,7 +228,7 @@ impl Ollama {
             .ok_or_else(|| self.error("response has no message content".into(), false))
     }
 
-    fn status_error(&self, code: u16, response: ureq::Response) -> Error {
+    fn status_error(&self, code: u16, response: ureq::Response, structured: bool) -> Error {
         let detail = match response.into_string() {
             Ok(text) => {
                 let from_json = serde_json::from_str::<Value>(&text)
@@ -251,6 +251,10 @@ impl Ollama {
                 ),
                 false,
             ),
+            400 if structured => self.error(
+                format!("HTTP 400{detail}; structured output needs Ollama 0.5 or later"),
+                false,
+            ),
             429 | 500..=599 => self.error(format!("HTTP {code}{detail}"), true),
             _ => self.error(format!("HTTP {code}{detail}"), false),
         }
@@ -267,11 +271,29 @@ impl Backend for Ollama {
     }
 
     fn complete(&self, system: &str, user: &str, interrupt: &AtomicBool) -> Result<String> {
-        let body = self.body(system, user);
+        self.chat(self.body(system, user), false, interrupt)
+    }
+
+    fn complete_json(
+        &self,
+        system: &str,
+        user: &str,
+        schema: &Value,
+        interrupt: &AtomicBool,
+    ) -> Result<String> {
+        let mut body = self.body(system, user);
+        body["format"] = schema.clone();
+        self.chat(body, true, interrupt)
+    }
+}
+
+impl Ollama {
+    /// Sends `body` on a worker thread so an interrupt can abandon it.
+    fn chat(&self, body: Value, structured: bool, interrupt: &AtomicBool) -> Result<String> {
         let worker = self.clone();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(worker.request(body));
+            let _ = tx.send(worker.request(body, structured));
         });
         loop {
             if interrupt.load(Ordering::SeqCst) {
