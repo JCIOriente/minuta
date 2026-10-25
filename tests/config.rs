@@ -407,6 +407,7 @@ fn env_snapshot_covers_every_minuta_name() {
         ("MINUTA_LLM_CONCURRENCY", "2".into()),
         ("MINUTA_LLM_RETRIES", "5".into()),
         ("MINUTA_LLM_BACKOFF_MS", "0".into()),
+        ("MINUTA_LLM_REPAIRS", "1".into()),
         ("MINUTA_OLLAMA_URL", "env-ou".into()),
         ("MINUTA_OLLAMA_NUM_CTX", "4096".into()),
         ("MINUTA_CLAUDE_BIN", "env-cb".into()),
@@ -462,7 +463,7 @@ fn entries_map_each_key_to_its_own_file_value() {
     let dir = tempfile::tempdir().unwrap();
     let file = write_config(
         &dir,
-        "out_dir = \"out-v\"\n[whisper]\nbin = \"wb-v\"\nmodel = \"wm-v\"\nlang = \"wl-v\"\n[ffmpeg]\nbin = \"ff-v\"\n[ffprobe]\nbin = \"fp-v\"\n[llm]\ndefault = \"ld-v\"\noutput_lang = \"lo-v\"\nconcurrency = 3\nretries = 4\nbackoff_ms = 150\n[ollama]\nurl = \"ou-v\"\nnum_ctx = 8192\n[claude]\nbin = \"cb-v\"\n",
+        "out_dir = \"out-v\"\n[whisper]\nbin = \"wb-v\"\nmodel = \"wm-v\"\nlang = \"wl-v\"\n[ffmpeg]\nbin = \"ff-v\"\n[ffprobe]\nbin = \"fp-v\"\n[llm]\ndefault = \"ld-v\"\noutput_lang = \"lo-v\"\nconcurrency = 3\nretries = 4\nbackoff_ms = 150\nrepairs = 6\n[ollama]\nurl = \"ou-v\"\nnum_ctx = 8192\n[claude]\nbin = \"cb-v\"\n",
     );
     let cfg = Config::resolve(Overrides::default(), &no_env, Some(file.as_path())).unwrap();
     let want = [
@@ -477,6 +478,7 @@ fn entries_map_each_key_to_its_own_file_value() {
         ("llm.concurrency", "3"),
         ("llm.retries", "4"),
         ("llm.backoff_ms", "150"),
+        ("llm.repairs", "6"),
         ("ollama.url", "ou-v"),
         ("ollama.num_ctx", "8192"),
         ("claude.bin", "cb-v"),
@@ -593,6 +595,15 @@ fn new_cases() -> Vec<NewCase> {
             get: |c| Some(&c.llm_backoff_ms),
         },
         NewCase {
+            key: "llm.repairs",
+            toml: "[llm]\nrepairs = 5\n",
+            file_value: "5",
+            env: "MINUTA_LLM_REPAIRS",
+            env_value: "6",
+            default: Some("2"),
+            get: |c| Some(&c.llm_repairs),
+        },
+        NewCase {
             key: "ollama.url",
             toml: "[ollama]\nurl = \"file\"\n",
             file_value: "file",
@@ -672,6 +683,9 @@ fn numeric_keys_reject_garbage() {
         ("ollama.num_ctx", "[ollama]\nnum_ctx = 0\n"),
         ("llm.backoff_ms", "[llm]\nbackoff_ms = 1.5\n"),
         ("llm.retries", "[llm]\nretries = true\n"),
+        ("llm.repairs", "[llm]\nrepairs = -1\n"),
+        ("llm.repairs", "[llm]\nrepairs = \"abc\"\n"),
+        ("llm.repairs", "[llm]\nrepairs = 1.5\n"),
     ];
     for (key, toml) in rows {
         let dir = tempfile::tempdir().unwrap();
@@ -734,6 +748,7 @@ fn entries_list_new_keys() {
             "llm.concurrency",
             "llm.retries",
             "llm.backoff_ms",
+            "llm.repairs",
             "ollama.url",
             "ollama.num_ctx",
             "claude.bin",
@@ -764,6 +779,7 @@ fn unknown_llm_key_rejected() {
 fn numeric_env_rejects_garbage() {
     let rows = [
         ("llm.retries", "MINUTA_LLM_RETRIES"),
+        ("llm.repairs", "MINUTA_LLM_REPAIRS"),
         ("llm.backoff_ms", "MINUTA_LLM_BACKOFF_MS"),
         ("llm.concurrency", "MINUTA_LLM_CONCURRENCY"),
         ("ollama.num_ctx", "MINUTA_OLLAMA_NUM_CTX"),
@@ -810,4 +826,88 @@ fn datetime_numeric_value_message_names_key_without_marker() {
         !msg.contains("$__toml_private"),
         "leaked toml marker: {msg}"
     );
+}
+
+#[test]
+fn repairs_default_is_two() {
+    let cfg = Config::resolve(Overrides::default(), &no_env, None).unwrap();
+    assert_eq!(cfg.repairs(), 2);
+    assert_key(
+        Some(&cfg.llm_repairs),
+        Some(("2", Source::Default)),
+        "llm.repairs",
+    );
+}
+
+#[test]
+fn repairs_from_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_config(&dir, "[llm]\nrepairs = 4\n");
+    let cfg = Config::resolve(Overrides::default(), &no_env, Some(file.as_path())).unwrap();
+    assert_eq!(cfg.repairs(), 4);
+    assert_key(
+        Some(&cfg.llm_repairs),
+        Some(("4", Source::File)),
+        "llm.repairs",
+    );
+}
+
+#[test]
+fn repairs_env_overrides_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_config(&dir, "[llm]\nrepairs = 4\n");
+    let env = env_with("MINUTA_LLM_REPAIRS", "7");
+    let cfg = Config::resolve(Overrides::default(), &env, Some(file.as_path())).unwrap();
+    assert_eq!(cfg.repairs(), 7);
+    assert_key(
+        Some(&cfg.llm_repairs),
+        Some(("7", Source::Env)),
+        "llm.repairs",
+    );
+}
+
+#[test]
+fn repairs_zero_allowed() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_config(&dir, "[llm]\nrepairs = 0\n");
+    let cfg = Config::resolve(Overrides::default(), &no_env, Some(file.as_path())).unwrap();
+    assert_eq!(cfg.repairs(), 0);
+}
+
+#[test]
+fn repairs_rejects_non_integer() {
+    let rows = [
+        ("[llm]\nrepairs = -1\n", None),
+        ("[llm]\nrepairs = \"abc\"\n", None),
+        ("[llm]\nrepairs = 1.5\n", None),
+        ("", Some("-1")),
+        ("", Some("abc")),
+    ];
+    for (toml, env) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write_config(&dir, toml);
+        let env_value = env.unwrap_or("");
+        let env_fn = env_with("MINUTA_LLM_REPAIRS", env_value);
+        let read: &dyn Fn(&str) -> Option<String> = if env.is_some() { &env_fn } else { &no_env };
+        let msg = config_err(Config::resolve(
+            Overrides::default(),
+            read,
+            Some(file.as_path()),
+        ));
+        assert!(
+            msg.contains("llm.repairs"),
+            "{toml:?} / {env:?}: message does not name the key: {msg}"
+        );
+    }
+}
+
+#[test]
+fn config_show_lists_repairs() {
+    let cfg = Config::resolve(Overrides::default(), &no_env, None).unwrap();
+    let (key, setting) = cfg
+        .entries()
+        .into_iter()
+        .find(|(k, _)| *k == "llm.repairs")
+        .expect("llm.repairs is listed");
+    assert_key(setting, Some(("2", Source::Default)), key);
 }

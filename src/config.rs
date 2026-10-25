@@ -12,7 +12,7 @@ const DEFAULT_OUT_DIR: &str = "./minuta-out";
 const DEFAULT_LANG: &str = "auto";
 
 /// Every environment variable minuta reads.
-const ENV_NAMES: [&str; 15] = [
+const ENV_NAMES: [&str; 16] = [
     "MINUTA_CONFIG",
     "MINUTA_OUT_DIR",
     "MINUTA_WHISPER_BIN",
@@ -25,6 +25,7 @@ const ENV_NAMES: [&str; 15] = [
     "MINUTA_LLM_CONCURRENCY",
     "MINUTA_LLM_RETRIES",
     "MINUTA_LLM_BACKOFF_MS",
+    "MINUTA_LLM_REPAIRS",
     "MINUTA_OLLAMA_URL",
     "MINUTA_OLLAMA_NUM_CTX",
     "MINUTA_CLAUDE_BIN",
@@ -77,6 +78,7 @@ pub struct Config {
     pub llm_concurrency: Option<Setting>,
     pub llm_retries: Setting,
     pub llm_backoff_ms: Setting,
+    pub llm_repairs: Setting,
     pub ollama_url: Setting,
     pub ollama_num_ctx: Setting,
     pub claude_bin: Setting,
@@ -102,6 +104,7 @@ struct LlmTable {
     concurrency: Option<Scalar>,
     retries: Option<Scalar>,
     backoff_ms: Option<Scalar>,
+    repairs: Option<Scalar>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -278,6 +281,12 @@ impl Config {
                 llm.backoff_ms.map(Scalar::into_text),
                 "2000",
             ),
+            llm_repairs: pick(
+                None,
+                env("MINUTA_LLM_REPAIRS"),
+                llm.repairs.map(Scalar::into_text),
+                "2",
+            ),
             ollama_url: pick(
                 None,
                 env("MINUTA_OLLAMA_URL"),
@@ -301,6 +310,7 @@ impl Config {
     fn check_numbers(&self) -> Result<()> {
         int_setting::<u32>(&self.llm_retries, "llm.retries", 1)?;
         int_setting::<u64>(&self.llm_backoff_ms, "llm.backoff_ms", 0)?;
+        int_setting::<u32>(&self.llm_repairs, "llm.repairs", 0)?;
         int_setting::<usize>(&self.ollama_num_ctx, "ollama.num_ctx", 1)?;
         if let Some(setting) = &self.llm_concurrency {
             int_setting::<usize>(setting, "llm.concurrency", 1)?;
@@ -316,6 +326,11 @@ impl Config {
     /// Initial delay between attempts; doubles after each failed attempt.
     pub fn backoff(&self) -> Duration {
         Duration::from_millis(parse_checked(&self.llm_backoff_ms))
+    }
+
+    /// Repair calls after a final answer breaks a limit; 0 disables repairs. Valid by `check_numbers`.
+    pub fn repairs(&self) -> u32 {
+        parse_checked(&self.llm_repairs)
     }
 
     /// Context window requested from Ollama, in tokens.
@@ -342,6 +357,7 @@ impl Config {
             ("llm.concurrency", self.llm_concurrency.as_ref()),
             ("llm.retries", Some(&self.llm_retries)),
             ("llm.backoff_ms", Some(&self.llm_backoff_ms)),
+            ("llm.repairs", Some(&self.llm_repairs)),
             ("ollama.url", Some(&self.ollama_url)),
             ("ollama.num_ctx", Some(&self.ollama_num_ctx)),
             ("claude.bin", Some(&self.claude_bin)),
