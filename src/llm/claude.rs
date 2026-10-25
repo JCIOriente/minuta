@@ -39,7 +39,9 @@ impl Claude {
     /// Flags are confirmed against `claude --help` (2.x): `--tools ""` disables every
     /// tool; `--setting-sources` documents only `user`, `project` and `local`, so the
     /// narrowest choice is `local`, which reads `.claude/settings.local.json` from the
-    /// empty working directory (nothing). Option values use the `--flag=value` form so a
+    /// empty working directory (nothing). `--tools ""` only empties the built-in tool set,
+    /// so `--strict-mcp-config` (with no `--mcp-config`) also stops user MCP servers and
+    /// connectors from loading. Option values use the `--flag=value` form so a
     /// value starting with `-` cannot be read as another flag.
     fn argv(&self, system: &str) -> Vec<OsString> {
         let mut argv: Vec<OsString> = vec![
@@ -52,6 +54,7 @@ impl Claude {
             "".into(),
             "--no-session-persistence".into(),
             "--setting-sources=local".into(),
+            "--strict-mcp-config".into(),
         ];
         if let Some(m) = &self.model {
             argv.push(format!("--model={m}").into());
@@ -60,7 +63,9 @@ impl Claude {
     }
 }
 
-/// A fresh, empty, private directory that is removed by [`ScratchDir::remove`].
+/// A fresh, empty, private directory, removed on drop. Cleanup is best effort on every
+/// path: a failure to remove it never discards a successful reply and never masks the
+/// primary error.
 struct ScratchDir(PathBuf);
 
 impl ScratchDir {
@@ -88,9 +93,20 @@ impl ScratchDir {
     fn path(&self) -> &Path {
         &self.0
     }
+}
 
-    fn remove(self) -> std::io::Result<()> {
-        std::fs::remove_dir_all(&self.0)
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Sets the flag on drop, so the watcher stops even if the call panics.
+struct SetOnDrop<'a>(&'a AtomicBool);
+
+impl Drop for SetOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
     }
 }
 
@@ -118,9 +134,8 @@ fn run_interruptible(
                 std::thread::sleep(WATCH_INTERVAL);
             }
         });
-        let res = tools::run_capture(argv, stdin, opts, &mut |_| {});
-        done.store(true, Ordering::SeqCst);
-        res
+        let _stop = SetOnDrop(&done);
+        tools::run_capture(argv, stdin, opts, &mut |_| {})
     })
 }
 
@@ -146,7 +161,7 @@ impl Backend for Claude {
             scratch.path(),
             interrupt,
         );
-        let cleanup = scratch.remove();
+        drop(scratch);
         let out = match result {
             Ok(out) => out,
             Err(Error::Tool { code, stderr, .. }) => {
@@ -166,12 +181,6 @@ impl Backend for Claude {
             }
             Err(e) => return Err(e),
         };
-        cleanup.map_err(|e| {
-            Error::Io(std::io::Error::new(
-                e.kind(),
-                format!("cannot remove claude's temporary directory: {e}"),
-            ))
-        })?;
         if out.trim().is_empty() {
             return Err(Error::Llm {
                 backend: self.id.clone(),

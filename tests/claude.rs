@@ -81,6 +81,13 @@ fn run_capture_large_stdin_does_not_deadlock() {
 }
 
 #[test]
+fn run_capture_ignores_unread_stdin() {
+    let input = vec![b'x'; 4 * 1024 * 1024];
+    let out = run_capture(&sh("echo hi"), &input, RunOpts::default(), &mut |_| {}).unwrap();
+    assert_eq!(out, "hi\n");
+}
+
+#[test]
 fn run_capture_streams_stderr() {
     let mut seen = Vec::new();
     let out = run_capture(
@@ -161,6 +168,7 @@ fn claude_argv_flags() {
             "",
             "--no-session-persistence",
             "--setting-sources=local",
+            "--strict-mcp-config",
             "--model=sonnet",
         ]
     );
@@ -273,15 +281,62 @@ fn claude_interrupt_returns_interrupted() {
 fn claude_shell_metacharacters_inert() {
     let dir = tempfile::tempdir().unwrap();
     let argv = dir.path().join("argv");
+    let cwd = dir.path().join("cwd");
     let mut env = Env::new();
     env.set("FAKE_CLAUDE_ARGV", &argv);
+    env.set("FAKE_CLAUDE_CWD", &cwd);
     let system = "$(touch pwned) `touch pwned` \"quoted\" 'single'; touch pwned";
     claude(None)
         .complete(system, "$(touch pwned)", &AtomicBool::new(false))
         .unwrap();
     assert!(lines(&argv).contains(&format!("--system-prompt={system}")));
+    // The fake lists its working directory before exiting; nothing may have been created.
+    assert!(!lines(&cwd).iter().any(|n| n == "pwned"));
     assert!(!Path::new("pwned").try_exists().unwrap());
-    assert!(!dir.path().join("pwned").try_exists().unwrap());
+}
+
+#[test]
+fn claude_scratch_dir_removed_after_nonzero_exit() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().join("cwd");
+    let mut env = Env::new();
+    env.set("FAKE_CLAUDE_CWD", &cwd);
+    env.set("FAKE_CLAUDE_EXIT", "2");
+    claude(None)
+        .complete("s", "u", &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(!PathBuf::from(&lines(&cwd)[0]).try_exists().unwrap());
+}
+
+#[test]
+fn claude_scratch_dir_removed_after_interrupt() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().join("cwd");
+    let mut env = Env::new();
+    env.set("FAKE_CLAUDE_CWD", &cwd);
+    env.set("FAKE_CLAUDE_HANG", "1");
+    let flag = Arc::new(AtomicBool::new(false));
+    let setter = Arc::clone(&flag);
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        setter.store(true, Ordering::SeqCst);
+    });
+    claude(None).complete("s", "u", &flag).unwrap_err();
+    assert!(!PathBuf::from(&lines(&cwd)[0]).try_exists().unwrap());
+}
+
+#[test]
+fn claude_nonzero_with_empty_stderr_uses_status_message() {
+    let mut env = Env::new();
+    env.set("FAKE_CLAUDE_EXIT", "7");
+    let err = claude(None)
+        .complete("s", "u", &AtomicBool::new(false))
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::Llm { message, transient: true, .. }
+            if message == "exited with status 7"),
+        "{err:?}"
+    );
 }
 
 #[test]

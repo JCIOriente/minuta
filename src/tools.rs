@@ -229,7 +229,13 @@ pub fn run_capture(
 
     let tail = drain(&mut child, &rx, &opts, &mut |_, line| on_stderr(line))?;
     let _ = err_reader.join();
-    let bytes = out_reader.join().expect("stdout reader panicked")?;
+    let bytes = match out_reader.join().expect("stdout reader panicked") {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            kill_and_reap(&mut child);
+            return Err(Error::Io(e));
+        }
+    };
     let status = wait_status(&mut child, &opts)?;
     if !status.success() {
         return Err(Error::Tool {
