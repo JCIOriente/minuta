@@ -599,7 +599,7 @@ fn builtin_shape(name: &str, fields: &[Field]) -> String {
     let out = t.render(&vars());
     assert!(!out.contains("{{"), "{out}");
     assert!(out.contains("reunion"), "{out}");
-    assert!(out.contains("invent"), "{out}");
+    assert!(out.contains("Do not invent"), "{out}");
     out
 }
 
@@ -609,24 +609,27 @@ fn builtin_youtube_shape() {
         "youtube",
         &[Field::Title, Field::Body, Field::Tags, Field::ThumbnailText],
     );
+    assert!(out.contains("searchable"), "{out}");
     assert!(out.contains("first two lines"), "{out}");
-    assert!(out.contains("chapters"), "{out}");
-    assert!(out.contains("Spanish"), "{out}");
+    assert!(
+        out.contains("in Spanish, that timestamped chapters will be added"),
+        "{out}"
+    );
 }
 
 #[test]
 fn builtin_linkedin_shape() {
     let out = builtin_shape("linkedin", &[Field::Body, Field::Hashtags]);
-    assert!(out.contains("hook"), "{out}");
+    assert!(out.contains("is a hook"), "{out}");
     assert!(out.contains("short paragraphs"), "{out}");
-    assert!(out.contains("links"), "{out}");
+    assert!(out.contains("Do not include links"), "{out}");
 }
 
 #[test]
 fn builtin_instagram_shape() {
     let out = builtin_shape("instagram", &[Field::Body, Field::Hashtags]);
-    assert!(out.contains("hook"), "{out}");
-    assert!(out.contains("call to action"), "{out}");
+    assert!(out.contains("Open with a hook"), "{out}");
+    assert!(out.contains("optional call to action"), "{out}");
 }
 
 fn chars(n: usize) -> Limit {
