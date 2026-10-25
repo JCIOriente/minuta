@@ -6,7 +6,8 @@ pub mod validate;
 
 use std::fmt;
 
-/// Version of the JSON artifact layout (ADR-0007).
+/// Bumped when the fields block, repair prompt, normalization or rendering changes; part of
+/// the fingerprint of fields templates only. (The artifact's own `"version"` is separate, ADR-0007.)
 pub const FIELDS_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,18 +137,34 @@ mod tests {
 
     #[test]
     fn field_names_round_trip() {
-        assert_eq!(Field::from_name(Field::Title.name()), Some(Field::Title));
-        assert_eq!(Field::from_name(Field::Body.name()), Some(Field::Body));
-        assert_eq!(Field::from_name(Field::Tags.name()), Some(Field::Tags));
+        assert_eq!(Field::Title.name(), "title");
+        assert_eq!(Field::Body.name(), "body");
+        assert_eq!(Field::Tags.name(), "tags");
+        assert_eq!(Field::Hashtags.name(), "hashtags");
+        assert_eq!(Field::ThumbnailText.name(), "thumbnail_text");
+        assert_eq!(Field::from_name("title"), Some(Field::Title));
+        assert_eq!(Field::from_name("body"), Some(Field::Body));
+        assert_eq!(Field::from_name("tags"), Some(Field::Tags));
+        assert_eq!(Field::from_name("hashtags"), Some(Field::Hashtags));
         assert_eq!(
-            Field::from_name(Field::Hashtags.name()),
-            Some(Field::Hashtags)
-        );
-        assert_eq!(
-            Field::from_name(Field::ThumbnailText.name()),
+            Field::from_name("thumbnail_text"),
             Some(Field::ThumbnailText)
         );
-        assert_eq!(Field::ThumbnailText.name(), "thumbnail_text");
+    }
+
+    #[test]
+    fn field_descriptions() {
+        assert_eq!(Field::Title.description(), "A title.");
+        assert_eq!(Field::Body.description(), "The main text.");
+        assert_eq!(Field::Tags.description(), "Search keywords, without `#`.");
+        assert_eq!(
+            Field::Hashtags.description(),
+            "Hashtags, written without the `#` sign."
+        );
+        assert_eq!(
+            Field::ThumbnailText.description(),
+            "A few words to show on a thumbnail image."
+        );
     }
 
     #[test]
