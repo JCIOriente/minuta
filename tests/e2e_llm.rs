@@ -1,8 +1,9 @@
 #![cfg(unix)]
 
-//! Opt-in: `run -t summary` against the real local Ollama. Set `MINUTA_E2E_LLM=1`; the model is
-//! `ollama:gemma4:26b` unless `MINUTA_E2E_LLM_MODEL` names another. The transcript comes from
-//! the fake whisper, so no whisper model is needed; ffmpeg and a running Ollama are.
+//! Opt-in: `run -t summary` and `run -t youtube` against the real local Ollama. Set
+//! `MINUTA_E2E_LLM=1`; the model is `ollama:gemma4:26b` unless `MINUTA_E2E_LLM_MODEL` names
+//! another. The transcript comes from the fake whisper, so no whisper model is needed; ffmpeg
+//! and a running Ollama are.
 
 use std::fs;
 use std::process::{Command, Stdio};
@@ -16,11 +17,13 @@ fn have(tool: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-#[test]
-fn e2e_llm_summary_with_real_ollama() {
+/// Runs `minuta run clip.mp4 -t <template>` against the real Ollama and returns the job folder,
+/// with the temp dir that holds it (it is deleted on drop). `None` (after a note) unless
+/// `MINUTA_E2E_LLM=1`.
+fn run_real(template: &str) -> Option<(tempfile::TempDir, String)> {
     if std::env::var("MINUTA_E2E_LLM").as_deref() != Ok("1") {
-        eprintln!("skipping: set MINUTA_E2E_LLM=1 to run `-t summary` against the real Ollama");
-        return;
+        eprintln!("skipping: set MINUTA_E2E_LLM=1 to run `-t {template}` against the real Ollama");
+        return None;
     }
     assert!(have("ffmpeg") && have("ffprobe"), "ffmpeg/ffprobe needed");
 
@@ -43,7 +46,7 @@ fn e2e_llm_summary_with_real_ollama() {
         _ => "ollama:gemma4:26b".to_string(),
     };
     let out = Command::new(assert_cmd::cargo::cargo_bin("minuta"))
-        .args(["run", "clip.mp4", "-t", "summary", "--llm", &model])
+        .args(["run", "clip.mp4", "-t", template, "--llm", &model])
         .current_dir(tmp.path())
         // No MINUTA_* from the developer's shell may redirect the run.
         .env_clear()
@@ -69,6 +72,51 @@ fn e2e_llm_summary_with_real_ollama() {
         String::from_utf8_lossy(&out.stderr)
     );
     let job = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Some((tmp, job))
+}
+
+#[test]
+fn e2e_llm_summary_with_real_ollama() {
+    let Some((_tmp, job)) = run_real("summary") else {
+        return;
+    };
     let summary = fs::read_to_string(format!("{job}/summary.md")).unwrap();
     assert!(!summary.trim().is_empty(), "summary.md is empty");
+}
+
+#[test]
+fn e2e_youtube_limits() {
+    let Some((_tmp, job)) = run_real("youtube") else {
+        return;
+    };
+    let artifact: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(format!("{job}/youtube.json")).unwrap()).unwrap();
+    assert_eq!(artifact["version"], 1);
+    assert_eq!(artifact["template"], "youtube");
+    let fields = &artifact["fields"];
+    let text = |key: &str| {
+        fields[key]
+            .as_str()
+            .unwrap_or_else(|| panic!("{key}: {fields}"))
+    };
+    assert!(!text("title").is_empty());
+    assert!(text("title").chars().count() <= 100, "title: {fields}");
+    assert!(!text("body").is_empty());
+    assert!(text("body").chars().count() <= 5000, "body: {fields}");
+    assert!(
+        text("thumbnail_text").chars().count() <= 40,
+        "thumbnail: {fields}"
+    );
+    let tags: Vec<&str> = fields["tags"]
+        .as_array()
+        .unwrap_or_else(|| panic!("tags: {fields}"))
+        .iter()
+        .map(|t| t.as_str().unwrap())
+        .collect();
+    assert!(!tags.is_empty() && tags.len() <= 15, "tags: {fields}");
+    assert!(tags.join(", ").chars().count() <= 500, "tags: {fields}");
+    assert!(!fs::read_to_string(format!("{job}/youtube.md"))
+        .unwrap()
+        .trim()
+        .is_empty());
 }

@@ -4,5 +4,6 @@
 //! `whisper-cli` in `tests/fixtures/bin`. Tests skip when ffmpeg is not installed.
 
 mod common;
+mod fields;
 mod pipeline;
 mod templates;
