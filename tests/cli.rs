@@ -1188,7 +1188,7 @@ fn templates_list_shows_layers() {
         .collect();
     assert_eq!(
         rows[0],
-        ["NAME", "LAYER", "INPUT", "LLM", "DESCRIPTION"],
+        ["NAME", "LAYER", "INPUT", "OUTPUT", "LLM", "DESCRIPTION"],
         "{text}"
     );
     assert!(
@@ -1196,17 +1196,24 @@ fn templates_list_shows_layers() {
             "acta",
             "user",
             "transcript",
+            "markdown",
             "claude",
             "Formal minutes"
         ]),
         "{text}"
     );
     assert!(
-        rows.contains(&vec!["notes", "project", "acta", "(default)"]),
+        rows.contains(&vec!["notes", "project", "acta", "markdown", "(default)"]),
         "{text}"
     );
     assert!(
-        rows.contains(&vec!["summary", "project", "transcript", "(default)"]),
+        rows.contains(&vec![
+            "summary",
+            "project",
+            "transcript",
+            "markdown",
+            "(default)"
+        ]),
         "{text}"
     );
     let broken = env.path("templates/broken.md").display().to_string();
@@ -1235,9 +1242,55 @@ fn templates_list_shows_built_in() {
             "summary",
             "built-in",
             "transcript",
+            "markdown",
             "(default)",
             "Short summary of the recording"
         ]
+    );
+}
+
+#[test]
+fn templates_list_shows_output_column() {
+    let env = Env::new();
+    env.template(
+        "templates",
+        "post",
+        "---\ndescription: A post\noutput: fields\nfields: [body]\n---\nWrite.",
+    );
+    env.template("templates", "plain", "---\ndescription: Text\n---\nWrite.");
+    let out = env.minuta(&["templates", "list"]);
+    out.clone().assert().success();
+    let text = stdout(&out);
+    let rows: Vec<Vec<&str>> = text
+        .lines()
+        .map(|l| {
+            l.split("  ")
+                .map(str::trim)
+                .filter(|c| !c.is_empty())
+                .collect()
+        })
+        .collect();
+    assert!(
+        rows.contains(&vec![
+            "post",
+            "project",
+            "transcript",
+            "fields",
+            "(default)",
+            "A post"
+        ]),
+        "{text}"
+    );
+    assert!(
+        rows.contains(&vec![
+            "plain",
+            "project",
+            "transcript",
+            "markdown",
+            "(default)",
+            "Text"
+        ]),
+        "{text}"
     );
 }
 
