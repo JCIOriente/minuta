@@ -94,6 +94,19 @@ fn unterminated_braces_kept_literal() {
 }
 
 #[test]
+fn indented_fence_in_block_scalar_does_not_close() {
+    let t = parse("a", "---\ndescription: |\n  x\n  ---\n  y\n---\nbody").unwrap();
+    assert_eq!(t.description.as_deref(), Some("x\n---\ny\n"));
+    assert_eq!(t.body, "body");
+}
+
+#[test]
+fn bom_without_frontmatter_not_in_body() {
+    let t = parse("a", "\u{feff}just body").unwrap();
+    assert_eq!(t.body, "just body");
+}
+
+#[test]
 fn no_frontmatter_is_body() {
     let t = parse("a", "Just a prompt.\n---\nnot a fence\n").unwrap();
     assert_eq!(t.body, "Just a prompt.\n---\nnot a fence\n");
@@ -353,6 +366,78 @@ fn builtin_summary_parses() {
 mod symlinks {
     use super::*;
     use std::os::unix::fs::symlink;
+
+    #[test]
+    fn user_symlink_outside_layer_loads() {
+        let e = env();
+        let outside = TempDir::new().unwrap();
+        fs::write(outside.path().join("t"), "dotfile prompt").unwrap();
+        fs::create_dir_all(&e.user).unwrap();
+        symlink(outside.path().join("t"), e.user.join("dot.md")).unwrap();
+        let c = discover(&e.dirs()).unwrap();
+        assert_eq!(c.get("dot").unwrap().body, "dotfile prompt");
+    }
+
+    #[test]
+    fn relative_symlink_outside_is_invalid() {
+        let e = env();
+        fs::write(e.project.parent().unwrap().join("x"), "x").ok();
+        write(&e.project, "real.md", "r");
+        symlink("../x", e.project.join("rel.md")).unwrap();
+        let c = discover(&e.dirs()).unwrap();
+        assert_eq!(c.invalid.len(), 1);
+        assert!(
+            c.invalid[0].error.contains("outside"),
+            "{}",
+            c.invalid[0].error
+        );
+    }
+
+    #[test]
+    fn project_dir_symlinked_outside_cwd_is_invalid() {
+        let tmp = TempDir::new().unwrap();
+        let cwd = tmp.path().join("cwd");
+        let outside = tmp.path().join("outside");
+        write(&outside, "evil.md", "evil");
+        fs::create_dir_all(&cwd).unwrap();
+        symlink(&outside, cwd.join("templates")).unwrap();
+        let dirs = Dirs {
+            user: None,
+            project: cwd.join("templates"),
+        };
+        let c = discover(&dirs).unwrap();
+        assert!(!c.templates.contains_key("evil"));
+        assert_eq!(c.invalid.len(), 1);
+        assert!(
+            c.invalid[0].error.contains("current directory"),
+            "{}",
+            c.invalid[0].error
+        );
+    }
+
+    #[test]
+    fn project_dir_symlinked_inside_cwd_loads() {
+        let tmp = TempDir::new().unwrap();
+        let cwd = tmp.path().join("cwd");
+        write(&cwd.join("shared"), "ok.md", "fine");
+        symlink(cwd.join("shared"), cwd.join("templates")).unwrap();
+        let dirs = Dirs {
+            user: None,
+            project: cwd.join("templates"),
+        };
+        let c = discover(&dirs).unwrap();
+        assert_eq!(c.get("ok").unwrap().body, "fine");
+    }
+
+    #[test]
+    fn dangling_project_file_shadows_lower_layer() {
+        let e = env();
+        fs::create_dir_all(&e.project).unwrap();
+        symlink(e.project.join("missing"), e.project.join("summary.md")).unwrap();
+        let c = discover(&e.dirs()).unwrap();
+        let m = usage(c.get("summary"));
+        assert!(m.contains("summary.md"), "{m}");
+    }
 
     #[test]
     fn symlink_outside_layer_is_invalid() {

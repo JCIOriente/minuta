@@ -61,19 +61,38 @@ pub fn discover(dirs: &Dirs) -> Result<Catalog> {
         catalog.templates.insert(t.name.clone(), t);
     }
     if let Some(user) = &dirs.user {
-        load_layer(&mut catalog, user, Layer::User)?;
+        load_layer(&mut catalog, user, Layer::User, None)?;
     }
-    load_layer(&mut catalog, &dirs.project, Layer::Project)?;
+    // The project layer is untrusted (a cloned repo): its files must stay inside its
+    // directory, and the directory inside the current directory, taken as the parent
+    // of `./templates`. User-layer symlinks (dotfiles, nix store) are followed.
+    let root = match dirs.project.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    load_layer(&mut catalog, &dirs.project, Layer::Project, Some(root))?;
     Ok(catalog)
 }
 
-fn load_layer(catalog: &mut Catalog, dir: &Path, layer: Layer) -> Result<()> {
+fn load_layer(
+    catalog: &mut Catalog,
+    dir: &Path,
+    layer: Layer,
+    confine_to: Option<&Path>,
+) -> Result<()> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(io_err(dir, e)),
     };
     let canonical_dir = fs::canonicalize(dir).map_err(|e| io_err(dir, e))?;
+    let dir_outside = match confine_to {
+        Some(root) => {
+            let root = fs::canonicalize(root).map_err(|e| io_err(root, e))?;
+            !canonical_dir.starts_with(root)
+        }
+        None => false,
+    };
     let mut paths = Vec::new();
     for entry in entries {
         let path = entry.map_err(|e| io_err(dir, e))?.path();
@@ -85,27 +104,48 @@ fn load_layer(catalog: &mut Catalog, dir: &Path, layer: Layer) -> Result<()> {
     paths.sort();
     for path in paths {
         match fs::metadata(&path) {
-            Ok(m) if m.is_file() => load_file(catalog, path, layer, &canonical_dir),
+            Ok(m) if m.is_file() => {
+                let confine = confine_to.map(|_| canonical_dir.as_path());
+                load_file(catalog, path, layer, confine, dir_outside)
+            }
             Ok(_) => {}
-            Err(e) => catalog.invalid.push(Invalid {
-                error: io_err(&path, e).to_string(),
-                path,
-                layer,
-            }),
+            Err(e) => {
+                let error = io_err(&path, e).to_string();
+                record_invalid(catalog, path, layer, error);
+            }
         }
     }
     Ok(())
 }
 
+/// Record a broken file. It shadows any template of the same name from a lower layer.
+fn record_invalid(catalog: &mut Catalog, path: PathBuf, layer: Layer, error: String) {
+    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+        catalog.templates.remove(stem);
+    }
+    catalog.invalid.push(Invalid { path, layer, error });
+}
+
 /// Read one file. Problems with the file itself go to `catalog.invalid`.
-fn load_file(catalog: &mut Catalog, path: PathBuf, layer: Layer, canonical_dir: &Path) {
+fn load_file(
+    catalog: &mut Catalog,
+    path: PathBuf,
+    layer: Layer,
+    confine: Option<&Path>,
+    dir_outside: bool,
+) {
     let Some(stem) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
         let error = "file name is not valid UTF-8".to_string();
         catalog.invalid.push(Invalid { path, layer, error });
         return;
     };
-    let result = if valid_stem(&stem) {
-        read_template(&stem, &path, layer, canonical_dir)
+    let result = if dir_outside {
+        Err(format!(
+            "{}: templates directory resolves outside the current directory",
+            path.display()
+        ))
+    } else if valid_stem(&stem) {
+        read_template(&stem, &path, layer, confine)
     } else {
         Err(invalid_name_message(&stem))
     };
@@ -113,11 +153,7 @@ fn load_file(catalog: &mut Catalog, path: PathBuf, layer: Layer, canonical_dir: 
         Ok(t) => {
             catalog.templates.insert(stem, t);
         }
-        Err(error) => {
-            // The broken file shadows any template of the same name from a lower layer.
-            catalog.templates.remove(&stem);
-            catalog.invalid.push(Invalid { path, layer, error });
-        }
+        Err(error) => record_invalid(catalog, path, layer, error),
     }
 }
 
@@ -125,14 +161,16 @@ fn read_template(
     stem: &str,
     path: &Path,
     layer: Layer,
-    canonical_dir: &Path,
+    confine: Option<&Path>,
 ) -> std::result::Result<Template, String> {
-    let target = fs::canonicalize(path).map_err(|e| io_err(path, e).to_string())?;
-    if !target.starts_with(canonical_dir) {
-        return Err(format!(
-            "{}: symlink points outside the templates directory",
-            path.display()
-        ));
+    if let Some(dir) = confine {
+        let target = fs::canonicalize(path).map_err(|e| io_err(path, e).to_string())?;
+        if !target.starts_with(dir) {
+            return Err(format!(
+                "{}: symlink points outside the templates directory",
+                path.display()
+            ));
+        }
     }
     let bytes = fs::read(path).map_err(|e| io_err(path, e).to_string())?;
     let text = String::from_utf8(bytes)

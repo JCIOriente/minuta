@@ -110,9 +110,8 @@ fn check_name(name: &str) -> Result<()> {
 
 /// Split `text` into (frontmatter, body). `None` when it has no leading `---` line.
 fn split_frontmatter(text: &str) -> Result<Option<(&str, &str)>> {
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut lines = text.split_inclusive('\n');
-    let is_fence = |l: &str| l.trim() == "---";
+    let is_fence = |l: &str| l.trim_end() == "---";
     match lines.next() {
         Some(first) if is_fence(first) => {}
         _ => return Ok(None),
@@ -150,6 +149,7 @@ fn expand(body: &str, mut f: impl FnMut(&str) -> String) -> String {
 impl Template {
     /// Parse a template file. Every problem is a usage error naming the template.
     pub fn parse(name: &str, layer: Layer, path: Option<PathBuf>, text: &str) -> Result<Template> {
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         let fail = |msg: String| Error::Usage(format!("template {name}: {msg}"));
         let place = path
             .as_ref()
