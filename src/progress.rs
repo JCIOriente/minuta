@@ -191,6 +191,7 @@ fn event_text(event: Event) -> String {
     match event {
         Event::Chunk { done, total } => format!("chunk {done}/{total}"),
         Event::Consolidating => "consolidating".to_string(),
+        Event::Repair { attempt, total } => format!("repair {attempt}/{total}"),
     }
 }
 
@@ -267,6 +268,17 @@ mod tests {
     fn template_events() {
         assert_eq!(event_text(Event::Chunk { done: 2, total: 5 }), "chunk 2/5");
         assert_eq!(event_text(Event::Consolidating), "consolidating");
+    }
+
+    #[test]
+    fn repair_event_text() {
+        assert_eq!(
+            event_text(Event::Repair {
+                attempt: 1,
+                total: 2
+            }),
+            "repair 1/2"
+        );
     }
 
     #[test]

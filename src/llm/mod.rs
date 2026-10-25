@@ -21,6 +21,18 @@ pub trait Backend: Send + Sync {
     /// Prompt + output budget per call.
     fn context_tokens(&self) -> usize;
     fn complete(&self, system: &str, user: &str, interrupt: &AtomicBool) -> Result<String>;
+    /// Like `complete`, but asks the model to answer with JSON matching `schema`.
+    /// Backends without structured output ignore the schema.
+    fn complete_json(
+        &self,
+        system: &str,
+        user: &str,
+        schema: &serde_json::Value,
+        interrupt: &AtomicBool,
+    ) -> Result<String> {
+        let _ = schema;
+        self.complete(system, user, interrupt)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +99,30 @@ impl BackendId {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complete_json_defaults_to_complete() {
+        struct OnlyComplete;
+        impl Backend for OnlyComplete {
+            fn id(&self) -> &str {
+                "fake:only"
+            }
+            fn context_tokens(&self) -> usize {
+                1
+            }
+            fn complete(&self, system: &str, user: &str, _: &AtomicBool) -> Result<String> {
+                Ok(format!("{system}|{user}"))
+            }
+        }
+        let stop = AtomicBool::new(false);
+        let schema = serde_json::json!({"type": "object"});
+        assert_eq!(
+            OnlyComplete
+                .complete_json("s", "u", &schema, &stop)
+                .unwrap(),
+            "s|u"
+        );
+    }
 
     #[test]
     fn backend_id_parses_ollama_with_tagged_model() {

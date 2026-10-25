@@ -88,6 +88,7 @@ pub struct Request<'a> {
 pub enum Event {
     Chunk { done: usize, total: usize },
     Consolidating,
+    Repair { attempt: usize, total: usize },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -516,7 +517,7 @@ mod tests {
             .iter()
             .filter_map(|e| match e {
                 Event::Chunk { total, .. } => Some(*total),
-                Event::Consolidating => None,
+                Event::Consolidating | Event::Repair { .. } => None,
             })
             .next()
             .unwrap_or(0)
