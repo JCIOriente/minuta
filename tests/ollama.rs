@@ -341,3 +341,23 @@ fn long_tags_body_is_truncated_in_hint() {
     let missing = check(&fake.url(), "m").unwrap_err();
     assert!(!missing.hint.contains(&"y".repeat(201)), "{}", missing.hint);
 }
+
+#[test]
+fn long_json_error_field_is_truncated() {
+    let responder: Responder = Arc::new(|_| Reply::error(500, &"x".repeat(500)));
+    let fake = FakeOllama::start(&["m"], show(None, false), responder);
+    let o = Ollama::new(&fake.url(), "m", 1024, &info(None, false));
+    let (message, _) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert!(message.contains(&"x".repeat(200)), "{message}");
+    assert!(!message.contains(&"x".repeat(201)), "{message}");
+}
+
+#[test]
+fn control_characters_are_stripped_from_error() {
+    let responder: Responder = Arc::new(|_| Reply::error(400, "bad\u{1b}[31mred"));
+    let fake = FakeOllama::start(&["m"], show(None, false), responder);
+    let o = Ollama::new(&fake.url(), "m", 1024, &info(None, false));
+    let (message, _) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert!(!message.contains('\u{1b}'), "{message:?}");
+    assert!(message.contains("bad[31mred"), "{message:?}");
+}

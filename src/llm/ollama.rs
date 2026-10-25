@@ -120,9 +120,13 @@ fn read_json(response: ureq::Response) -> std::result::Result<Value, BodyError> 
     serde_json::from_str(&text).map_err(|e| BodyError::NotJson(e.to_string()))
 }
 
-/// At most 200 characters of untrusted text, for messages.
+/// At most 200 characters of untrusted text, without control characters, for messages.
 fn excerpt(text: &str) -> String {
-    text.trim().chars().take(200).collect()
+    text.trim()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(200)
+        .collect()
 }
 
 fn describe(e: &ureq::Error) -> String {
@@ -229,7 +233,7 @@ impl Ollama {
             Ok(text) => {
                 let from_json = serde_json::from_str::<Value>(&text)
                     .ok()
-                    .and_then(|v| v["error"].as_str().map(str::to_string));
+                    .and_then(|v| v["error"].as_str().map(excerpt));
                 let shown = from_json.unwrap_or_else(|| excerpt(&text));
                 if shown.is_empty() {
                     String::new()
