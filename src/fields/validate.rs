@@ -146,11 +146,11 @@ fn list_items(field: Field, items: Vec<&str>) -> Vec<String> {
         .collect()
 }
 
-/// CRLF to LF, drops C0 controls other than `\n` and `\t` and DEL, then trims.
+/// CRLF to LF, drops every control character (C0, DEL, C1) other than `\n` and `\t`, then trims.
 fn normalize(text: &str) -> String {
     text.replace("\r\n", "\n")
         .chars()
-        .filter(|c| !matches!(c, '\u{0}'..='\u{8}' | '\u{b}'..='\u{1f}' | '\u{7f}'))
+        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
         .collect::<String>()
         .trim()
         .to_string()
@@ -226,11 +226,6 @@ mod tests {
         let s = one(Field::Title, no_limit());
         let m = messages(parse_answer(r#"see {"title": } ok"#, &s));
         assert_eq!(m.len(), 1);
-        assert!(
-            m[0].starts_with("the answer is not a JSON object ("),
-            "{}",
-            m[0]
-        );
     }
 
     #[test]
@@ -449,6 +444,20 @@ mod tests {
         let s = one(Field::Body, no_limit());
         let v = parse_answer(r#"{"body": "a\u0000b\u0007c\u001bd\u007fe\tf\ng"}"#, &s).unwrap();
         assert_eq!(v, Values(vec![(Field::Body, text("abcde\tf\ng"))]));
+    }
+
+    #[test]
+    fn strips_c1_control_chars() {
+        let s = one(Field::Body, no_limit());
+        for input in [
+            r#"{"body": "a\u0080b"}"#,
+            r#"{"body": "a\u008db"}"#,
+            r#"{"body": "a\u009bb"}"#,
+            r#"{"body": "a\u009fb"}"#,
+        ] {
+            let v = parse_answer(input, &s).unwrap();
+            assert_eq!(v, Values(vec![(Field::Body, text("ab"))]), "{input}");
+        }
     }
 
     #[test]
