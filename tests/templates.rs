@@ -73,6 +73,27 @@ fn frontmatter_errors_name_the_template() {
 }
 
 #[test]
+fn raw_is_the_full_file_text() {
+    let text = "---\ndescription: d\n---\nbody\n";
+    assert_eq!(parse("a", text).unwrap().raw, text);
+}
+
+#[test]
+fn bom_and_fence_whitespace_accepted() {
+    let t = parse("a", "\u{feff}---\ndescription: d\n---\nbody").unwrap();
+    assert_eq!(t.description.as_deref(), Some("d"));
+    let t = parse("a", "---  \r\ndescription: d\r\n---\t\r\nbody").unwrap();
+    assert_eq!(t.description.as_deref(), Some("d"));
+    assert_eq!(t.body, "body");
+}
+
+#[test]
+fn unterminated_braces_kept_literal() {
+    let t = parse("a", "x {{ y").unwrap();
+    assert_eq!(t.render(&vars()), "x {{ y");
+}
+
+#[test]
 fn no_frontmatter_is_body() {
     let t = parse("a", "Just a prompt.\n---\nnot a fence\n").unwrap();
     assert_eq!(t.body, "Just a prompt.\n---\nnot a fence\n");
@@ -326,4 +347,49 @@ fn builtin_summary_parses() {
         assert!(out.contains(word), "{word}");
     }
     assert!(!out.contains("{{"), "{out}");
+}
+
+#[cfg(unix)]
+mod symlinks {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn symlink_outside_layer_is_invalid() {
+        let e = env();
+        let outside = TempDir::new().unwrap();
+        fs::write(outside.path().join("secret"), "secret").unwrap();
+        fs::create_dir_all(&e.project).unwrap();
+        symlink(outside.path().join("secret"), e.project.join("keys.md")).unwrap();
+        let c = discover(&e.dirs()).unwrap();
+        assert!(!c.templates.contains_key("keys"));
+        assert_eq!(c.invalid.len(), 1);
+        let err = &c.invalid[0].error;
+        assert!(err.contains("keys.md"), "{err}");
+        assert!(err.contains("outside the templates directory"), "{err}");
+    }
+
+    #[test]
+    fn symlink_inside_layer_is_fine() {
+        let e = env();
+        write(&e.project, "real.md", "prompt");
+        symlink(e.project.join("real.md"), e.project.join("alias.md")).unwrap();
+        let c = discover(&e.dirs()).unwrap();
+        assert_eq!(c.get("alias").unwrap().body, "prompt");
+        assert!(c.invalid.is_empty());
+    }
+
+    #[test]
+    fn dangling_symlink_is_invalid_not_fatal() {
+        let e = env();
+        fs::create_dir_all(&e.project).unwrap();
+        symlink(e.project.join("missing"), e.project.join("gone.md")).unwrap();
+        let c = discover(&e.dirs()).unwrap();
+        assert_eq!(c.invalid.len(), 1);
+        assert!(
+            c.invalid[0].error.contains("gone.md"),
+            "{}",
+            c.invalid[0].error
+        );
+    }
 }

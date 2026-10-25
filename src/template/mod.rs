@@ -89,11 +89,15 @@ pub(crate) fn valid_stem(name: &str) -> bool {
     chars.next().is_some_and(ok) && chars.all(|c| ok(c) || c == '_' || c == '-')
 }
 
+pub(crate) fn invalid_name_message(name: &str) -> String {
+    format!(
+        "invalid template name '{name}' (use lowercase letters, digits, '-' and '_', starting with a letter or digit)"
+    )
+}
+
 fn check_name(name: &str) -> Result<()> {
     if !valid_stem(name) {
-        return Err(Error::Usage(format!(
-            "invalid template name '{name}' (use lowercase letters, digits, '-' and '_', starting with a letter or digit)"
-        )));
+        return Err(Error::Usage(invalid_name_message(name)));
     }
     if RESERVED.contains(&name) {
         return Err(Error::Usage(format!(
@@ -106,8 +110,9 @@ fn check_name(name: &str) -> Result<()> {
 
 /// Split `text` into (frontmatter, body). `None` when it has no leading `---` line.
 fn split_frontmatter(text: &str) -> Result<Option<(&str, &str)>> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut lines = text.split_inclusive('\n');
-    let is_fence = |l: &str| l.trim_end_matches(['\n', '\r']) == "---";
+    let is_fence = |l: &str| l.trim() == "---";
     match lines.next() {
         Some(first) if is_fence(first) => {}
         _ => return Ok(None),

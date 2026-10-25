@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::{builtins, valid_stem, Layer, Template};
+use super::{builtins, invalid_name_message, valid_stem, Layer, Template};
 use crate::error::{Error, Result};
 
 /// Where user and project templates live.
@@ -23,7 +23,14 @@ impl Dirs {
             directories::BaseDirs::new().map(|d| d.home_dir().join(".config/minuta/templates"));
         Ok(Dirs {
             user,
-            project: std::env::current_dir()?.join("templates"),
+            project: std::env::current_dir()
+                .map_err(|e| {
+                    Error::Io(io::Error::new(
+                        e.kind(),
+                        format!("cannot determine the current directory: {e}"),
+                    ))
+                })?
+                .join("templates"),
         })
     }
 }
@@ -66,62 +73,74 @@ fn load_layer(catalog: &mut Catalog, dir: &Path, layer: Layer) -> Result<()> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(io_err(dir, e)),
     };
-    let mut files = Vec::new();
+    let canonical_dir = fs::canonicalize(dir).map_err(|e| io_err(dir, e))?;
+    let mut paths = Vec::new();
     for entry in entries {
         let path = entry.map_err(|e| io_err(dir, e))?.path();
         if path.extension().map_or(true, |e| e != "md") {
             continue;
         }
-        if fs::metadata(&path).map_err(|e| io_err(&path, e))?.is_file() {
-            files.push(path);
-        }
+        paths.push(path);
     }
-    files.sort();
-    for path in files {
-        load_file(catalog, path, layer)?;
+    paths.sort();
+    for path in paths {
+        match fs::metadata(&path) {
+            Ok(m) if m.is_file() => load_file(catalog, path, layer, &canonical_dir),
+            Ok(_) => {}
+            Err(e) => catalog.invalid.push(Invalid {
+                error: io_err(&path, e).to_string(),
+                path,
+                layer,
+            }),
+        }
     }
     Ok(())
 }
 
-fn load_file(catalog: &mut Catalog, path: PathBuf, layer: Layer) -> Result<()> {
-    let mut invalid = |path: PathBuf, error: String| {
-        catalog.invalid.push(Invalid { path, layer, error });
-    };
+/// Read one file. Problems with the file itself go to `catalog.invalid`.
+fn load_file(catalog: &mut Catalog, path: PathBuf, layer: Layer, canonical_dir: &Path) {
     let Some(stem) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
         let error = "file name is not valid UTF-8".to_string();
-        invalid(path, error);
-        return Ok(());
+        catalog.invalid.push(Invalid { path, layer, error });
+        return;
     };
-    if !valid_stem(&stem) {
-        let error = format!(
-            "invalid template name '{stem}' (use lowercase letters, digits, '-' and '_', starting with a letter or digit)"
-        );
-        invalid(path, error);
-        return Ok(());
-    }
-    let bytes = fs::read(&path).map_err(|e| io_err(&path, e))?;
-    let parsed = match String::from_utf8(bytes) {
-        Ok(text) => Template::parse(&stem, layer, Some(path.clone()), &text),
-        Err(_) => Err(Error::Usage(format!(
-            "template {stem}: {} is not valid UTF-8",
-            path.display()
-        ))),
+    let result = if valid_stem(&stem) {
+        read_template(&stem, &path, layer, canonical_dir)
+    } else {
+        Err(invalid_name_message(&stem))
     };
-    match parsed {
+    match result {
         Ok(t) => {
             catalog.templates.insert(stem, t);
         }
-        Err(e) => {
+        Err(error) => {
             // The broken file shadows any template of the same name from a lower layer.
             catalog.templates.remove(&stem);
-            let error = match e {
-                Error::Usage(m) => m,
-                other => other.to_string(),
-            };
             catalog.invalid.push(Invalid { path, layer, error });
         }
     }
-    Ok(())
+}
+
+fn read_template(
+    stem: &str,
+    path: &Path,
+    layer: Layer,
+    canonical_dir: &Path,
+) -> std::result::Result<Template, String> {
+    let target = fs::canonicalize(path).map_err(|e| io_err(path, e).to_string())?;
+    if !target.starts_with(canonical_dir) {
+        return Err(format!(
+            "{}: symlink points outside the templates directory",
+            path.display()
+        ));
+    }
+    let bytes = fs::read(path).map_err(|e| io_err(path, e).to_string())?;
+    let text = String::from_utf8(bytes)
+        .map_err(|_| format!("template {stem}: {} is not valid UTF-8", path.display()))?;
+    Template::parse(stem, layer, Some(path.to_path_buf()), &text).map_err(|e| match e {
+        Error::Usage(m) => m,
+        other => other.to_string(),
+    })
 }
 
 impl Catalog {
