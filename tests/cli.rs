@@ -1364,3 +1364,30 @@ fn doctor_reports_ollama_show_failure_as_not_reachable() {
     );
     assert!(!report.contains("model missing"), "{report}");
 }
+
+/// A template whose `output` value carries an SGR sequence and an OSC title change.
+const EVIL_OUTPUT: &str = "---\noutput: \"x\\e[31mRED\\e]0;pwned\\a\"\n---\nX.";
+
+#[test]
+fn template_errors_reach_stderr_without_control_characters() {
+    let env = Env::new();
+    env.template("templates", "acta", EVIL_OUTPUT);
+    env.template("templates", "notes", "---\ninput: acta\n---\nNotes.");
+    let fake = ollama("unused");
+    let cases: [&[&str]; 3] = [
+        &["run", "clase-4.mp4", "-t", "acta"],
+        &["run", "clase-4.mp4", "-t", "notes"],
+        &["templates", "show", "acta"],
+    ];
+    for args in cases {
+        let out = env.minuta_llm(args, &fake);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {}", stderr(&out));
+        let err = stderr(&out);
+        assert!(
+            err.contains("RED"),
+            "{args:?}: the error names the value: {err:?}"
+        );
+        assert_eq!(control_chars(&err), Vec::<char>::new(), "{args:?}: {err:?}");
+    }
+    assert!(!env.path("minuta-out").exists());
+}

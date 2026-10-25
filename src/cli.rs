@@ -148,6 +148,8 @@ pub fn execute(cli: Cli, interrupt: &Arc<AtomicBool>) -> Result<()> {
 }
 
 /// The message for a failed command, for stderr. Missing tools get one line each with a hint.
+/// Messages can quote template files from a cloned repository, so every control character
+/// except the line breaks of this layout is neutralized.
 pub fn render_error(err: &Error) -> String {
     let mut text = format!("minuta: {err}");
     if let Error::MissingTools(missing) = err {
@@ -155,7 +157,10 @@ pub fn render_error(err: &Error) -> String {
             text.push_str(&format!("\n  {}: {}", item.name, item.hint));
         }
     }
-    text
+    text.split('\n')
+        .map(sanitize)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The template flags of `run`; `transcribe` has none.
@@ -465,6 +470,23 @@ mod tests {
             let err = Cli::try_parse_from(argv).unwrap_err();
             assert_eq!(err.exit_code(), 2, "{flag:?}");
         }
+    }
+
+    #[test]
+    fn render_error_neutralizes_control_characters_but_keeps_lines() {
+        let err = Error::Usage("bad 'x\u{1b}[31m\u{7}'\nnext".into());
+        assert_eq!(
+            render_error(&err),
+            "minuta: usage error: bad 'x?[31m?'\nnext"
+        );
+        let err = Error::MissingTools(vec![Missing {
+            name: "ollama".into(),
+            hint: "start \u{1b}]0;t\u{7}".into(),
+        }]);
+        assert_eq!(
+            render_error(&err),
+            "minuta: missing required tools: ollama\n  ollama: start ?]0;t?"
+        );
     }
 
     #[test]
