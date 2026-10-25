@@ -13,14 +13,20 @@ code, specs and issues. When a term is ambiguous or keeps needing explanation, a
 | Fingerprint | Hash of a step's inputs, parameters and tool version. A mismatch makes the step stale. For a template step it includes the hash of its input's content. | A checksum of the output |
 | Stale | A step whose recorded fingerprint differs from the current one, or whose output is missing. | Failed |
 | Speech language | The language whisper transcribes. `auto` or a code. | Output language and prompt language |
-| Template | A Markdown prompt file with optional YAML frontmatter (`input`, `output`, `llm`, `lang`, `description`, and for fields templates `fields`, `limits`, `format`). Its name is the file stem. Found in layers: built-in, `~/.config/minuta/templates/`, `./templates/` (later wins). | A template step, which is one run of a template in a job |
+| Template | A Markdown prompt file with optional YAML frontmatter (`input`, `output`, `llm`, `lang`, `description`, and for fields templates `fields`, `limits`, `format`; for `chapters`, `limits`). `output` is `markdown`, `fields`, or `chapters` (only the template named `chapters`). Its name is the file stem. Found in layers: built-in, `~/.config/minuta/templates/`, `./templates/` (later wins). | A template step, which is one run of a template in a job |
 | Template step | Running one template in a job: produces `<name>.md` (and `<name>.json` for a fields template), recorded in `job.json` under `templates`. | A pipeline step |
-| Fields template | A template with `output: fields`: the model returns a JSON object with the fields it declares. | A `markdown` template, whose output is free text |
-| Field | One named value from the shared set (`title`, `body`, `tags`, `hashtags`, `thumbnail_text`). Kind text or list. | A frontmatter key |
+| Fields template | A template with `output: fields`: the model returns a JSON object with the fields it declares, except filled fields. | A `markdown` template, whose output is free text |
+| Field | One named value from the shared set (`title`, `body`, `chapters`, `tags`, `hashtags`, `thumbnail_text`). Kind text, list or chapters. | A frontmatter key |
+| Filled field | A field minuta fills from another artifact instead of asking the model. Only `chapters`, filled from `chapters.json`; declaring it makes the template depend on `chapters`. | A field the model writes |
 | Limit | A per-field bound in `limits`: `max_chars` (length of the field as rendered) or `max` (list items). | The context budget |
-| Violation | One way an answer fails validation: not JSON, missing key, wrong type, empty, or over a limit. | A transient call failure, which is retried without telling the model |
+| Violation | One way an answer fails validation: not JSON, missing key, wrong type, empty, over a limit, or (for `chapters`) a broken chapter rule. | A transient call failure, which is retried without telling the model |
 | Repair call | A call that sends the previous answer and its violations back to the model to fix. Up to `llm.repairs` per template run. | A retry, which repeats the same call after a transient error |
 | Format | How a fields template's values are rendered to `<name>.md`: `plain` (paste-ready, no Markdown) or `markdown`. | The output kind (`markdown` or `fields`) |
+| Chapters | The built-in template `chapters` (`output: chapters`) and what it writes: `chapters.json` (versioned, whole-second starts) and `chapters.md` (chapter lines). Computed once per job from the transcript. | Transcript blocks, the 30 s `[hh:mm:ss]` lines sent to the model |
+| Chapter | One entry of a chapter list: `start` in whole seconds from the start of the joined media, and a one-line `title`. | A transcript segment |
+| Chapter line | `<stamp> <title>`, the form YouTube reads in a description: `m:ss` below one hour, `h:mm:ss` from one hour. | The `[hh:mm:ss]` stamps in transcript blocks |
+| Chapter rules | YouTube's rules for a chapter list: first at 0:00, at least 3, ascending, each at least 10 s (the last up to the transcript end), plus the template's `max` and `max_chars`. | Limits of a fields template |
+| Snapping | Replacing each model start with the nearest transcript segment start, floored to whole seconds, then setting the first start to 0. Done in code before the chapter rules are checked. | A repair call |
 | Fields artifact | `<name>.json`: versioned JSON with a fields template's validated values, for later consumers such as the YouTube publisher. | The rendered `<name>.md` |
 | Backend | An LLM provider that completes (system, user) into text, named by a backend id: `ollama:<model>`, `claude`, `claude:<model>`. | The model, which is only part of the id |
 | Output language | The language documents are written in. Default: the detected speech language. | Speech language, prompt language |
@@ -43,6 +49,11 @@ A fields template asks for JSON only in its final call (the single call or the c
 The answer is validated against the declared fields and limits; violations lead to repair
 calls. Only accepted answers are stored in the call cache. The accepted values are written to
 the fields artifact and rendered to `<name>.md`, which is what chained templates read.
+
+The `chapters` template reads the transcript, asks for JSON in its final call, snaps the starts
+and checks the chapter rules, with repair calls as for fields. A fields template that declares
+the `chapters` field depends on `chapters` as well as on its `input`; the model never writes
+that field, and minuta copies it from `chapters.json`.
 
 ## Decisions
 Links to ADRs that define domain behavior: docs/adr/
