@@ -294,6 +294,13 @@ mod tests {
     }
 
     #[test]
+    fn complete_cache_key_unchanged() {
+        // Computed on main before `call_json` existed: existing job folders keep their cache.
+        let b = ScriptedBackend::new("fake:x", 1000, vec![]);
+        assert_eq!(cache_key(&b, "s", "u"), "67d3590845e650cb4c38fd859fea4e204e5ab8ec39b79402422d9057f2b31226");
+    }
+
+    #[test]
     fn cache_hit_skips_backend() {
         let dir = tempfile::tempdir().unwrap();
         let cache = CallCache::new(dir.path());
