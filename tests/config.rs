@@ -802,6 +802,12 @@ fn datetime_numeric_value_message_names_key_without_marker() {
         &no_env,
         Some(file.as_path()),
     ));
-    assert!(msg.contains("llm.retries"), "message does not name the key: {msg}");
-    assert!(!msg.contains("$__toml_private"), "leaked toml marker: {msg}");
+    assert!(
+        msg.contains("llm.retries"),
+        "message does not name the key: {msg}"
+    );
+    assert!(
+        !msg.contains("$__toml_private"),
+        "leaked toml marker: {msg}"
+    );
 }
