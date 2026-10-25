@@ -35,6 +35,11 @@ fn invalid(s: &str) -> Error {
     Error::Usage(format!("invalid LLM backend '{s}' ({VALID_FORMS})"))
 }
 
+/// Model names come from untrusted template frontmatter and are echoed in hints and URLs.
+fn is_model_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '-')
+}
+
 impl FromStr for BackendId {
     type Err = Error;
 
@@ -43,6 +48,7 @@ impl FromStr for BackendId {
             return Ok(BackendId::Claude { model: None });
         }
         match s.split_once(':') {
+            Some((_, model)) if !model.chars().all(is_model_char) => Err(invalid(s)),
             Some(("ollama", model)) if !model.is_empty() => Ok(BackendId::Ollama {
                 model: model.to_string(),
             }),
@@ -114,6 +120,30 @@ mod tests {
                 matches!(err, Error::Usage(ref m) if m.contains("ollama:<model>")),
                 "{bad:?}: {err}"
             );
+        }
+    }
+
+    #[test]
+    fn backend_id_accepts_namespaced_model() {
+        assert_eq!(
+            "ollama:library/gemma4:26b".parse::<BackendId>().unwrap(),
+            BackendId::Ollama {
+                model: "library/gemma4:26b".into()
+            }
+        );
+    }
+
+    #[test]
+    fn backend_id_rejects_unsafe_model_names() {
+        for bad in [
+            "ollama:a b",
+            "ollama:a;rm",
+            "ollama:a\nb",
+            "ollama:a\u{7}b",
+            "claude:a b",
+        ] {
+            let err = bad.parse::<BackendId>().unwrap_err();
+            assert!(matches!(err, Error::Usage(_)), "{bad:?}: {err}");
         }
     }
 

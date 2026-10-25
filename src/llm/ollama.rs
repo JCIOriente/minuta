@@ -50,14 +50,17 @@ pub fn check(url: &str, model: &str) -> std::result::Result<OllamaInfo, Missing>
         .get(&format!("{base}/api/tags"))
         .call()
         .map_err(|e| server_down(describe(&e)))?;
-    let tags =
-        read_json(tags).map_err(|e| server_down(format!("unreadable /api/tags response ({e})")))?;
-    let pulled = tags["models"].as_array().is_some_and(|models| {
-        models
-            .iter()
-            .filter_map(|m| m["name"].as_str())
-            .any(|name| name_matches(name, model))
-    });
+    let tags = read_json(tags)
+        .map_err(|e| server_down(format!("unreadable /api/tags response ({})", e.0)))?;
+    let Some(models) = tags["models"].as_array() else {
+        return Err(server_down(format!(
+            "unexpected /api/tags response ({tags})"
+        )));
+    };
+    let pulled = models
+        .iter()
+        .filter_map(|m| m["name"].as_str())
+        .any(|name| name_matches(name, model));
     if !pulled {
         return Err(model_problem(format!("ollama pull {model}")));
     }
@@ -68,7 +71,7 @@ pub fn check(url: &str, model: &str) -> std::result::Result<OllamaInfo, Missing>
         .send_string(&json!({ "model": model }).to_string())
         .map_err(|e| model_problem(format!("ollama show {model} failed: {}", describe(&e))))?;
     let shown = read_json(shown)
-        .map_err(|e| model_problem(format!("unreadable /api/show response ({e})")))?;
+        .map_err(|e| model_problem(format!("unreadable /api/show response ({})", e.0)))?;
     let context_length = shown["model_info"].as_object().and_then(|info| {
         info.iter()
             .find(|(key, _)| key.ends_with(".context_length"))
@@ -89,9 +92,11 @@ fn name_matches(listed: &str, wanted: &str) -> bool {
     listed == wanted || (!wanted.contains(':') && listed == format!("{wanted}:latest"))
 }
 
-fn read_json(response: ureq::Response) -> std::result::Result<Value, String> {
-    let text = response.into_string().map_err(|e| e.to_string())?;
-    serde_json::from_str(&text).map_err(|e| e.to_string())
+/// Reads a JSON body. The error carries whether it is transient: a failed body read is,
+/// a body that is not JSON is not.
+fn read_json(response: ureq::Response) -> std::result::Result<Value, (String, bool)> {
+    let text = response.into_string().map_err(|e| (e.to_string(), true))?;
+    serde_json::from_str(&text).map_err(|e| (e.to_string(), false))
 }
 
 fn describe(e: &ureq::Error) -> String {
@@ -101,6 +106,7 @@ fn describe(e: &ureq::Error) -> String {
     }
 }
 
+#[derive(Clone)]
 pub struct Ollama {
     id: String,
     model: String,
@@ -164,11 +170,18 @@ impl Ollama {
             Ok(r) => r,
             Err(ureq::Error::Status(code, r)) => return Err(self.status_error(code, r)),
             Err(ureq::Error::Transport(t)) => {
-                return Err(self.error(format!("request failed: {t}"), true))
+                let transient = matches!(
+                    t.kind(),
+                    ureq::ErrorKind::ConnectionFailed
+                        | ureq::ErrorKind::Dns
+                        | ureq::ErrorKind::Io
+                        | ureq::ErrorKind::ProxyConnect
+                );
+                return Err(self.error(format!("request failed: {t}"), transient));
             }
         };
         let parsed = read_json(response)
-            .map_err(|e| self.error(format!("unreadable response: {e}"), true))?;
+            .map_err(|(e, transient)| self.error(format!("unreadable response: {e}"), transient))?;
         if parsed["done_reason"] == "length" {
             return Err(self.error(
                 "response cut off at the context limit; raise ollama.num_ctx".into(),
@@ -182,10 +195,20 @@ impl Ollama {
     }
 
     fn status_error(&self, code: u16, response: ureq::Response) -> Error {
-        let detail = read_json(response)
-            .ok()
-            .and_then(|v| v["error"].as_str().map(str::to_string));
-        let detail = detail.map_or(String::new(), |d| format!(": {d}"));
+        let detail = match response.into_string() {
+            Ok(text) => {
+                let from_json = serde_json::from_str::<Value>(&text)
+                    .ok()
+                    .and_then(|v| v["error"].as_str().map(str::to_string));
+                let shown = from_json.unwrap_or_else(|| text.trim().chars().take(200).collect());
+                if shown.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {shown}")
+                }
+            }
+            Err(_) => String::new(),
+        };
         match code {
             404 => self.error(
                 format!(
@@ -211,12 +234,7 @@ impl Backend for Ollama {
 
     fn complete(&self, system: &str, user: &str, interrupt: &AtomicBool) -> Result<String> {
         let body = self.body(system, user);
-        let worker = Ollama {
-            id: self.id.clone(),
-            model: self.model.clone(),
-            url: self.url.clone(),
-            ..*self
-        };
+        let worker = self.clone();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let _ = tx.send(worker.request(body));

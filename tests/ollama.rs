@@ -250,7 +250,8 @@ fn malformed_response_is_non_transient_error() {
 fn interrupt_abandons_hanging_request() {
     let responder: Responder = Arc::new(|_| Reply::Hang);
     let fake = FakeOllama::start(&["m"], show(None, false), responder);
-    let o = Ollama::new(&fake.url(), "m", 1024, &info(None, false));
+    let o = Ollama::new(&fake.url(), "m", 1024, &info(None, false))
+        .with_timeout(Duration::from_secs(5));
     let flag = Arc::new(AtomicBool::new(false));
     let setter = {
         let flag = flag.clone();
@@ -264,4 +265,57 @@ fn interrupt_abandons_hanging_request() {
     assert!(matches!(err, Error::Interrupted), "{err}");
     assert!(start.elapsed() < Duration::from_millis(600));
     setter.join().unwrap();
+}
+
+#[test]
+fn invalid_url_is_non_transient() {
+    let o = Ollama::new("no-scheme", "m", 1024, &info(None, false));
+    let (_, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert!(!transient);
+}
+
+#[test]
+fn non_json_ok_body_is_non_transient() {
+    let responder: Responder = Arc::new(|_| Reply::Status(200, "not json".into()));
+    let fake = FakeOllama::start(&["m"], show(None, false), responder);
+    let o = Ollama::new(&fake.url(), "m", 1024, &info(None, false));
+    let (_, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert!(!transient);
+}
+
+#[test]
+fn plain_text_error_body_is_included() {
+    let responder: Responder = Arc::new(|_| Reply::Status(400, "  plain proxy failure  ".into()));
+    let fake = FakeOllama::start(&["m"], show(None, false), responder);
+    let o = Ollama::new(&fake.url(), "m", 1024, &info(None, false));
+    let (message, _) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert!(message.contains("plain proxy failure"), "{message}");
+}
+
+#[test]
+fn plain_text_404_body_is_included() {
+    let responder: Responder = Arc::new(|_| Reply::Status(404, "page not found".into()));
+    let fake = FakeOllama::start(&["m"], show(None, false), responder);
+    let o = Ollama::new(&fake.url(), "m", 1024, &info(None, false));
+    let (message, _) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert!(message.contains("page not found"), "{message}");
+}
+
+#[test]
+fn tags_without_models_array_is_server_problem() {
+    let fake = FakeOllama::start_with_tags(json!({"unexpected": true}), ok_chat());
+    let missing = check(&fake.url(), "m").unwrap_err();
+    assert_eq!(missing.name, "ollama");
+    assert!(
+        missing.hint.contains("unexpected /api/tags response"),
+        "{}",
+        missing.hint
+    );
+}
+
+#[test]
+fn show_failure_after_tags_names_the_model() {
+    let fake = FakeOllama::start_with_show(&["m"], None, ok_chat());
+    let missing = check(&fake.url(), "m").unwrap_err();
+    assert_eq!(missing.name, "ollama:m");
 }

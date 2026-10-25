@@ -64,6 +64,29 @@ impl FakeOllama {
     /// `models` are the names `/api/tags` lists; `show_info` is the full `/api/show` body
     /// (for a listed model; unlisted ones get 404).
     pub fn start(models: &[&str], show_info: Value, responder: Responder) -> FakeOllama {
+        FakeOllama::start_with_show(models, Some(show_info), responder)
+    }
+
+    /// Like `start`, but `/api/tags` answers 200 with `tags` verbatim.
+    pub fn start_with_tags(tags: Value, responder: Responder) -> FakeOllama {
+        FakeOllama::spawn(&[], None, Some(tags), responder)
+    }
+
+    /// Like `start`, but `show_info: None` makes `/api/show` fail with a 500.
+    pub fn start_with_show(
+        models: &[&str],
+        show_info: Option<Value>,
+        responder: Responder,
+    ) -> FakeOllama {
+        FakeOllama::spawn(models, show_info, None, responder)
+    }
+
+    fn spawn(
+        models: &[&str],
+        show_info: Option<Value>,
+        tags: Option<Value>,
+        responder: Responder,
+    ) -> FakeOllama {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake ollama");
         let addr = listener.local_addr().expect("local addr").to_string();
         let names: Arc<Vec<String>> = Arc::new(models.iter().map(|m| m.to_string()).collect());
@@ -74,6 +97,7 @@ impl FakeOllama {
         let shared = Shared {
             names,
             show_info,
+            tags: Arc::new(tags),
             responder,
             requests: requests.clone(),
             chats: chats.clone(),
@@ -88,7 +112,9 @@ impl FakeOllama {
                 let Ok(stream) = stream else { continue };
                 let shared = shared.clone();
                 thread::spawn(move || {
-                    let _ = handle(stream, &shared);
+                    if let Err(e) = handle(stream, &shared) {
+                        eprintln!("fake ollama: connection error: {e}");
+                    }
                 });
             }
         });
@@ -125,7 +151,8 @@ impl Drop for FakeOllama {
 #[derive(Clone)]
 struct Shared {
     names: Arc<Vec<String>>,
-    show_info: Arc<Value>,
+    show_info: Arc<Option<Value>>,
+    tags: Arc<Option<Value>>,
     responder: Responder,
     requests: Arc<Mutex<Vec<Request>>>,
     chats: Arc<AtomicUsize>,
@@ -155,7 +182,8 @@ fn handle(stream: TcpStream, shared: &Shared) -> std::io::Result<()> {
     }
     let mut raw = vec![0u8; length];
     reader.read_exact(&mut raw)?;
-    let body: Value = serde_json::from_slice(&raw).unwrap_or(Value::Null);
+    let body: Value = serde_json::from_slice(&raw)
+        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&raw).into_owned()));
 
     let chat_index = (path == "/api/chat").then(|| shared.chats.fetch_add(1, Ordering::SeqCst));
     let request = Request {
@@ -171,6 +199,10 @@ fn handle(stream: TcpStream, shared: &Shared) -> std::io::Result<()> {
         .push(request.clone());
 
     let reply = match (request.method.as_str(), request.path.as_str()) {
+        ("GET", "/api/tags") if shared.tags.is_some() => Reply::Status(
+            200,
+            shared.tags.as_ref().clone().unwrap_or_default().to_string(),
+        ),
         ("GET", "/api/tags") => {
             let models: Vec<Value> = shared
                 .names
@@ -182,8 +214,11 @@ fn handle(stream: TcpStream, shared: &Shared) -> std::io::Result<()> {
         ("POST", "/api/show") => {
             let asked = request.body["model"].as_str().unwrap_or_default();
             let latest = format!("{asked}:latest"); // like Ollama, a bare name means :latest
-            if shared.names.iter().any(|n| n == asked || *n == latest) {
-                Reply::Status(200, shared.show_info.to_string())
+            let listed = shared.names.iter().any(|n| n == asked || *n == latest);
+            if let (true, Some(info)) = (listed, shared.show_info.as_ref()) {
+                Reply::Status(200, info.to_string())
+            } else if listed {
+                Reply::error(500, "show failed")
             } else {
                 Reply::error(404, &format!("model '{asked}' not found"))
             }
