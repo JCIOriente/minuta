@@ -443,6 +443,10 @@ mod tests {
         fs::create_dir_all(entry.join("child")).unwrap();
         let err = cache.write("k", "text").unwrap_err();
         assert!(err.to_string().contains("k.txt"), "{err}");
+        let tmp_left = fs::read_dir(dir.path().join("llm-cache"))
+            .unwrap()
+            .any(|e| e.unwrap().path().extension().is_some_and(|x| x == "tmp"));
+        assert!(!tmp_left);
     }
 
     #[test]

@@ -292,7 +292,7 @@ Reviews run on opus.
 - Priority: 1
 - Depends on: T1
 - Owns: `src/llm/call.rs`
-- Touches (read-only or additive): `src/job/mod.rs` (uses `write_atomic`, `fingerprint`)
+- Touches (read-only or additive): `src/job/mod.rs` (uses `fingerprint`)
 - Acceptance:
   - [ ] the cache key is `fingerprint([backend.id(), context_tokens, system, user])`; changing any one part changes the key (one assertion per part)
   - [ ] a hit returns the stored text without calling the backend; `refresh: true` calls the backend and overwrites the entry
