@@ -194,10 +194,14 @@ Write the values as plain text without Markdown. Keep the keys exactly as writte
     #[test]
     fn repair_system_language_last() {
         let spec = spec_of(&[(Field::Title, no_limit())], Format::Plain);
-        let system = repair_system(&spec, "Spanish");
-        assert!(system.starts_with(REPAIR_INTRO));
-        assert!(system.contains(&fields_block(&spec)));
-        assert!(system.ends_with(&language_instruction("Spanish")));
+        let expected = format!(
+            "You correct a JSON object. Fix only the problems listed in the input, keep everything else unchanged, and return only the corrected JSON object.\n\n\
+Return only a JSON object with exactly these keys, and no text before or after it:\n\
+\"title\" (string): A title.\n\
+Write the values as plain text without Markdown. Keep the keys exactly as written, in English; write the values in the language given below.\n\n{}",
+            language_instruction("Spanish")
+        );
+        assert_eq!(repair_system(&spec, "Spanish"), expected);
     }
 
     #[test]
