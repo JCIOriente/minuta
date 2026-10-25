@@ -445,6 +445,9 @@ Updated by the PRs that implement this spec.
 - [x] T8 prompt assembly, chunking and consolidation (#49)
 - [x] T9 template step state in `job.json` (#42)
 - [x] T10 template step with content-hash fingerprint (#50)
-- [x] T11 runner, CLI, progress, preflight and doctor (this PR, issue #36)
+- [x] T11 runner, CLI, progress, preflight and doctor (#51)
 - [x] Fix: flaky backoff interrupt bound in CI (#48)
-- [ ] T12 integration suite and opt-in LLM e2e (#37)
+- [x] T12 integration suite and opt-in LLM e2e (#53)
+- [x] Lessons: docs/conventions.md, docs/common-issues.md (issue #52)
+
+Follow-ups: issue #54 (summary prompt shows empty sections on gemma4; deferred review minors).

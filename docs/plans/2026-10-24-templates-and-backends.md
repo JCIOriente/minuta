@@ -2,7 +2,7 @@
 
 - Spec: docs/specs/2026-10-24-templates-and-backends.md
 - Date: 2026-10-24
-- Status: in backlog
+- Status: done (all tasks merged)
 
 ## Overview
 New code lives in new modules: `lang`, `template/`, `llm/` and `generate`. Existing modules
