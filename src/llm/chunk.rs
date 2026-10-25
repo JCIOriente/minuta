@@ -110,14 +110,39 @@ pub fn generate(
     complete: Complete,
     on_event: &mut dyn FnMut(Event),
 ) -> Result<Generated> {
+    generate_with(
+        req,
+        None,
+        complete,
+        &mut |system: &str, user: &str, _: &mut dyn FnMut(Event)| complete(system, user),
+        on_event,
+    )
+}
+
+/// Like `generate`, but `final_block` (if any) goes before the language instruction in the
+/// final system prompt (single call or consolidation), and the final call is made by
+/// `finish(system, user, on_event)` instead of `complete`. Map calls are unchanged. Events
+/// `finish` emits reach `on_event`, after `Consolidating` when chunked.
+pub fn generate_with(
+    req: &Request,
+    final_block: Option<&str>,
+    complete: Complete,
+    finish: &mut dyn FnMut(&str, &str, &mut dyn FnMut(Event)) -> Result<String>,
+    on_event: &mut dyn FnMut(Event),
+) -> Result<Generated> {
     let context = req.context_tokens;
     let instruction = language_instruction(req.output_lang);
-    let system = format!("{}\n\n{instruction}", req.body);
+    let block = final_block.map(|b| format!("{b}\n\n")).unwrap_or_default();
+    let system = format!("{}\n\n{block}{instruction}", req.body);
     if fits(&system, req.input, context) {
-        let text = complete(&system, req.input)?;
+        let text = finish(&system, req.input, on_event)?;
         return Ok(Generated { text, calls: 1 });
     }
 
+    let reduce_system = format!("{}\n\n{CONSOLIDATION}\n\n{block}{instruction}", req.body);
+    // Fail before any map call when the consolidation prompt alone cannot fit. Without a
+    // block it is shorter than every map prompt, so this adds no new failure.
+    input_budget(&reduce_system, context)?;
     let map_system = |i: usize, n: usize| {
         format!(
             "{MAP_INTRO}\n\n{}\n\nThis is part {i} of {n}. {MAP_TASK}\n\n{instruction}",
@@ -137,7 +162,6 @@ pub fn generate(
     )?;
 
     on_event(Event::Consolidating);
-    let reduce_system = format!("{}\n\n{CONSOLIDATION}\n\n{instruction}", req.body);
     let mut joined = join_notes(&notes);
     while !fits(&reduce_system, &joined, context) {
         let units = part_units(&notes);
@@ -151,7 +175,7 @@ pub fn generate(
         }
         joined = merged;
     }
-    let text = complete(&reduce_system, &joined)?;
+    let text = finish(&reduce_system, &joined, on_event)?;
     Ok(Generated {
         text,
         calls: calls + 1,
@@ -1009,5 +1033,247 @@ mod tests {
             .collect();
         want.push(Event::Consolidating);
         assert_eq!(events, want);
+    }
+
+    const BLOCK: &str = "FIELDS: return a title and a body.";
+
+    /// Recorded (system, user) pairs.
+    type Calls = Vec<(String, String)>;
+
+    /// Runs `generate_with` with `BLOCK`, a recording `complete` answering "n" and a `finish`
+    /// answering "final". Returns the output, the `complete` calls, the `finish` calls and
+    /// the events.
+    fn run_with_block(req: &Request) -> (Generated, Calls, Calls, Vec<Event>) {
+        let rec = Recorder::new();
+        let complete = |s: &str, u: &str| {
+            rec.record(s, u);
+            Ok("n".to_string())
+        };
+        let mut finals = Vec::new();
+        let mut finish = |s: &str, u: &str, _: &mut dyn FnMut(Event)| {
+            finals.push((s.to_string(), u.to_string()));
+            Ok("final".to_string())
+        };
+        let mut events = Vec::new();
+        let out = generate_with(req, Some(BLOCK), &complete, &mut finish, &mut |e| {
+            events.push(e)
+        })
+        .unwrap();
+        (out, rec.calls(), finals, events)
+    }
+
+    #[test]
+    fn single_call_final_block_before_language() {
+        let (_, _, finals, _) = run_with_block(&request("hello", 1000, 1));
+        assert_eq!(
+            finals[0].0,
+            format!("{BODY}\n\n{BLOCK}\n\n{}", language_instruction(LANG))
+        );
+    }
+
+    #[test]
+    fn finish_used_for_single_call() {
+        let (out, calls, finals, _) = run_with_block(&request("hello", 1000, 1));
+        assert_eq!(
+            out,
+            Generated {
+                text: "final".into(),
+                calls: 1
+            }
+        );
+        assert!(calls.is_empty(), "complete was called: {calls:?}");
+        assert_eq!(finals.len(), 1);
+        assert_eq!(finals[0].1, "hello");
+    }
+
+    #[test]
+    fn map_prompts_have_no_final_block() {
+        let input = numbered_lines(200);
+        let (_, calls, _, events) = run_with_block(&request(&input, 300, 3));
+        assert!(chunk_total(&events) > 1);
+        for (s, _) in &calls {
+            assert!(!s.contains(BLOCK), "map prompt has the final block: {s}");
+        }
+    }
+
+    #[test]
+    fn consolidation_has_final_block() {
+        let input = numbered_lines(200);
+        let (out, calls, finals, events) = run_with_block(&request(&input, 300, 3));
+        let total = chunk_total(&events);
+        assert_eq!(
+            out,
+            Generated {
+                text: "final".into(),
+                calls: total + 1
+            }
+        );
+        assert_eq!(calls.len(), total);
+        assert!(calls.iter().all(|(s, _)| !is_final(s)), "{calls:?}");
+        assert_eq!(finals.len(), 1);
+        let (system, user) = &finals[0];
+        assert_eq!(
+            system,
+            &format!(
+                "{BODY}\n\n{CONSOLIDATION}\n\n{BLOCK}\n\n{}",
+                language_instruction(LANG)
+            )
+        );
+        assert_eq!(user, &join_notes(&vec!["n".to_string(); total]));
+    }
+
+    #[test]
+    fn fit_boundary_counts_final_block() {
+        let context = 1000;
+        let plain = format!("{BODY}\n\n{}", language_instruction(LANG));
+        let with_block = format!("{BODY}\n\n{BLOCK}\n\n{}", language_instruction(LANG));
+        let room = |system: &str| (context - context / 4 - estimate_tokens(system)) * 3;
+        let exact = "x".repeat(room(&with_block));
+        let fits_only_without = "x".repeat(room(&plain));
+        assert!(fits(&plain, &fits_only_without, context));
+        assert!(!fits(&with_block, &fits_only_without, context));
+        let cases = [
+            (exact.clone(), true),
+            (format!("{exact}x"), false),
+            (fits_only_without, false),
+        ];
+        for (input, one_call) in cases {
+            let (out, _, _, _) = run_with_block(&request(&input, context, 1));
+            assert_eq!(out.calls == 1, one_call, "input of {} chars", input.len());
+        }
+    }
+
+    #[test]
+    fn final_with_block_never_exceeds_budget() {
+        let mut ok = 0;
+        let mut chunked = 0;
+        for case in 0..300u64 {
+            let mut rng = Rng(case.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
+            let context = rng.range(60, 3000);
+            let body_words = rng.range(0, 60);
+            let body = rng.words(body_words, 12).join(" ");
+            let block_words = rng.range(1, 40);
+            // Upper case keeps the block from occurring by chance in the body or input.
+            let block = format!("FIELDS: {}", rng.words(block_words, 12).join(" "));
+            let line_count = rng.range(1, 80);
+            let lines: Vec<String> = (0..line_count)
+                .map(|_| {
+                    let n = rng.range(0, 30);
+                    let max_len = if rng.range(0, 8) == 0 { 400 } else { 15 };
+                    rng.words(n, max_len).join(" ")
+                })
+                .collect();
+            let input = lines.join("\n");
+            let concurrency = rng.range(1, 5);
+            let req = Request {
+                body: &body,
+                output_lang: LANG,
+                input: &input,
+                context_tokens: context,
+                concurrency,
+            };
+            let rec = Recorder::new();
+            let complete = |s: &str, u: &str| {
+                rec.record(s, u);
+                Ok("note".to_string())
+            };
+            let mut finals = Vec::new();
+            let mut finish = |s: &str, u: &str, _: &mut dyn FnMut(Event)| {
+                finals.push((s.to_string(), u.to_string()));
+                Ok("final".to_string())
+            };
+            let result = generate_with(&req, Some(&block), &complete, &mut finish, &mut |_| {});
+            let calls = rec.calls();
+            for (s, u) in &calls {
+                assert!(fits(s, u, context), "case {case}: map call over budget");
+                assert!(!s.contains(&block), "case {case}: map call has the block");
+            }
+            for (s, u) in &finals {
+                assert!(fits(s, u, context), "case {case}: final call over budget");
+                assert!(
+                    s.contains(&block),
+                    "case {case}: final call lacks the block"
+                );
+            }
+            match result {
+                Ok(out) => {
+                    ok += 1;
+                    if !calls.is_empty() {
+                        chunked += 1;
+                    }
+                    assert_eq!(finals.len(), 1, "case {case}");
+                    assert_eq!(out.calls, calls.len() + 1, "case {case}");
+                }
+                Err(Error::Template { name, .. }) => assert!(name.is_empty(), "case {case}"),
+                Err(e) => panic!("case {case}: unexpected error {e}"),
+            }
+        }
+        assert!(ok > 150, "only {ok} cases succeeded");
+        assert!(chunked > 50, "only {chunked} cases were chunked");
+    }
+
+    #[test]
+    fn oversized_final_block_fails_before_map_calls() {
+        let input = numbered_lines(200);
+        let block = "word ".repeat(200);
+        let count = AtomicUsize::new(0);
+        let complete = |_: &str, _: &str| {
+            count.fetch_add(1, Ordering::SeqCst);
+            Ok("n".to_string())
+        };
+        let mut finish = |_: &str, _: &str, _: &mut dyn FnMut(Event)| Ok("final".to_string());
+        let err = generate_with(
+            &request(&input, 300, 1),
+            Some(&block),
+            &complete,
+            &mut finish,
+            &mut |_| {},
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::Template { ref name, ref message }
+                    if name.is_empty()
+                        && message == "the prompt alone does not fit the context budget of 300 tokens"
+            ),
+            "{err}"
+        );
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn finish_events_forwarded() {
+        let repair = Event::Repair {
+            attempt: 1,
+            total: 2,
+        };
+        let chunked = numbered_lines(200);
+        let cases = [("hello".to_string(), false), (chunked, true)];
+        for (input, is_chunked) in cases {
+            let complete = |_: &str, _: &str| Ok("n".to_string());
+            let mut finish = |_: &str, _: &str, on_event: &mut dyn FnMut(Event)| {
+                on_event(repair);
+                Ok("final".to_string())
+            };
+            let mut events = Vec::new();
+            generate_with(
+                &request(&input, 300, 3),
+                Some(BLOCK),
+                &complete,
+                &mut finish,
+                &mut |e| events.push(e),
+            )
+            .unwrap();
+            let total = chunk_total(&events);
+            let mut want: Vec<Event> = (1..=total)
+                .map(|done| Event::Chunk { done, total })
+                .collect();
+            if is_chunked {
+                want.push(Event::Consolidating);
+            }
+            want.push(repair);
+            assert_eq!(events, want, "chunked: {is_chunked}");
+        }
     }
 }
