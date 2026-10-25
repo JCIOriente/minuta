@@ -33,8 +33,8 @@ pub struct ChaptersSpec {
     pub max_chars: Option<usize>,
 }
 
-/// `h:mm:ss`, `hh:mm:ss`, `m:ss`, `mm:ss`; seconds 0-59; minutes 0-59 when hours are given
-/// (0-99 in the two-group forms); checked arithmetic. `None` for anything else.
+/// `h:mm:ss`, `hh:mm:ss`, `m:ss`, `mm:ss`: seconds 0-59; minutes 0-59 when hours are given, 0-99
+/// otherwise; hours 1-2 digits. `None` for anything else. The arithmetic is checked as a guard only.
 pub fn parse_stamp(s: &str) -> Option<u64> {
     let groups: Vec<&str> = s.split(':').collect();
     let digits = |g: &str, min: usize, max: usize| {
@@ -127,6 +127,21 @@ mod tests {
     #[test]
     fn min_transcript_seconds_is_thirty() {
         assert_eq!(MIN_TRANSCRIPT_SECONDS, 30);
+    }
+
+    #[test]
+    fn parse_stamp_accepts_99_minutes() {
+        assert_eq!(parse_stamp("99:59"), Some(5999));
+    }
+
+    #[test]
+    fn parse_stamp_rejects_three_digit_minutes() {
+        assert_eq!(parse_stamp("100:00"), None);
+    }
+
+    #[test]
+    fn parse_stamp_rejects_one_digit_minutes_with_hours() {
+        assert_eq!(parse_stamp("1:2:03"), None);
     }
 
     #[test]
