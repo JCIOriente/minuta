@@ -224,8 +224,10 @@ mod tests {
     #[test]
     fn not_json_violation_for_broken_object_in_prose() {
         let s = one(Field::Title, no_limit());
-        let m = messages(parse_answer(r#"see {"title": } ok"#, &s));
-        assert_eq!(m.len(), 1);
+        assert_eq!(
+            messages(parse_answer(r#"see {"title": } ok"#, &s)),
+            vec!["the answer is not a JSON object (expected value at line 1 column 11)"]
+        );
     }
 
     #[test]
@@ -458,6 +460,26 @@ mod tests {
             let v = parse_answer(input, &s).unwrap();
             assert_eq!(v, Values(vec![(Field::Body, text("ab"))]), "{input}");
         }
+    }
+
+    #[test]
+    fn max_boundary_inclusive() {
+        let s = one(
+            Field::Tags,
+            Limit {
+                max_chars: None,
+                max: Some(2),
+            },
+        );
+        assert!(parse_answer(r#"{"tags": ["a", "b"]}"#, &s).is_ok());
+        assert!(parse_answer(r#"{"tags": ["a", "b", "c"]}"#, &s).is_err());
+    }
+
+    #[test]
+    fn tags_may_contain_spaces() {
+        let s = one(Field::Tags, no_limit());
+        let v = parse_answer(r#"{"tags": ["machine learning"]}"#, &s).unwrap();
+        assert_eq!(v, Values(vec![(Field::Tags, list(&["machine learning"]))]));
     }
 
     #[test]
