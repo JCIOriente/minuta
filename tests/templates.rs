@@ -542,7 +542,10 @@ fn get_unknown_lists_names() {
     let c = discover(&e.dirs()).unwrap();
     let m = usage(c.get("nope"));
     assert!(m.contains("nope"), "{m}");
-    assert!(m.contains("instagram, linkedin, minutes, summary, youtube"), "{m}");
+    assert!(
+        m.contains("instagram, linkedin, minutes, summary, youtube"),
+        "{m}"
+    );
 }
 
 #[test]
