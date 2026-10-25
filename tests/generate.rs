@@ -106,7 +106,10 @@ fn output_lang_flag_wins() {
 
 #[test]
 fn output_lang_template_beats_config() {
-    assert_eq!(output_lang(None, Some("de"), Some("pt"), "es").unwrap(), "de");
+    assert_eq!(
+        output_lang(None, Some("de"), Some("pt"), "es").unwrap(),
+        "de"
+    );
 }
 
 #[test]
@@ -152,11 +155,7 @@ fn id(s: &str) -> BackendId {
 
 #[test]
 fn backend_flag_wins() {
-    let got = backend_id(
-        Some(&id("claude")),
-        Some(&id("ollama:a")),
-        &id("ollama:b"),
-    );
+    let got = backend_id(Some(&id("claude")), Some(&id("ollama:a")), &id("ollama:b"));
     assert_eq!(got.to_string(), "claude");
 }
 
@@ -199,7 +198,10 @@ fn fingerprint_matches_spec_composition() {
         b"es",
         &Sha256::digest(&input),
     ]);
-    assert_eq!(run(&t, &b, "es").fingerprint(&ctx(dir.path())).unwrap(), want);
+    assert_eq!(
+        run(&t, &b, "es").fingerprint(&ctx(dir.path())).unwrap(),
+        want
+    );
 }
 
 #[test]
@@ -290,10 +292,7 @@ fn execute_writes_markdown() {
 #[test]
 fn execute_renders_variables() {
     let dir = TempDir::new().unwrap();
-    let t = transcript(
-        "ca",
-        &[(0.0, 30.0, "Bon dia."), (3600.0, 3723.9, "Adeu.")],
-    );
+    let t = transcript("ca", &[(0.0, 30.0, "Bon dia."), (3600.0, 3723.9, "Adeu.")]);
     write_transcript(dir.path(), &t);
     let template = tpl(
         "summary",
@@ -309,7 +308,10 @@ fn execute_renders_variables() {
         system.starts_with("out Spanish (es) speech Catalan job reunion dur 1:02:03\n\n"),
         "{system}"
     );
-    assert!(system.contains("Write the entire response in Spanish"), "{system}");
+    assert!(
+        system.contains("Write the entire response in Spanish"),
+        "{system}"
+    );
     assert_eq!(user, &transcript_text(&t));
 }
 
