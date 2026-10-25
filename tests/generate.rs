@@ -320,8 +320,27 @@ fn fingerprint_missing_input_is_error() {
         let err = run(t, &b, "es")
             .fingerprint(&ctx(dir.path()), "reunion")
             .unwrap_err();
-        assert!(err.to_string().contains(file), "{file}: {err}");
+        assert!(
+            matches!(err, Error::Template { ref name, ref message }
+                if *name == t.name && *message == format!("input {file} is missing")),
+            "{file}: {err}"
+        );
     }
+}
+
+#[test]
+fn fingerprint_unreadable_input_is_io_error() {
+    let (dir, _) = job();
+    fs::create_dir(dir.path().join("summary.md")).unwrap();
+    let t = tpl("brief", "---\ninput: summary\n---\nShorten it.\n");
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
+    let err = run(&t, &b, "es")
+        .fingerprint(&ctx(dir.path()), "reunion")
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::Io(ref e) if e.to_string().contains("summary.md")),
+        "{err}"
+    );
 }
 
 // ---- execute ----
@@ -390,6 +409,41 @@ fn empty_transcript_fails_without_calls() {
     );
     assert!(b.calls().is_empty());
     assert!(!dir.path().join("summary.md").try_exists().unwrap());
+}
+
+#[test]
+fn blank_transcript_fails_without_calls() {
+    let dir = TempDir::new().unwrap();
+    write_transcript(
+        dir.path(),
+        &transcript("es", &[(0.0, 5.0, "  "), (5.0, 9.0, "\n")]),
+    );
+    let t = tpl("summary", TEXT);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok("unused".into())]);
+    let err = execute(&run(&t, &b, "es"), dir.path()).unwrap_err();
+    assert!(
+        matches!(err, Error::Template { ref name, ref message }
+            if name == "summary" && message == "transcript is empty"),
+        "{err}"
+    );
+    assert!(b.calls().is_empty());
+    assert!(!dir.path().join("summary.md").try_exists().unwrap());
+}
+
+#[test]
+fn execute_rejects_non_utf8_upstream() {
+    let (dir, _) = job();
+    fs::write(dir.path().join("summary.md"), [0xff, 0xfe]).unwrap();
+    let t = tpl("brief", "---\ninput: summary\n---\nShorten it.\n");
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok("unused".into())]);
+    let err = execute(&run(&t, &b, "es"), dir.path()).unwrap_err();
+    assert!(
+        matches!(err, Error::Template { ref name, ref message }
+            if name == "brief" && message.contains("summary.md")),
+        "{err}"
+    );
+    assert!(b.calls().is_empty());
+    assert!(!dir.path().join("brief.md").try_exists().unwrap());
 }
 
 #[test]

@@ -110,10 +110,12 @@ impl TemplateRun<'_> {
         let transcript = read_transcript(&ctx.dir)?;
         let input = match &self.template.input {
             Input::Transcript => {
-                if transcript.segments.is_empty() {
+                // Zero segments, or only blank ones: there is nothing to send.
+                let text = transcript_text(&transcript);
+                if text.trim().is_empty() {
                     return Err(self.error("transcript is empty".into()));
                 }
-                transcript_text(&transcript)
+                text
             }
             Input::Template(_) => {
                 let bytes = self.read_input(ctx)?;
