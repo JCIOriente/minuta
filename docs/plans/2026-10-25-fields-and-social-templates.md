@@ -2,7 +2,7 @@
 
 - Spec: docs/specs/2026-10-25-fields-and-social-templates.md
 - Date: 2026-10-25
-- Status: draft
+- Status: in backlog
 
 ## Overview
 New logic goes in a new module, `src/fields/`: the shared field set and its types, answer
@@ -179,7 +179,7 @@ Reviews run on opus.
 
 ## Tasks
 
-### T1: Foundations: fields types, `complete_json`, repair event
+### T1: Foundations: fields types, `complete_json`, repair event  (#56)
 - Priority: 0
 - Depends on: none
 - Owns: `src/lib.rs`, `src/fields/mod.rs`, empty `src/fields/{validate,render,prompt}.rs`, `src/llm/mod.rs`, `src/llm/fake.rs`, `src/progress.rs`
@@ -207,7 +207,7 @@ Reviews run on opus.
 - Notes: the descriptions come verbatim from the spec's shared-fields table. Keep
   `fields/{validate,render,prompt}.rs` as empty files with a module doc comment only.
 
-### T2: Config key `llm.repairs`
+### T2: Config key `llm.repairs`  (#57)
 - Priority: 1
 - Depends on: none
 - Owns: `src/config.rs`, `tests/config.rs`
@@ -222,7 +222,7 @@ Reviews run on opus.
 - Notes: copy the `llm.retries` pattern (`src/config.rs:78`, `:302`, `:312`), but the minimum
   is 0, not 1.
 
-### T3: Frontmatter `output: fields`, `fields`, `limits`, `format`; `templates list` OUTPUT
+### T3: Frontmatter `output: fields`, `fields`, `limits`, `format`; `templates list` OUTPUT  (#58)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/template/mod.rs`, `tests/templates.rs`, `src/cli.rs` (`templates_list` only)
@@ -249,7 +249,7 @@ Reviews run on opus.
   rejection for `output: fields` (`src/template/mod.rs:193`), but keep that wording for
   `chapters`.
 
-### T4: Answer parsing, normalization and violations
+### T4: Answer parsing, normalization and violations  (#59)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/fields/validate.rs`
@@ -276,7 +276,7 @@ Reviews run on opus.
   quoting as in the spec; the CLI sanitizes it later. Never panic on any input: add a
   test with a non-object JSON value (`[1]`, `"x"`, `null`).
 
-### T5: Fields prompts, schema, rendering and JSON artifact
+### T5: Fields prompts, schema, rendering and JSON artifact  (#60)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/fields/prompt.rs`, `src/fields/render.rs`
@@ -300,7 +300,7 @@ Reviews run on opus.
   `render_markdown_title_heading`, `render_trailing_newline`, `artifact_json_golden`
 - Notes: prompt text is the spec's, verbatim, in English.
 
-### T6: Ollama structured output (`format` schema)
+### T6: Ollama structured output (`format` schema)  (#61)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/llm/ollama.rs`, `tests/ollama.rs`
@@ -317,7 +317,7 @@ Reviews run on opus.
 - Notes: build the body once (`src/llm/ollama.rs:177`) and add the field; keep one request
   path. Every test sets the fake server URL explicitly (docs/common-issues.md).
 
-### T7: `call_json`: JSON calls cached only when accepted
+### T7: `call_json`: JSON calls cached only when accepted  (#62)
 - Priority: 0
 - Depends on: T1
 - Owns: `src/llm/call.rs`
@@ -342,7 +342,7 @@ Reviews run on opus.
   commit decision in). Keep the atomic cache write unchanged, including the directory fsync
   (lesson from #44).
 
-### T8: Final-call hook in chunking (`generate_with`)
+### T8: Final-call hook in chunking (`generate_with`)  (#63)
 - Priority: 0
 - Depends on: T1
 - Owns: `src/llm/chunk.rs`
@@ -366,7 +366,7 @@ Reviews run on opus.
 - Notes: the block makes the final prompt longer, so an input that fit without it may need
   chunking. That is correct; test the boundary.
 
-### T9: Built-in `youtube`, `linkedin` and `instagram` templates
+### T9: Built-in `youtube`, `linkedin` and `instagram` templates  (#64)
 - Priority: 2
 - Depends on: T3
 - Owns: `src/template/builtin/{youtube,linkedin,instagram}.md`
@@ -385,7 +385,7 @@ Reviews run on opus.
   local Ollama (`gemma4:26b`) through T10's code once it lands, and report the result in the
   PR. That is not a CI check.
 
-### T10: Fields template step: repair loop, artifacts, fingerprint, wiring
+### T10: Fields template step: repair loop, artifacts, fingerprint, wiring  (#65)
 - Priority: 0
 - Depends on: T2, T3, T4, T5, T7, T8
 - Owns: `src/generate.rs`, `src/runner.rs`, `tests/generate.rs`
@@ -419,7 +419,7 @@ Reviews run on opus.
   `parse_answer`. Map calls keep using `call`. The user message of the final call is the
   input as today. Stop on `Error::Interrupted` without writing.
 
-### T11: Integration suite and opt-in e2e for fields templates
+### T11: Integration suite and opt-in e2e for fields templates  (#66)
 - Priority: 2
 - Depends on: T6, T9, T10
 - Owns: `tests/integration/fields.rs`, `tests/e2e_llm.rs`
