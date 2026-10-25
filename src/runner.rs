@@ -1,27 +1,41 @@
-//! The pipeline behind `run` and `transcribe`: preflight, the job folder, staleness and the
-//! five steps in order.
+//! The pipeline behind `run` and `transcribe`: template resolution, preflight, the job
+//! folder, staleness, the five steps in order, then the templates in dependency order.
 
+use std::collections::BTreeMap;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::config::Config;
+use crate::config::{Config, Setting, Source};
 use crate::error::{Error, Missing, Result};
-use crate::job::{self, plan_stale, step_fingerprint, Ctx, Force, Job, Reason, Step, StepName};
+use crate::generate::{self, TemplateRun};
+use crate::job::{
+    self, plan_stale, step_fingerprint, template_reason, Ctx, Force, Job, Reason, Step, StepName,
+};
+use crate::lang;
+use crate::llm::call::{CallCache, Policy};
+use crate::llm::claude::{self, Claude};
+use crate::llm::ollama::{self, Ollama};
+use crate::llm::{Backend, BackendId};
 use crate::models;
-use crate::progress::Progress;
+use crate::progress::{template_detail, Progress};
 use crate::steps::probe::read_probe;
 use crate::steps::transcribe::TRANSCRIPT_FILE;
 use crate::steps::{plan_join, Audio, Join, Mode, Outputs, Probe, Transcribe};
+use crate::template::discover::{discover, Catalog, Dirs};
+use crate::template::graph;
+use crate::template::Input;
 use crate::tools::{self, Report, RunOpts, ToolPaths, Toolchain};
 use crate::transcript::Transcript;
 
 /// How long to wait for the Ctrl-C handler after a tool died from a signal.
 const SIGNAL_GRACE: Duration = Duration::from_millis(100);
 
-/// What `run` and `transcribe` were asked to do, besides the settings in [`Config`].
+/// What `run` and `transcribe` were asked to do, besides the settings in [`Config`]. The
+/// `--llm` and `--output-lang` flags travel in [`Config`] as settings with [`Source::Flag`].
 #[derive(Debug, Clone, Default)]
 pub struct Options {
     /// Sources, in join order.
@@ -29,15 +43,30 @@ pub struct Options {
     /// `--name`; the job name is derived from it, or else from the first source. It only
     /// picks the job: a job of that name made from other sources is never replaced.
     pub name: Option<String>,
-    /// `--force`: the steps to rerun. It also lets a job made from other sources be replaced.
-    pub force: Option<Force>,
+    /// `--force`: what to rerun. It also lets a job made from other sources be replaced.
+    pub force: Option<ForceArg>,
+    /// `-t`: the requested templates, in flag order.
+    pub templates: Vec<String>,
 }
 
-/// Runs the pipeline and returns the job folder. Preflight comes first, and the steps are set
-/// up before the job folder is opened, so a missing tool or model or a failing ffmpeg stops
-/// the run before any file is touched. Steps that are not stale are reported as cached and
-/// not run. When `interrupt` is set the running tool is killed, temp files are removed and
-/// the result is `Error::Interrupted`, with the unfinished step left stale.
+/// The value of `--force`, before it is resolved against the steps and the templates in the
+/// run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForceArg {
+    /// No value: every step and every template in the run.
+    All,
+    /// A step (it, every later step and every template in the run) or a template in the run
+    /// (it and the templates that depend on it).
+    Name(String),
+}
+
+/// Runs the pipeline, then the templates, and returns the job folder. Templates are resolved
+/// first and preflight comes next, and the steps are set up before the job folder is opened,
+/// so a bad template, a missing tool, model or backend, or a failing ffmpeg stops the run
+/// before any file is touched. Steps and templates that are not stale are reported as cached
+/// and not run. When `interrupt` is set the running tool or LLM call is stopped, temp files
+/// are removed and the result is `Error::Interrupted`, with the unfinished step or template
+/// left stale.
 pub fn run(
     options: &Options,
     config: &Config,
@@ -45,11 +74,15 @@ pub fn run(
     progress: &mut Progress,
 ) -> Result<PathBuf> {
     let started = Instant::now();
-    let toolchain = preflight(config);
+    let resolved = resolve(options, config)?;
+    let ready = preflight(config, &resolved.backend_ids());
     if interrupt.load(Ordering::SeqCst) {
         return Err(Error::Interrupted);
     }
-    let toolchain = toolchain?;
+    let Ready {
+        toolchain,
+        backends,
+    } = ready?;
     let first = options
         .files
         .first()
@@ -79,6 +112,10 @@ pub fn run(
     );
     let steps: [&dyn Runnable; 5] = [&probe, &join, &audio, &transcribe, &Outputs];
 
+    for name in resolved.off_machine() {
+        progress.notice(&format!("{name} sends its input to claude (Anthropic)"));
+    }
+
     let mut job = Job::open(
         Path::new(&config.out_dir.value),
         &name,
@@ -93,37 +130,272 @@ pub fn run(
         let fingerprint = step.fingerprint(&ctx, previous);
         current.push((step.name(), fingerprint));
     }
-    let plan = plan_stale(&job, &current, options.force);
+    let plan = plan_stale(&job, &current, resolved.step_force);
     job.mark_stale(&plan)?;
     if plan.iter().any(|(step, _)| *step == StepName::Transcribe) {
         progress.note("VAD disabled (no VAD model configured)");
     }
 
+    let total = steps.len() + resolved.order.len();
+    progress.set_total(total);
     let pipeline = Pipeline {
         ctx: &ctx,
         plan: &plan,
         interrupt,
     };
-    match pipeline.run(&mut job, &steps, &current, progress) {
+    let templates = TemplatePhase {
+        ctx: &ctx,
+        job_name: &name,
+        resolved: &resolved,
+        backends: &backends,
+        config,
+        interrupt,
+        first_index: steps.len() + 1,
+    };
+    let result = pipeline
+        .run(&mut job, &steps, &current, progress)
+        .and_then(|ran| Ok(ran + templates.run(&mut job, progress)?));
+    match result {
         Ok(ran) => {
-            progress.summary(ran, steps.len() - ran, started.elapsed().as_secs_f64());
+            progress.summary(ran, total - ran, started.elapsed().as_secs_f64());
             Ok(job.dir)
         }
         Err(Error::Interrupted) => {
             // Best effort: leftovers are also removed the next time the job is opened.
             let _ = job.clean_tmp();
+            let _ = CallCache::new(&job.dir).clean_tmp();
             Err(Error::Interrupted)
         }
         Err(e) => Err(e),
     }
 }
 
-/// Resolves the toolchain for `config`, listing every missing tool and the model at once.
-pub fn preflight(config: &Config) -> Result<Toolchain> {
-    tools::preflight(&tool_paths(config)?, true).map_err(|e| match e {
-        Error::MissingTools(missing) => Error::MissingTools(with_pull_hint(missing, config)),
-        other => other,
+/// The templates of a run, resolved before preflight.
+#[derive(Debug, Default)]
+struct Resolved {
+    catalog: Catalog,
+    /// The templates in the run: the requested ones plus their inputs, dependencies first.
+    order: Vec<String>,
+    /// The backend of each template in `order`.
+    backends: BTreeMap<String, BackendId>,
+    /// The steps `--force` covers.
+    step_force: Option<Force>,
+    /// The templates `--force` covers.
+    forced: Vec<String>,
+    /// `--output-lang`.
+    flag_lang: Option<String>,
+    /// `llm.output_lang` from the environment or the config file.
+    config_lang: Option<String>,
+}
+
+impl Resolved {
+    /// Every distinct backend in the run, in the order first used.
+    fn backend_ids(&self) -> Vec<BackendId> {
+        let mut ids: Vec<BackendId> = Vec::new();
+        for name in &self.order {
+            let id = &self.backends[name];
+            if !ids.contains(id) {
+                ids.push(id.clone());
+            }
+        }
+        ids
+    }
+
+    /// The templates whose backend sends their input off the machine, each once.
+    fn off_machine(&self) -> Vec<&str> {
+        self.order
+            .iter()
+            .filter(|name| self.backends[*name].sends_off_machine())
+            .map(String::as_str)
+            .collect()
+    }
+}
+
+/// The setting's value when it came from a command-line flag.
+fn from_flag(setting: &Setting) -> Option<&str> {
+    (setting.source == Source::Flag).then_some(setting.value.as_str())
+}
+
+/// Loads the templates in the run, orders them, picks each one's backend, checks the
+/// language codes and resolves `--force`. Every problem is an `Error::Usage`, except an I/O
+/// error while reading a templates directory. Without `-t` no template is loaded.
+fn resolve(options: &Options, config: &Config) -> Result<Resolved> {
+    let llm_flag = from_flag(&config.llm_default)
+        .map(str::parse::<BackendId>)
+        .transpose()?;
+    let flag_lang = config
+        .llm_output_lang
+        .as_ref()
+        .and_then(from_flag)
+        .map(String::from);
+    if let Some(code) = &flag_lang {
+        lang::validate(code)?;
+    }
+    let mut resolved = Resolved {
+        flag_lang,
+        ..Resolved::default()
+    };
+    if !options.templates.is_empty() {
+        resolved.catalog = discover(&Dirs::standard()?)?;
+        let catalog = &resolved.catalog;
+        for name in &options.templates {
+            catalog.get(name)?;
+        }
+        resolved.order = graph::order(&options.templates, &|name| input_of(catalog, name))?;
+        let default: BackendId = config.llm_default.value.parse()?;
+        for name in &resolved.order {
+            // Reports an invalid input template with its own error.
+            let template = catalog.get(name)?;
+            let id = generate::backend_id(llm_flag.as_ref(), template.llm.as_ref(), &default);
+            resolved.backends.insert(name.clone(), id);
+        }
+        resolved.config_lang = match &config.llm_output_lang {
+            Some(setting) if setting.source != Source::Flag => {
+                lang::validate(&setting.value)?;
+                Some(setting.value.clone())
+            }
+            _ => None,
+        };
+    }
+    let (step_force, forced) = resolve_force(options.force.as_ref(), &resolved)?;
+    resolved.step_force = step_force;
+    resolved.forced = forced;
+    Ok(resolved)
+}
+
+/// What template `name` reads, for [`graph`]. A template that failed to load counts as
+/// reading the transcript, so it lands in the order and is reported with its own error.
+fn input_of(catalog: &Catalog, name: &str) -> Option<Option<String>> {
+    match catalog.templates.get(name) {
+        Some(template) => Some(match &template.input {
+            Input::Transcript => None,
+            Input::Template(dep) => Some(dep.clone()),
+        }),
+        None => catalog
+            .invalid
+            .iter()
+            .any(|i| i.path.file_stem().is_some_and(|stem| stem == name))
+            .then_some(None),
+    }
+}
+
+/// Splits `--force` into the steps and the templates it covers.
+fn resolve_force(
+    force: Option<&ForceArg>,
+    resolved: &Resolved,
+) -> Result<(Option<Force>, Vec<String>)> {
+    let order = &resolved.order;
+    match force {
+        None => Ok((None, Vec::new())),
+        Some(ForceArg::All) => Ok((Some(Force::All), order.clone())),
+        Some(ForceArg::Name(name)) => match name.parse::<StepName>() {
+            Ok(step) => Ok((Some(Force::From(step)), order.clone())),
+            Err(e) if order.is_empty() => Err(e),
+            Err(_) if order.contains(name) => {
+                let input_of = |n: &str| input_of(&resolved.catalog, n);
+                Ok((None, graph::dependents(order, name, &input_of)))
+            }
+            Err(_) => Err(Error::Usage(format!(
+                "unknown step `{name}`; expected one of probe, join, audio, transcribe, \
+                 outputs, or a template in the run ({})",
+                order.join(", ")
+            ))),
+        },
+    }
+}
+
+/// What preflight found: the media tools and a ready backend per backend id in the run.
+pub struct Ready {
+    pub toolchain: Toolchain,
+    /// Keyed by backend id.
+    pub backends: BTreeMap<String, Box<dyn Backend>>,
+}
+
+/// Resolves the toolchain for `config` and checks every backend in `backends`, listing every
+/// missing tool, the model and every unreachable backend or missing LLM model at once.
+pub fn preflight(config: &Config, backends: &[BackendId]) -> Result<Ready> {
+    let mut missing = Vec::new();
+    let toolchain = match tools::preflight(&tool_paths(config)?, true) {
+        Ok(toolchain) => Some(toolchain),
+        Err(Error::MissingTools(m)) => {
+            missing.extend(with_pull_hint(m, config));
+            None
+        }
+        Err(other) => return Err(other),
+    };
+    let mut ready: BTreeMap<String, Box<dyn Backend>> = BTreeMap::new();
+    let mut claude_bin: Option<std::result::Result<PathBuf, Missing>> = None;
+    for id in backends {
+        let backend: std::result::Result<Box<dyn Backend>, Missing> = match id {
+            BackendId::Ollama { model } => {
+                let url = &config.ollama_url.value;
+                ollama::check(url, model)
+                    .map(|info| Box::new(Ollama::new(url, model, config.num_ctx(), &info)) as _)
+            }
+            BackendId::Claude { model } => {
+                // One binary serves every claude model: look for it once.
+                if claude_bin.is_none() {
+                    claude_bin = Some(locate_claude(&config.claude_bin.value)?);
+                }
+                let bin = claude_bin.clone().expect("located above");
+                bin.map(|bin| Box::new(Claude::new(bin, model.clone())) as _)
+            }
+        };
+        match backend {
+            Ok(backend) => {
+                ready.insert(id.to_string(), backend);
+            }
+            Err(m) if missing.contains(&m) => {}
+            Err(m) => missing.push(m),
+        }
+    }
+    match toolchain {
+        Some(toolchain) if missing.is_empty() => Ok(Ready {
+            toolchain,
+            backends: ready,
+        }),
+        _ => Err(Error::MissingTools(missing)),
+    }
+}
+
+/// The `claude` binary as an absolute path: the backend runs it from a temporary directory,
+/// where a relative path would not resolve.
+fn locate_claude(bin: &str) -> Result<std::result::Result<PathBuf, Missing>> {
+    let info = match claude::check(bin) {
+        Ok(info) => info,
+        Err(m) => return Ok(Err(m)),
+    };
+    if info.path.is_absolute() {
+        return Ok(Ok(info.path));
+    }
+    fs::canonicalize(&info.path).map(Ok).map_err(|e| {
+        Error::Io(io::Error::new(
+            e.kind(),
+            format!("{}: {e}", info.path.display()),
+        ))
     })
+}
+
+/// The status of the default backend for `doctor`: `ok`, `not reachable: …`,
+/// `model missing: …` or `invalid: …`.
+pub fn llm_status(config: &Config) -> String {
+    let id = match config.llm_default.value.parse::<BackendId>() {
+        Ok(id) => id,
+        Err(Error::Usage(message)) => return format!("invalid: {message}"),
+        Err(e) => return format!("invalid: {e}"),
+    };
+    match &id {
+        BackendId::Ollama { model } => match ollama::check(&config.ollama_url.value, model) {
+            Ok(_) => "ok".to_string(),
+            // The server is named `ollama`; a model problem is named by the backend id.
+            Err(m) if m.name == id.to_string() => format!("model missing: {}", m.hint),
+            Err(m) => format!("not reachable: {}", m.hint),
+        },
+        BackendId::Claude { .. } => match claude::check(&config.claude_bin.value) {
+            Ok(_) => "ok".to_string(),
+            Err(m) => format!("not reachable: {}", m.hint),
+        },
+    }
 }
 
 /// What `doctor` shows for `config`.
@@ -302,13 +574,13 @@ impl Pipeline<'_> {
         for (i, (step, (name, fingerprint))) in steps.iter().zip(current).enumerate() {
             let index = i + 1;
             if !self.plan.iter().any(|(stale, _)| stale == name) {
-                progress.cached(index, *name);
+                progress.cached(index, name.as_str());
                 continue;
             }
             if self.interrupt.load(Ordering::SeqCst) {
                 return Err(Error::Interrupted);
             }
-            progress.start(index, *name);
+            progress.start(index, name.as_str());
             let started = Instant::now();
             let opts = RunOpts {
                 cwd: None,
@@ -322,13 +594,14 @@ impl Pipeline<'_> {
                     } else {
                         e
                     };
-                    progress.failed(index, *name, matches!(e, Error::Interrupted));
+                    progress.failed(index, name.as_str(), matches!(e, Error::Interrupted));
                     return Err(e);
                 }
             };
             let seconds = started.elapsed().as_secs_f64();
             job.mark_done(*name, fingerprint, seconds, &step.artifacts(self.ctx))?;
-            progress.done(index, *name, detail(*name, self.ctx).as_deref(), seconds);
+            let detail = detail(*name, self.ctx);
+            progress.done(index, name.as_str(), detail.as_deref(), seconds);
             for warning in &warnings {
                 progress.warn(warning);
             }
@@ -341,22 +614,151 @@ impl Pipeline<'_> {
         Ok(ran)
     }
 
-    /// Whether `err` is the result of Ctrl-C: the tool was killed for the interrupt, or died
-    /// from a signal while the flag is set. The terminal signals the whole process group, so
-    /// the tool can die before the handler has set the flag; give it a moment then. Any other
-    /// error is reported as it is.
     fn interrupted_by(&self, err: &Error) -> bool {
-        match err {
-            Error::Interrupted => true,
-            Error::Tool { code: None, .. } => {
-                if !self.interrupt.load(Ordering::SeqCst) {
-                    std::thread::sleep(SIGNAL_GRACE);
-                }
-                self.interrupt.load(Ordering::SeqCst)
-            }
-            _ => false,
-        }
+        interrupted_by(err, self.interrupt)
     }
+}
+
+/// Whether `err` is the result of Ctrl-C: the tool was killed for the interrupt, or died
+/// from a signal while the flag is set. The terminal signals the whole process group, so
+/// the tool can die before the handler has set the flag; give it a moment then. Any other
+/// error is reported as it is.
+fn interrupted_by(err: &Error, interrupt: &AtomicBool) -> bool {
+    match err {
+        Error::Interrupted => true,
+        Error::Tool { code: None, .. } => {
+            if !interrupt.load(Ordering::SeqCst) {
+                std::thread::sleep(SIGNAL_GRACE);
+            }
+            interrupt.load(Ordering::SeqCst)
+        }
+        _ => false,
+    }
+}
+
+/// The templates of a run, after the pipeline. Kept apart from [`Pipeline`]: templates are
+/// recorded under `templates` in `job.json`, and their fingerprints can only be computed
+/// once their input exists.
+struct TemplatePhase<'a> {
+    ctx: &'a Ctx,
+    job_name: &'a str,
+    resolved: &'a Resolved,
+    backends: &'a BTreeMap<String, Box<dyn Backend>>,
+    config: &'a Config,
+    interrupt: &'a Arc<AtomicBool>,
+    /// The progress index of the first template.
+    first_index: usize,
+}
+
+impl TemplatePhase<'_> {
+    /// Runs the stale templates in dependency order, marking each done as it finishes;
+    /// returns how many ran. The first failure stops the run.
+    fn run(&self, job: &mut Job, progress: &mut Progress) -> Result<usize> {
+        if self.resolved.order.is_empty() {
+            return Ok(0);
+        }
+        CallCache::new(&self.ctx.dir).clean_tmp()?;
+        let detected = detected_language(&self.ctx.dir)?;
+        let mut ran = 0;
+        for (i, name) in self.resolved.order.iter().enumerate() {
+            let index = self.first_index + i;
+            if self.interrupt.load(Ordering::SeqCst) {
+                return Err(Error::Interrupted);
+            }
+            match self.run_one(job, name, index, &detected, progress) {
+                Ok(true) => ran += 1,
+                Ok(false) => {}
+                Err(e) => {
+                    let interrupted = self.interrupt.load(Ordering::SeqCst);
+                    let e = if interrupted || interrupted_by(&e, self.interrupt) {
+                        Error::Interrupted
+                    } else {
+                        e
+                    };
+                    progress.failed(index, name, matches!(e, Error::Interrupted));
+                    return Err(e);
+                }
+            }
+        }
+        if self.interrupt.load(Ordering::SeqCst) {
+            return Err(Error::Interrupted);
+        }
+        Ok(ran)
+    }
+
+    /// Runs template `name` when it is stale; returns whether it ran.
+    fn run_one(
+        &self,
+        job: &mut Job,
+        name: &str,
+        index: usize,
+        detected: &str,
+        progress: &mut Progress,
+    ) -> Result<bool> {
+        let resolved = self.resolved;
+        let template = resolved.catalog.get(name)?;
+        let id = resolved.backends[name].to_string();
+        let backend = self.backends[&id].as_ref();
+        let output_lang = generate::output_lang(
+            name,
+            resolved.flag_lang.as_deref(),
+            template.lang.as_deref(),
+            resolved.config_lang.as_deref(),
+            detected,
+        )?;
+        let forced = resolved.forced.iter().any(|f| f == name);
+        let run = TemplateRun {
+            template,
+            backend,
+            output_lang,
+            forced,
+        };
+        let fingerprint = run.fingerprint(self.ctx, self.job_name)?;
+        let Some(reason) = template_reason(job, name, &fingerprint, forced)? else {
+            progress.cached(index, name);
+            return Ok(false);
+        };
+        job.mark_template_stale(name, &reason)?;
+        progress.start_template(index, name);
+        let started = Instant::now();
+        let policy = Policy {
+            retries: self.config.retries(),
+            backoff: self.config.backoff(),
+        };
+        let concurrency = concurrency(self.config, &resolved.backends[name]);
+        let generated = run.execute(
+            self.ctx,
+            self.job_name,
+            &policy,
+            concurrency,
+            self.interrupt,
+            &mut |event| progress.event(event),
+        )?;
+        let seconds = started.elapsed().as_secs_f64();
+        job.mark_template_done(name, &fingerprint, seconds, &[run.artifact()])?;
+        let detail = template_detail(&id, generated.calls);
+        progress.done(index, name, Some(&detail), seconds);
+        Ok(true)
+    }
+}
+
+/// Parallel calls within a template: `llm.concurrency`, or 1 for Ollama (one local model
+/// serves one request at a time) and 3 for Claude.
+fn concurrency(config: &Config, id: &BackendId) -> usize {
+    config.concurrency().unwrap_or(match id {
+        BackendId::Ollama { .. } => 1,
+        BackendId::Claude { .. } => 3,
+    })
+}
+
+/// The speech language recorded in the job's transcript.
+fn detected_language(dir: &Path) -> Result<String> {
+    let path = dir.join(TRANSCRIPT_FILE);
+    let json = fs::read_to_string(&path)
+        .map_err(|e| Error::Io(io::Error::new(e.kind(), format!("{}: {e}", path.display()))))?;
+    let transcript: Transcript = serde_json::from_str(&json)
+        .map_err(|e| Error::Parse(format!("{}: {e}", path.display())))?;
+    Ok(transcript.language)
 }
 
 /// What a finished step did, when worth saying: how `join` joined, what `transcribe` found.
@@ -446,6 +848,115 @@ mod tests {
         assert_eq!(hinted[0].hint, "run `minuta models pull small`");
         let kept = with_pull_hint(missing(), &config(&[("MINUTA_WHISPER_MODEL", "/m/x.bin")]));
         assert_eq!(kept, missing());
+    }
+
+    #[test]
+    fn concurrency_defaults_per_backend() {
+        let ollama = BackendId::Ollama {
+            model: "gemma4:26b".into(),
+        };
+        let claude = BackendId::Claude { model: None };
+        assert_eq!(concurrency(&config(&[]), &ollama), 1);
+        assert_eq!(concurrency(&config(&[]), &claude), 3);
+        let set = config(&[("MINUTA_LLM_CONCURRENCY", "5")]);
+        assert_eq!(concurrency(&set, &ollama), 5);
+        assert_eq!(concurrency(&set, &claude), 5);
+    }
+
+    /// Templates `a`, `b` (input `a`) and `c` in the run; `c` uses claude.
+    fn chain() -> Resolved {
+        let mut catalog = Catalog::default();
+        for (name, text) in [
+            ("a", "A."),
+            ("b", "---\ninput: a\n---\nB."),
+            ("c", "---\nllm: claude\n---\nC."),
+        ] {
+            let template =
+                crate::template::Template::parse(name, crate::template::Layer::Project, None, text)
+                    .unwrap();
+            catalog.templates.insert(name.to_string(), template);
+        }
+        let ollama = BackendId::Ollama { model: "m".into() };
+        let backends = [
+            ("a", ollama.clone()),
+            ("b", ollama),
+            ("c", BackendId::Claude { model: None }),
+        ];
+        Resolved {
+            catalog,
+            order: vec!["a".into(), "b".into(), "c".into()],
+            backends: backends
+                .into_iter()
+                .map(|(n, id)| (n.to_string(), id))
+                .collect(),
+            ..Resolved::default()
+        }
+    }
+
+    fn force(arg: Option<ForceArg>, resolved: &Resolved) -> (Option<Force>, Vec<String>) {
+        resolve_force(arg.as_ref(), resolved).unwrap()
+    }
+
+    fn name(s: &str) -> Option<ForceArg> {
+        Some(ForceArg::Name(s.to_string()))
+    }
+
+    #[test]
+    fn force_resolution() {
+        let r = chain();
+        let all = vec!["a".to_string(), "b".into(), "c".into()];
+        assert_eq!(force(None, &r), (None, vec![]));
+        assert_eq!(
+            force(Some(ForceArg::All), &r),
+            (Some(Force::All), all.clone())
+        );
+        assert_eq!(
+            force(name("audio"), &r),
+            (Some(Force::From(StepName::Audio)), all)
+        );
+        assert_eq!(force(name("a"), &r), (None, vec!["a".into(), "b".into()]));
+        assert_eq!(force(name("b"), &r), (None, vec!["b".into()]));
+        assert_eq!(force(name("c"), &r), (None, vec!["c".into()]));
+    }
+
+    #[test]
+    fn force_unknown_name_is_usage() {
+        let err = resolve_force(name("zzz").as_ref(), &chain()).unwrap_err();
+        assert!(
+            matches!(&err, Error::Usage(m) if m.contains("`zzz`") && m.contains("(a, b, c)")),
+            "{err}"
+        );
+        let err = resolve_force(name("zzz").as_ref(), &Resolved::default()).unwrap_err();
+        assert!(
+            matches!(&err, Error::Usage(m) if m.starts_with("unknown step `zzz`")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn distinct_backends_and_off_machine_templates() {
+        let r = chain();
+        assert_eq!(
+            r.backend_ids(),
+            [
+                BackendId::Ollama { model: "m".into() },
+                BackendId::Claude { model: None }
+            ]
+        );
+        assert_eq!(r.off_machine(), ["c"]);
+    }
+
+    #[test]
+    fn preflight_without_templates_checks_no_backend() {
+        // Missing media tools, but no backend: only the tools are reported.
+        let cfg = config(&[
+            ("MINUTA_FFMPEG_BIN", "/nonexistent/ffmpeg"),
+            ("MINUTA_OLLAMA_URL", "http://127.0.0.1:9"),
+        ]);
+        let Err(Error::MissingTools(missing)) = preflight(&cfg, &[]) else {
+            panic!("expected missing tools");
+        };
+        assert!(missing.iter().all(|m| !m.name.starts_with("ollama")));
     }
 
     /// A step that records whether it ran and can set the interrupt flag while running.

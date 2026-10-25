@@ -1,6 +1,6 @@
 //! Command-line arguments and the commands. Only `run` and `transcribe` print to stdout
-//! the job folder; `doctor`, `models list`, `models pull` and `config` print their data there.
-//! Everything else goes to stderr.
+//! the job folder; `doctor`, `models list`, `models pull`, `config` and `templates` print
+//! their data there. Everything else goes to stderr.
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -10,10 +10,11 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::config::{self, Config, Overrides, Source};
 use crate::error::{Error, Result};
-use crate::job::{Force, StepName};
 use crate::models::{self, Pulled};
 use crate::progress::{Mode, Progress};
-use crate::runner;
+use crate::runner::{self, ForceArg};
+use crate::template::discover::{discover, Dirs};
+use crate::template::{Input, Layer};
 use crate::tools::ToolInfo;
 
 #[derive(Debug, Parser)]
@@ -25,10 +26,11 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Transcribe recordings into a job folder and print its path
+    /// Transcribe recordings into a job folder, generate documents from templates and print
+    /// the folder's path
     Run(RunArgs),
-    /// Same as `run`
-    Transcribe(RunArgs),
+    /// Same as `run` without templates
+    Transcribe(PipelineArgs),
     /// Report tools, versions and the model; exit 1 if anything is missing
     Doctor,
     /// List or download whisper models
@@ -37,6 +39,9 @@ pub enum Command {
     /// Show the config file path or the merged settings
     #[command(subcommand)]
     Config(ConfigCommand),
+    /// List the available templates or show one
+    #[command(subcommand)]
+    Templates(TemplatesCommand),
 }
 
 impl Command {
@@ -65,8 +70,34 @@ pub enum ConfigCommand {
     Show,
 }
 
+#[derive(Debug, Subcommand)]
+pub enum TemplatesCommand {
+    /// Show every template with its layer, input and backend, then the invalid ones
+    List,
+    /// Print the file that defines a template (its path goes to stderr)
+    Show {
+        /// Template name
+        name: String,
+    },
+}
+
 #[derive(Debug, Args)]
 pub struct RunArgs {
+    #[command(flatten)]
+    pub pipeline: PipelineArgs,
+    /// Generate a document with this template (repeatable)
+    #[arg(short = 't', long = "template", value_name = "TEMPLATE")]
+    pub templates: Vec<String>,
+    /// Backend for every template: ollama:<model>, claude or claude:<model>
+    #[arg(long, value_name = "ID")]
+    pub llm: Option<String>,
+    /// Language the documents are written in (default: the detected speech language)
+    #[arg(long, value_name = "CODE")]
+    pub output_lang: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct PipelineArgs {
     /// Recordings, joined in the order given
     #[arg(required = true)]
     pub files: Vec<PathBuf>,
@@ -83,31 +114,36 @@ pub struct RunArgs {
     /// Model file or catalog name
     #[arg(long, value_name = "PATH|NAME")]
     pub model: Option<String>,
-    /// Rerun every step, or STEP and every later one; also replaces a job made from other
+    /// Rerun every step and template, STEP and every later step plus every template, or
+    /// TEMPLATE and the templates that depend on it; also replaces a job made from other
     /// sources (put it after FILES)
-    #[arg(long, value_name = "STEP", num_args = 0..=1, value_parser = parse_step)]
-    pub force: Option<Option<StepName>>,
+    #[arg(long, value_name = "STEP|TEMPLATE", num_args = 0..=1)]
+    pub force: Option<Option<String>>,
     /// Print only warnings and errors
     #[arg(short, long)]
     pub quiet: bool,
 }
 
-fn parse_step(s: &str) -> std::result::Result<StepName, String> {
-    s.parse().map_err(|e| match e {
-        Error::Usage(msg) => msg,
-        other => other.to_string(),
-    })
-}
-
 /// Runs `cli`. `interrupt` is the flag the Ctrl-C handler sets.
 pub fn execute(cli: Cli, interrupt: &Arc<AtomicBool>) -> Result<()> {
     match cli.command {
-        Command::Run(args) | Command::Transcribe(args) => run(args, interrupt),
+        Command::Run(args) => run(
+            args.pipeline,
+            Templates {
+                names: args.templates,
+                llm: args.llm,
+                output_lang: args.output_lang,
+            },
+            interrupt,
+        ),
+        Command::Transcribe(args) => run(args, Templates::default(), interrupt),
         Command::Doctor => doctor(),
         Command::Models(ModelsCommand::List) => models_list(),
         Command::Models(ModelsCommand::Pull { name }) => models_pull(&name),
         Command::Config(ConfigCommand::Path) => config_path(),
         Command::Config(ConfigCommand::Show) => config_show(),
+        Command::Templates(TemplatesCommand::List) => templates_list(),
+        Command::Templates(TemplatesCommand::Show { name }) => templates_show(&name),
     }
 }
 
@@ -122,17 +158,30 @@ pub fn render_error(err: &Error) -> String {
     text
 }
 
-fn run(args: RunArgs, interrupt: &Arc<AtomicBool>) -> Result<()> {
+/// The template flags of `run`; `transcribe` has none.
+#[derive(Debug, Default)]
+struct Templates {
+    names: Vec<String>,
+    llm: Option<String>,
+    output_lang: Option<String>,
+}
+
+fn run(args: PipelineArgs, templates: Templates, interrupt: &Arc<AtomicBool>) -> Result<()> {
     let config = Config::load(Overrides {
         out_dir: args.out,
         whisper_lang: args.lang,
         whisper_model: args.model,
+        llm_default: templates.llm,
+        llm_output_lang: templates.output_lang,
         ..Overrides::default()
     })?;
     let options = runner::Options {
         files: args.files,
         name: args.name,
-        force: args.force.map(|step| step.map_or(Force::All, Force::From)),
+        force: args
+            .force
+            .map(|name| name.map_or(ForceArg::All, ForceArg::Name)),
+        templates: templates.names,
     };
     let mut progress = Progress::new(Mode::detect(args.quiet));
     let dir = runner::run(&options, &config, interrupt, &mut progress)?;
@@ -155,6 +204,12 @@ fn doctor() -> Result<()> {
         None => "missing".to_string(),
     };
     println!("{:<12} {model}", "model");
+    println!(
+        "{:<12} {} ({})",
+        "llm",
+        config.llm_default.value,
+        runner::llm_status(&config)
+    );
     if report.missing.is_empty() {
         Ok(())
     } else {
@@ -219,6 +274,91 @@ fn config_show() -> Result<()> {
     Ok(())
 }
 
+fn templates_list() -> Result<()> {
+    let catalog = discover(&Dirs::standard()?)?;
+    let mut rows = vec![[
+        "NAME".to_string(),
+        "LAYER".to_string(),
+        "INPUT".to_string(),
+        "LLM".to_string(),
+        "DESCRIPTION".to_string(),
+    ]];
+    for t in catalog.templates.values() {
+        rows.push([
+            t.name.clone(),
+            layer_name(t.layer).to_string(),
+            match &t.input {
+                Input::Transcript => "transcript".to_string(),
+                Input::Template(dep) => dep.clone(),
+            },
+            t.llm
+                .as_ref()
+                .map_or("(default)".to_string(), ToString::to_string),
+            t.description.clone().unwrap_or_default(),
+        ]);
+    }
+    let width = |col: usize| {
+        rows.iter()
+            .map(|r| r[col].chars().count())
+            .max()
+            .unwrap_or(0)
+    };
+    let widths = [width(0), width(1), width(2), width(3)];
+    for row in &rows {
+        let line = format!(
+            "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {}",
+            row[0],
+            row[1],
+            row[2],
+            row[3],
+            row[4],
+            w0 = widths[0],
+            w1 = widths[1],
+            w2 = widths[2],
+            w3 = widths[3],
+        );
+        println!("{}", line.trim_end());
+    }
+    for invalid in &catalog.invalid {
+        println!(
+            "invalid  {}  {}",
+            invalid.path.display(),
+            single_line(&invalid.error)
+        );
+    }
+    Ok(())
+}
+
+/// Prints the winning file of template `name`: its path (or `built-in`) to stderr, its
+/// content to stdout.
+fn templates_show(name: &str) -> Result<()> {
+    let catalog = discover(&Dirs::standard()?)?;
+    let template = catalog.get(name)?;
+    match &template.path {
+        Some(path) => eprintln!("{}", path.display()),
+        None => eprintln!("built-in"),
+    }
+    print!("{}", template.raw);
+    Ok(())
+}
+
+fn layer_name(layer: Layer) -> &'static str {
+    match layer {
+        Layer::BuiltIn => "built-in",
+        Layer::User => "user",
+        Layer::Project => "project",
+    }
+}
+
+/// An error message on one line, for listings.
+fn single_line(text: &str) -> String {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn source_name(source: Source) -> &'static str {
     match source {
         Source::Flag => "flag",
@@ -270,22 +410,56 @@ mod tests {
         );
     }
 
+    fn run_args(args: &[&str]) -> RunArgs {
+        let cli = Cli::try_parse_from(["minuta", "run", "a.mp4"].iter().chain(args)).unwrap();
+        match cli.command {
+            Command::Run(args) => args,
+            other => panic!("parsed {other:?}"),
+        }
+    }
+
+    /// Step and template names are told apart by the runner, once templates are resolved.
     #[test]
-    fn force_takes_an_optional_step() {
-        let force = |args: &[&str]| {
-            let cli = Cli::try_parse_from(["minuta", "run", "a.mp4"].iter().chain(args)).unwrap();
-            match cli.command {
-                Command::Run(args) => args.force,
-                other => panic!("parsed {other:?}"),
-            }
-        };
+    fn force_takes_an_optional_name() {
+        let force = |args: &[&str]| run_args(args).pipeline.force;
         assert_eq!(force(&[]), None);
         assert_eq!(force(&["--force"]), Some(None));
         assert_eq!(
             force(&["--force", "transcribe"]),
-            Some(Some(StepName::Transcribe))
+            Some(Some("transcribe".to_string()))
         );
-        let err = Cli::try_parse_from(["minuta", "run", "a.mp4", "--force", "x"]).unwrap_err();
-        assert_eq!(err.exit_code(), 2);
+        assert_eq!(
+            force(&["--force", "summary"]),
+            Some(Some("summary".to_string()))
+        );
+    }
+
+    #[test]
+    fn template_flags() {
+        let args = run_args(&["-t", "a", "--template", "b", "--llm", "claude"]);
+        assert_eq!(args.templates, ["a", "b"]);
+        assert_eq!(args.llm.as_deref(), Some("claude"));
+        assert_eq!(args.output_lang, None);
+        let args = run_args(&["--output-lang", "en"]);
+        assert_eq!(args.output_lang.as_deref(), Some("en"));
+        assert!(args.templates.is_empty());
+    }
+
+    #[test]
+    fn transcribe_has_no_template_flags() {
+        for flag in [
+            &["-t", "a"][..],
+            &["--llm", "claude"],
+            &["--output-lang", "en"],
+        ] {
+            let argv = ["minuta", "transcribe", "a.mp4"].iter().chain(flag);
+            let err = Cli::try_parse_from(argv).unwrap_err();
+            assert_eq!(err.exit_code(), 2, "{flag:?}");
+        }
+    }
+
+    #[test]
+    fn single_line_joins_lines() {
+        assert_eq!(single_line("a\n  b\n\n"), "a; b");
     }
 }
