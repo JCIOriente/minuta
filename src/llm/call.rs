@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use super::Backend;
 use crate::error::{Error, Result};
+use crate::fields::Violation;
 use crate::job::fingerprint;
 
 /// Longest single sleep, so `interrupt` is noticed promptly.
@@ -101,13 +102,20 @@ impl CallCache {
 }
 
 fn cache_key(backend: &dyn Backend, system: &str, user: &str) -> String {
+    key(backend, system, user, &[])
+}
+
+/// Fingerprint of (backend id, context tokens, system, user) followed by `extra` parts.
+fn key(backend: &dyn Backend, system: &str, user: &str, extra: &[&[u8]]) -> String {
     let context = backend.context_tokens().to_string();
-    fingerprint(&[
+    let mut parts: Vec<&[u8]> = vec![
         backend.id().as_bytes(),
         context.as_bytes(),
         system.as_bytes(),
         user.as_bytes(),
-    ])
+    ];
+    parts.extend_from_slice(extra);
+    fingerprint(&parts)
 }
 
 /// Runs one LLM call through the cache. `refresh` skips the cache read and overwrites the
@@ -133,6 +141,65 @@ pub fn call(
     )
 }
 
+/// Cache key of a `complete_json` call: the `complete` parts plus the compact schema JSON, so
+/// it never collides with a `complete` key and changes with the schema.
+fn json_cache_key(
+    backend: &dyn Backend,
+    system: &str,
+    user: &str,
+    schema: &serde_json::Value,
+) -> String {
+    key(backend, system, user, &[schema.to_string().as_bytes()])
+}
+
+/// Outcome of a `call_json` answer checked by `accept`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer<T> {
+    Accepted(T),
+    /// `text` is the cleaned answer, for a repair call.
+    Rejected {
+        text: String,
+        violations: Vec<Violation>,
+    },
+}
+
+/// Runs one `complete_json` call through the cache. The cache key adds the schema (compact
+/// JSON). `accept` gets the cleaned, non-empty text; only an accepted answer is written to
+/// the cache, and a cache hit that `accept` rejects counts as a miss (ADR-0006). `refresh`
+/// skips the cache read. Transient failures, including empty output, are retried per `policy`.
+// Signature fixed by the plan's shared interfaces.
+#[allow(clippy::too_many_arguments)]
+pub fn call_json<T>(
+    backend: &dyn Backend,
+    cache: &CallCache,
+    policy: &Policy,
+    system: &str,
+    user: &str,
+    schema: &serde_json::Value,
+    refresh: bool,
+    interrupt: &AtomicBool,
+    accept: &dyn Fn(&str) -> std::result::Result<T, Vec<Violation>>,
+) -> Result<Answer<T>> {
+    let key = json_cache_key(backend, system, user, schema);
+    cached_call(
+        backend,
+        cache,
+        policy,
+        &key,
+        refresh,
+        interrupt,
+        &sleep_interruptibly,
+        &|| backend.complete_json(system, user, schema, interrupt),
+        &|text| match accept(text) {
+            Ok(value) => Decision::Commit(Answer::Accepted(value)),
+            Err(violations) => Decision::Skip(Answer::Rejected {
+                text: text.to_string(),
+                violations,
+            }),
+        },
+    )
+}
+
 type Sleeper<'a> = &'a dyn Fn(Duration, &AtomicBool) -> Result<()>;
 
 #[allow(clippy::too_many_arguments)]
@@ -147,9 +214,46 @@ fn call_with(
     sleep: Sleeper,
 ) -> Result<String> {
     let key = cache_key(backend, system, user);
+    cached_call(
+        backend,
+        cache,
+        policy,
+        &key,
+        refresh,
+        interrupt,
+        sleep,
+        &|| backend.complete(system, user, interrupt),
+        &|text| Decision::Commit(text.to_string()),
+    )
+}
+
+/// What to do with a cleaned answer: `Commit` writes it to the cache (and a cache hit is
+/// used), `Skip` returns it without writing (and a cache hit is treated as a miss).
+enum Decision<R> {
+    Commit(R),
+    Skip(R),
+}
+
+/// The cache read, retry loop and cache write shared by `call` and `call_json`. `invoke`
+/// makes one backend request; `decide` judges each cleaned answer, cached or fresh.
+// Each argument is an independent input of the call; bundling them would only move the list.
+#[allow(clippy::too_many_arguments)]
+fn cached_call<R>(
+    backend: &dyn Backend,
+    cache: &CallCache,
+    policy: &Policy,
+    key: &str,
+    refresh: bool,
+    interrupt: &AtomicBool,
+    sleep: Sleeper,
+    invoke: &dyn Fn() -> Result<String>,
+    decide: &dyn Fn(&str) -> Decision<R>,
+) -> Result<R> {
     if !refresh {
-        if let Some(text) = cache.read(&key)? {
-            return Ok(text);
+        if let Some(text) = cache.read(key)? {
+            if let Decision::Commit(value) = decide(&text) {
+                return Ok(value);
+            }
         }
     }
     let attempts = policy.retries.max(1);
@@ -158,13 +262,16 @@ fn call_with(
         if interrupt.load(Ordering::SeqCst) {
             return Err(Error::Interrupted);
         }
-        let result = backend
-            .complete(system, user, interrupt)
-            .and_then(|raw| non_empty(backend, clean(&raw)));
+        let result = invoke().and_then(|raw| non_empty(backend, clean(&raw)));
         match result {
             Ok(text) => {
-                cache.write(&key, &text)?;
-                return Ok(text);
+                return match decide(&text) {
+                    Decision::Commit(value) => {
+                        cache.write(key, &text)?;
+                        Ok(value)
+                    }
+                    Decision::Skip(value) => Ok(value),
+                };
             }
             Err(Error::Llm {
                 transient: true, ..
@@ -291,6 +398,16 @@ mod tests {
         assert_ne!(k, cache_key(&base, "sys2", "usr"), "system");
         assert_ne!(k, cache_key(&base, "sys", "usr2"), "user");
         assert_eq!(k, cache_key(&base, "sys", "usr"), "stable");
+    }
+
+    #[test]
+    fn complete_cache_key_unchanged() {
+        // Computed on main before `call_json` existed: existing job folders keep their cache.
+        let b = ScriptedBackend::new("fake:x", 1000, vec![]);
+        assert_eq!(
+            cache_key(&b, "s", "u"),
+            "67d3590845e650cb4c38fd859fea4e204e5ab8ec39b79402422d9057f2b31226"
+        );
     }
 
     #[test]
@@ -571,5 +688,174 @@ mod tests {
             "{err}"
         );
         assert!(!dir.path().join("other").join("llm-cache").exists());
+    }
+
+    fn schema() -> serde_json::Value {
+        serde_json::json!({"type": "object", "required": ["title"]})
+    }
+
+    /// Accepts text starting with `good`; anything else gets one violation naming it.
+    fn accept_good(text: &str) -> std::result::Result<String, Vec<Violation>> {
+        if text.starts_with("good") {
+            Ok(format!("parsed {text}"))
+        } else {
+            Err(vec![Violation(format!("not good: {text}"))])
+        }
+    }
+
+    fn run_json(
+        b: &ScriptedBackend,
+        cache: &CallCache,
+        p: &Policy,
+        refresh: bool,
+    ) -> Result<Answer<String>> {
+        let stop = AtomicBool::new(false);
+        let s = schema();
+        call_json(b, cache, p, "sys", "usr", &s, refresh, &stop, &accept_good)
+    }
+
+    fn json_entry(dir: &Path, b: &ScriptedBackend) -> PathBuf {
+        let key = json_cache_key(b, "sys", "usr", &schema());
+        dir.join("llm-cache").join(format!("{key}.txt"))
+    }
+
+    #[test]
+    fn json_key_includes_schema() {
+        let base = ScriptedBackend::new("fake:x", 1000, vec![]);
+        let s = schema();
+        let k = json_cache_key(&base, "sys", "usr", &s);
+        let other_id = ScriptedBackend::new("fake:y", 1000, vec![]);
+        let other_ctx = ScriptedBackend::new("fake:x", 2000, vec![]);
+        let other_schema = serde_json::json!({"type": "object", "required": ["body"]});
+        assert_ne!(k, cache_key(&base, "sys", "usr"), "complete key");
+        assert_ne!(
+            k,
+            json_cache_key(&base, "sys", "usr", &other_schema),
+            "schema"
+        );
+        assert_ne!(k, json_cache_key(&other_id, "sys", "usr", &s), "backend id");
+        assert_ne!(k, json_cache_key(&other_ctx, "sys", "usr", &s), "context");
+        assert_ne!(k, json_cache_key(&base, "sys2", "usr", &s), "system");
+        assert_ne!(k, json_cache_key(&base, "sys", "usr2", &s), "user");
+        assert_eq!(k, json_cache_key(&base, "sys", "usr", &s), "stable");
+    }
+
+    #[test]
+    fn accepted_answer_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CallCache::new(dir.path());
+        let b = backend(vec![Ok("```json\ngood\n```".into()), Ok("unused".into())]);
+        let first = run_json(&b, &cache, &policy(1), false).unwrap();
+        assert_eq!(first, Answer::Accepted("parsed good".to_string()));
+        assert_eq!(
+            b.schemas(),
+            vec![Some(schema())],
+            "complete_json with schema"
+        );
+        assert_eq!(
+            fs::read_to_string(json_entry(dir.path(), &b)).unwrap(),
+            "good"
+        );
+        let second = run_json(&b, &cache, &policy(1), false).unwrap();
+        assert_eq!(second, Answer::Accepted("parsed good".to_string()));
+        assert_eq!(b.calls().len(), 1, "second call served from the cache");
+    }
+
+    #[test]
+    fn rejected_answer_not_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CallCache::new(dir.path());
+        let b = backend(vec![Ok("<think>x</think>\n```json\nbad\n```".into())]);
+        let answer = run_json(&b, &cache, &policy(1), false).unwrap();
+        assert_eq!(
+            answer,
+            Answer::Rejected {
+                text: "bad".into(),
+                violations: vec![Violation("not good: bad".into())],
+            }
+        );
+        assert!(!dir.path().join("llm-cache").try_exists().unwrap());
+    }
+
+    #[test]
+    fn rejected_cache_hit_is_miss() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CallCache::new(dir.path());
+        let b = backend(vec![Ok("good".into())]);
+        let entry = json_entry(dir.path(), &b);
+        fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        fs::write(&entry, "damaged").unwrap();
+        let answer = run_json(&b, &cache, &policy(1), false).unwrap();
+        assert_eq!(answer, Answer::Accepted("parsed good".to_string()));
+        assert_eq!(b.calls().len(), 1);
+        assert_eq!(fs::read_to_string(&entry).unwrap(), "good");
+    }
+
+    #[test]
+    fn json_refresh_skips_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CallCache::new(dir.path());
+        let b = backend(vec![Ok("good".into()), Ok("good again".into())]);
+        run_json(&b, &cache, &policy(1), false).unwrap();
+        let answer = run_json(&b, &cache, &policy(1), true).unwrap();
+        assert_eq!(answer, Answer::Accepted("parsed good again".to_string()));
+        assert_eq!(
+            b.calls().len(),
+            2,
+            "refresh calls the backend despite a valid entry"
+        );
+        let entry = json_entry(dir.path(), &b);
+        assert_eq!(fs::read_to_string(entry).unwrap(), "good again");
+    }
+
+    #[test]
+    fn json_transient_retried() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CallCache::new(dir.path());
+        let b = backend(vec![
+            Err(transient()),
+            Ok("<think>x</think>  ".into()),
+            Ok("good".into()),
+        ]);
+        let answer = run_json(&b, &cache, &policy(3), false).unwrap();
+        assert_eq!(answer, Answer::Accepted("parsed good".to_string()));
+        assert_eq!(b.calls().len(), 3);
+        assert_eq!(b.schemas(), vec![Some(schema()); 3]);
+    }
+
+    #[test]
+    fn json_retries_exhausted_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CallCache::new(dir.path());
+        let b = backend(vec![Err(transient()), Ok("  ".into()), Ok("good".into())]);
+        let err = run_json(&b, &cache, &policy(2), false).unwrap_err();
+        assert!(
+            matches!(err, Error::Llm { transient: true, ref message, .. } if message == "empty response"),
+            "{err}"
+        );
+        assert_eq!(b.calls().len(), 2);
+        assert!(!dir.path().join("llm-cache").try_exists().unwrap());
+    }
+
+    #[test]
+    fn json_interrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CallCache::new(dir.path());
+        let b = backend(vec![Ok("good".into())]);
+        let stop = AtomicBool::new(true);
+        let s = schema();
+        let result = call_json(
+            &b,
+            &cache,
+            &policy(3),
+            "sys",
+            "usr",
+            &s,
+            false,
+            &stop,
+            &accept_good,
+        );
+        assert!(matches!(result, Err(Error::Interrupted)));
+        assert!(b.calls().is_empty());
     }
 }
