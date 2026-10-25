@@ -2,7 +2,7 @@
 
 - Spec: docs/specs/2026-10-24-templates-and-backends.md
 - Date: 2026-10-24
-- Status: approved
+- Status: in backlog
 
 ## Overview
 New code lives in new modules: `lang`, `template/`, `llm/` and `generate`. Existing modules
@@ -191,7 +191,7 @@ Reviews run on opus.
 
 ## Tasks
 
-### T1: Foundations: module skeleton, error variants, Backend trait, language table
+### T1: Foundations: module skeleton, error variants, Backend trait, language table  (#27)
 - Priority: 0
 - Depends on: none
 - Owns: `Cargo.toml`, `src/lib.rs`, `src/error.rs`, `src/lang.rs`, `src/llm/mod.rs`, `src/llm/fake.rs`, empty `src/template/{mod,discover,graph}.rs`, empty `src/llm/{ollama,claude,call,chunk}.rs`, empty `src/generate.rs`
@@ -207,7 +207,7 @@ Reviews run on opus.
 - Tests first: `backend_id_parses_ollama_with_tagged_model`, `backend_id_parses_claude`, `backend_id_parses_claude_model`, `backend_id_rejects_invalid` (one assertion per case), `backend_id_display_round_trips`, `only_claude_sends_off_machine`, `lang_name_known_codes` (one assertion per sampled code), `lang_validate_unknown_is_usage`, `llm_error_exit_code_is_1`, `template_error_exit_code_is_1`
 - Notes: the module docs in each empty file state what the module will hold (one line), so `cargo doc` and reviewers see the layout.
 
-### T2: Config keys for LLMs and output language
+### T2: Config keys for LLMs and output language  (#28)
 - Priority: 1
 - Depends on: none
 - Owns: `src/config.rs`, `tests/config.rs`
@@ -222,7 +222,7 @@ Reviews run on opus.
 - Tests first: `llm_default_flag_beats_env`, `each_new_key_env_beats_file` (table, one assertion per key), `each_new_key_default`, `numeric_keys_reject_garbage` (table), `backoff_zero_allowed`, `entries_list_new_keys`, `unknown_llm_key_rejected`
 - Notes: follow `pick`/`pick_opt`. `backoff_ms = 0` must be valid because the integration tests use it.
 
-### T3: Template parsing, variables and discovery
+### T3: Template parsing, variables and discovery  (#38)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/template/mod.rs`, `src/template/discover.rs`, `src/template/builtin/summary.md`, `tests/templates.rs`
@@ -239,7 +239,7 @@ Reviews run on opus.
 - Tests first: `frontmatter_defaults`, `frontmatter_each_key` (table), `no_frontmatter_is_body`, `fields_output_rejected`, `unknown_key_rejected`, `yaml_error_has_line`, `invalid_names_rejected` (table), `reserved_names_rejected` (table), `renders_each_variable` (table), `unknown_variable_rejected`, `project_overrides_user`, `user_overrides_builtin`, `missing_dir_is_empty`, `unreadable_dir_is_error`, `invalid_file_listed_not_fatal`, `get_unknown_lists_names`, `builtin_summary_parses`
 - Notes: `Dirs` makes discovery testable without touching the real HOME or current directory. Use `try_exists`/`read_dir` errors per conventions; only `NotFound` means an empty layer.
 
-### T4: Template dependency graph
+### T4: Template dependency graph  (#29)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/template/graph.rs`
@@ -254,7 +254,7 @@ Reviews run on opus.
 - Tests first: `chain_runs_dependency_first`, `diamond_runs_each_once`, `independent_keep_request_order`, `unknown_requested_is_usage`, `unknown_input_is_usage`, `self_cycle_named`, `cycle_named_with_path`, `dependents_transitive`
 - Notes: pure functions, unit tests in the module.
 
-### T5: Ollama backend and fake Ollama server
+### T5: Ollama backend and fake Ollama server  (#30)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/llm/ollama.rs`, `tests/support/fake_ollama.rs`, `tests/ollama.rs`
@@ -270,7 +270,7 @@ Reviews run on opus.
 - Tests first: `check_unreachable_is_missing`, `check_model_absent_hints_pull`, `check_bare_name_matches_latest`, `check_reads_context_and_thinking`, `chat_request_shape`, `think_false_only_for_thinking_models`, `context_is_min_of_num_ctx_and_model`, `status_classification` (table: 429, 500, 503 transient; 400, 404 not), `length_done_reason_is_error`, `interrupt_abandons_hanging_request`
 - Notes: use the existing `ureq` 2 (blocking). Read timeout is 10 minutes by default, and `with_timeout` lets tests shorten it. Tests include the fake with `#[path = "support/fake_ollama.rs"] mod fake_ollama;`.
 
-### T6: Claude backend, `tools::run_capture` and fake claude fixture
+### T6: Claude backend, `tools::run_capture` and fake claude fixture  (#31)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/llm/claude.rs`, `src/tools.rs`, `tests/fixtures/bin/claude`, `tests/claude.rs`
@@ -287,7 +287,7 @@ Reviews run on opus.
 - Tests first: `run_capture_round_trips_stdin`, `run_capture_streams_stderr`, `run_capture_nonzero_is_tool_error`, `claude_argv_flags`, `claude_input_on_stdin`, `claude_runs_in_empty_cwd`, `claude_nonzero_is_transient`, `claude_empty_output_is_transient`, `claude_shell_metacharacters_inert`, `check_missing_claude_hints_install`
 - Notes: follow the stdin-writer-thread pattern so a large stdin cannot deadlock with stdout reading.
 
-### T7: LLM call layer: cache, retries, cleanup
+### T7: LLM call layer: cache, retries, cleanup  (#32)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/llm/call.rs`
@@ -302,7 +302,7 @@ Reviews run on opus.
 - Tests first: `cache_key_sensitive_to_each_part` (table), `cache_hit_skips_backend`, `refresh_skips_read_and_overwrites`, `cache_read_error_is_error`, `transient_retried_until_success`, `retries_exhausted_returns_last_error`, `non_transient_not_retried`, `backoff_interrupt_returns_quickly`, `clean_strips_think`, `clean_unwraps_fence`, `clean_keeps_inner_fences`, `empty_after_clean_is_transient`
 - Notes: use `llm::fake::ScriptedBackend`. Tests use `Duration::ZERO` backoff except the interrupt test.
 
-### T8: Prompt assembly, chunking and consolidation
+### T8: Prompt assembly, chunking and consolidation  (#33)
 - Priority: 0
 - Depends on: T1
 - Owns: `src/llm/chunk.rs`
@@ -321,7 +321,7 @@ Reviews run on opus.
 - Tests first: `blocks_span_30_seconds`, `block_timestamp_format_over_one_hour`, `empty_transcript_empty_text`, `estimate_rounds_up`, `language_instruction_last`, `fits_makes_one_call`, `chunks_never_exceed_budget` (property), `overlong_line_split_at_whitespace`, `chunk_order_kept`, `concurrency_limit_respected`, `reduce_joins_parts_in_order`, `multi_round_reduce`, `non_shrinking_notes_fail`, `first_error_stops_scheduling`, `events_in_order`
 - Notes: `std::thread::scope` with a shared work index. No async runtime. Keep the map and reduce wrapper wording in constants near `PROMPT_VERSION`; changing them requires bumping it.
 
-### T9: Job state for template steps
+### T9: Job state for template steps  (#34)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/job/**`, `tests/job.rs`
@@ -334,7 +334,7 @@ Reviews run on opus.
 - Tests first: `old_job_json_loads_without_templates`, `template_not_run`, `template_unfinished`, `template_forced`, `template_fingerprint_changed`, `template_missing_artifact`, `template_current_is_none`, `mark_template_done_requires_artifacts`, `mark_template_stale_records_reason`
 - Notes: reuse `own_reason`'s logic by having it work on `Option<&StepState>`; this is the only refactor allowed in `stale.rs`. Use `try_exists` for the artifact check in new code.
 
-### T10: Template step
+### T10: Template step  (#35)
 - Priority: 0
 - Depends on: T3, T7, T8, T9
 - Owns: `src/generate.rs`, `tests/generate.rs`
@@ -350,7 +350,7 @@ Reviews run on opus.
 - Tests first: `output_lang_flag_wins`, `output_lang_template_beats_config`, `output_lang_config_beats_detected`, `output_lang_detected_default`, `output_lang_unknown_detected_is_usage`, `backend_flag_wins`, `backend_template_beats_default`, `backend_default`, `fingerprint_sensitive_to_each_part` (table), `fingerprint_missing_input_is_error`, `execute_writes_markdown`, `execute_renders_variables`, `empty_transcript_fails_without_calls`, `second_execute_hits_cache`, `forced_execute_refreshes_cache`
 - Notes: this is the heart of ADR-0005. The fingerprint is computed only after the input exists. Never precompute dependents' fingerprints.
 
-### T11: Runner, CLI, progress, preflight and doctor
+### T11: Runner, CLI, progress, preflight and doctor  (#36)
 - Priority: 0
 - Depends on: T2, T4, T5, T6, T10
 - Owns: `src/runner.rs`, `src/cli.rs`, `src/progress.rs`, `src/main.rs`, `tests/cli.rs`
@@ -372,7 +372,7 @@ Reviews run on opus.
 - Tests first: `run_accepts_repeated_templates`, `transcribe_rejects_template_flag`, `force_accepts_template_name`, `force_unknown_is_usage`, `unknown_template_exits_2_before_job_folder`, `templates_list_shows_layers`, `templates_show_unknown_exits_2`, `progress_template_line_format`, `progress_total_includes_templates`, `off_machine_note_printed_once`
 - Notes: keep `Pipeline` for the five steps. Add a separate template loop rather than generalizing `Runnable`. Update the spec's Implementation status in this PR.
 
-### T12: Integration suite and opt-in LLM e2e
+### T12: Integration suite and opt-in LLM e2e  (#37)
 - Priority: 1
 - Depends on: T11
 - Owns: `tests/integration/templates.rs`, `tests/integration/main.rs` (one `mod` line), `tests/e2e_llm.rs`
