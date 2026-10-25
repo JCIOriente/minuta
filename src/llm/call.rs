@@ -3,16 +3,23 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use super::Backend;
 use crate::error::{Error, Result};
-use crate::job::{fingerprint, write_atomic};
+use crate::job::fingerprint;
 
 /// Longest single sleep, so `interrupt` is noticed promptly.
 const SLEEP_SLICE: Duration = Duration::from_millis(25);
+
+/// Makes temp names unique across threads of this process.
+static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn with_path(path: &Path, e: io::Error) -> Error {
+    Error::Io(io::Error::new(e.kind(), format!("{}: {e}", path.display())))
+}
 
 /// Retry policy: `retries` is the total number of attempts, `backoff` the first delay.
 pub struct Policy {
@@ -36,25 +43,55 @@ impl CallCache {
         self.dir.join(format!("{key}.txt"))
     }
 
+    /// An empty entry counts as a miss: only non-empty text is ever stored.
     fn read(&self, key: &str) -> Result<Option<String>> {
         let path = self.entry(key);
         match fs::read_to_string(&path) {
+            Ok(text) if text.is_empty() => Ok(None),
             Ok(text) => Ok(Some(text)),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(Error::Io(io::Error::new(
-                e.kind(),
-                format!("{}: {e}", path.display()),
-            ))),
+            Err(e) => Err(with_path(&path, e)),
         }
     }
 
+    /// Writes to a temp file unique to this call, syncs it and renames it into place, so
+    /// concurrent writers of one key never share a temp file.
     fn write(&self, key: &str, text: &str) -> Result<()> {
-        fs::create_dir_all(&self.dir)?;
-        write_atomic(&self.entry(key), |tmp| {
-            let mut f = fs::File::create(tmp)?;
-            f.write_all(text.as_bytes())?;
-            Ok(())
-        })
+        fs::create_dir_all(&self.dir).map_err(|e| with_path(&self.dir, e))?;
+        let path = self.entry(key);
+        let tmp = self.dir.join(format!(
+            "{key}.{}-{}.tmp",
+            std::process::id(),
+            TMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let result = (|| {
+            let mut f = fs::File::create(&tmp).map_err(|e| with_path(&tmp, e))?;
+            f.write_all(text.as_bytes())
+                .and_then(|()| f.sync_all())
+                .map_err(|e| with_path(&tmp, e))?;
+            fs::rename(&tmp, &path).map_err(|e| with_path(&path, e))
+        })();
+        if result.is_err() {
+            // Best effort: `clean_tmp` removes whatever survives.
+            let _ = fs::remove_file(&tmp);
+        }
+        result
+    }
+
+    /// Removes temp files left by interrupted writes. A missing cache dir is fine.
+    pub fn clean_tmp(&self) -> Result<()> {
+        let entries = match fs::read_dir(&self.dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(with_path(&self.dir, e)),
+        };
+        for entry in entries {
+            let path = entry.map_err(|e| with_path(&self.dir, e))?.path();
+            if path.extension().is_some_and(|ext| ext == "tmp") {
+                fs::remove_file(&path).map_err(|e| with_path(&path, e))?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -79,6 +116,31 @@ pub fn call(
     refresh: bool,
     interrupt: &AtomicBool,
 ) -> Result<String> {
+    call_with(
+        backend,
+        cache,
+        policy,
+        system,
+        user,
+        refresh,
+        interrupt,
+        &sleep_interruptibly,
+    )
+}
+
+type Sleeper<'a> = &'a dyn Fn(Duration, &AtomicBool) -> Result<()>;
+
+#[allow(clippy::too_many_arguments)]
+fn call_with(
+    backend: &dyn Backend,
+    cache: &CallCache,
+    policy: &Policy,
+    system: &str,
+    user: &str,
+    refresh: bool,
+    interrupt: &AtomicBool,
+    sleep: Sleeper,
+) -> Result<String> {
     let key = cache_key(backend, system, user);
     if !refresh {
         if let Some(text) = cache.read(&key)? {
@@ -102,7 +164,7 @@ pub fn call(
             Err(Error::Llm {
                 transient: true, ..
             }) if attempt < attempts => {
-                sleep_interruptibly(delay(policy.backoff, attempt), interrupt)?;
+                sleep(delay(policy.backoff, attempt), interrupt)?;
                 attempt += 1;
             }
             Err(e) => return Err(e),
@@ -182,7 +244,7 @@ fn unwrap_fence(text: &str) -> Option<&str> {
     if body.lines().any(|l| bare_run(l).is_some_and(|n| n >= open)) {
         return None;
     }
-    Some(body)
+    Some(body.trim())
 }
 
 #[cfg(test)]
@@ -311,6 +373,90 @@ mod tests {
     }
 
     #[test]
+    fn call_sleeps_backoff_then_double() {
+        use std::cell::RefCell;
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CallCache::new(dir.path());
+        let b = backend(vec![Err(transient()), Err(transient()), Ok("ok".into())]);
+        let p = Policy {
+            retries: 3,
+            backoff: Duration::from_millis(7),
+        };
+        let delays = RefCell::new(Vec::new());
+        let sleep = |d: Duration, _: &AtomicBool| {
+            delays.borrow_mut().push(d);
+            Ok(())
+        };
+        let stop = AtomicBool::new(false);
+        let out = call_with(&b, &cache, &p, "sys", "usr", false, &stop, &sleep).unwrap();
+        assert_eq!(out, "ok");
+        assert_eq!(
+            *delays.borrow(),
+            vec![Duration::from_millis(7), Duration::from_millis(14)]
+        );
+    }
+
+    #[test]
+    fn cleaned_text_is_returned_and_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CallCache::new(dir.path());
+        let b = backend(vec![Ok("<think>x</think>\n```md\nbody\n```".into())]);
+        assert_eq!(run(&b, &cache, &policy(1), false).unwrap(), "body");
+        let key = cache_key(&b, "sys", "usr");
+        let path = dir.path().join("llm-cache").join(format!("{key}.txt"));
+        assert_eq!(fs::read_to_string(path).unwrap(), "body");
+    }
+
+    #[test]
+    fn empty_cache_entry_is_a_miss() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CallCache::new(dir.path());
+        let b = backend(vec![Ok("fresh".into())]);
+        let key = cache_key(&b, "sys", "usr");
+        let cache_dir = dir.path().join("llm-cache");
+        fs::create_dir_all(&cache_dir).unwrap();
+        fs::write(cache_dir.join(format!("{key}.txt")), "").unwrap();
+        assert_eq!(run(&b, &cache, &policy(1), false).unwrap(), "fresh");
+        assert_eq!(b.calls().len(), 1);
+    }
+
+    #[test]
+    fn write_error_names_path() {
+        let dir = tempfile::tempdir().unwrap();
+        // A file where the cache dir should be.
+        fs::write(dir.path().join("llm-cache"), "x").unwrap();
+        let cache = CallCache::new(dir.path());
+        let err = cache.write("k", "text").unwrap_err();
+        assert!(err.to_string().contains("llm-cache"), "{err}");
+    }
+
+    #[test]
+    fn clean_tmp_removes_only_tmp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CallCache::new(dir.path());
+        cache.clean_tmp().unwrap(); // missing dir is fine
+        cache.write("k", "text").unwrap();
+        let cache_dir = dir.path().join("llm-cache");
+        fs::write(cache_dir.join("k.1-2.tmp"), "partial").unwrap();
+        cache.clean_tmp().unwrap();
+        assert!(!cache_dir.join("k.1-2.tmp").exists());
+        assert_eq!(fs::read_to_string(cache_dir.join("k.txt")).unwrap(), "text");
+    }
+
+    #[test]
+    fn write_leaves_no_tmp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CallCache::new(dir.path());
+        cache.write("k", "a").unwrap();
+        cache.write("k", "b").unwrap();
+        let names: Vec<_> = fs::read_dir(dir.path().join("llm-cache"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("k.txt")]);
+    }
+
+    #[test]
     fn backoff_doubles() {
         let d = Duration::from_millis(10);
         assert_eq!(delay(d, 1), d);
@@ -341,7 +487,7 @@ mod tests {
         });
         assert!(matches!(result, Err(Error::Interrupted)));
         let (set, returned) = set_at;
-        assert!(returned.duration_since(set) < Duration::from_millis(250));
+        assert!(returned.duration_since(set) < Duration::from_millis(100));
         assert_eq!(b.calls().len(), 1);
     }
 
@@ -359,6 +505,21 @@ mod tests {
             clean("````markdown\n# N\n```sh\nls\n```\n````"),
             "# N\n```sh\nls\n```"
         );
+    }
+
+    #[test]
+    fn clean_trims_unwrapped_fence_body() {
+        assert_eq!(clean("```\n   \n```"), "");
+        assert_eq!(clean("```\n\n x \n\n```"), "x");
+    }
+
+    #[test]
+    fn clean_leaves_non_leading_or_unclosed_think() {
+        assert_eq!(
+            clean(" answer <think>x</think> "),
+            "answer <think>x</think>"
+        );
+        assert_eq!(clean("<think>unclosed answer\n"), "<think>unclosed answer");
     }
 
     #[test]
