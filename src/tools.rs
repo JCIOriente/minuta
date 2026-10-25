@@ -65,6 +65,86 @@ fn pump<R: Read + Send + 'static>(
     })
 }
 
+fn tool_name(program: &OsStr) -> String {
+    Path::new(program)
+        .file_name()
+        .unwrap_or(program)
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn spawn(program: &OsStr, cmd: &mut Command, opts: &RunOpts) -> Result<std::process::Child> {
+    if let Some(cwd) = &opts.cwd {
+        cmd.current_dir(cwd);
+    }
+    cmd.spawn().map_err(|e| {
+        Error::Io(std::io::Error::new(
+            e.kind(),
+            format!("cannot run {}: {e}", Path::new(program).display()),
+        ))
+    })
+}
+
+fn interrupted(opts: &RunOpts) -> bool {
+    opts.interrupt
+        .as_ref()
+        .is_some_and(|f| f.load(Ordering::SeqCst))
+}
+
+fn kill_and_reap(child: &mut std::process::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Forward every line from `rx` to `on_line` until all senders are gone, keeping the last
+/// stderr lines. Kills the child on interrupt or on a read error.
+fn drain(
+    child: &mut std::process::Child,
+    rx: &mpsc::Receiver<Line>,
+    opts: &RunOpts,
+    on_line: &mut dyn FnMut(bool, &str),
+) -> Result<Vec<String>> {
+    let mut tail: Vec<String> = Vec::new();
+    loop {
+        if interrupted(opts) {
+            // Readers are not joined: a grandchild may still hold the pipes open.
+            kill_and_reap(child);
+            return Err(Error::Interrupted);
+        }
+        match rx.recv_timeout(POLL_INTERVAL) {
+            Ok((_, Err(e))) => {
+                kill_and_reap(child);
+                return Err(Error::Io(e));
+            }
+            Ok((is_stderr, Ok(line))) => {
+                on_line(is_stderr, &line);
+                if is_stderr {
+                    if tail.len() == STDERR_TAIL_LINES {
+                        tail.remove(0);
+                    }
+                    tail.push(line);
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return Ok(tail),
+        }
+    }
+}
+
+/// The child may outlive its pipes, so keep honouring the interrupt flag while waiting.
+fn wait_status(child: &mut std::process::Child, opts: &RunOpts) -> Result<ExitStatus> {
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if interrupted(opts) {
+            kill_and_reap(child);
+            return Err(Error::Interrupted);
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
 /// Run `argv[0]` with the remaining arguments (no shell), streaming each stdout and
 /// stderr line to `on_line`. A non-zero exit is `Error::Tool` carrying the last stderr
 /// lines.
@@ -72,25 +152,13 @@ pub fn run(argv: &[OsString], opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> R
     let (program, args) = argv
         .split_first()
         .ok_or_else(|| Error::Usage("empty command".into()))?;
-    let tool = Path::new(program)
-        .file_name()
-        .unwrap_or(program)
-        .to_string_lossy()
-        .into_owned();
+    let tool = tool_name(program);
     let mut cmd = Command::new(program);
     cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if let Some(cwd) = &opts.cwd {
-        cmd.current_dir(cwd);
-    }
-    let mut child = cmd.spawn().map_err(|e| {
-        Error::Io(std::io::Error::new(
-            e.kind(),
-            format!("cannot run {}: {e}", Path::new(program).display()),
-        ))
-    })?;
+    let mut child = spawn(program, &mut cmd, &opts)?;
     let (tx, rx) = mpsc::channel();
     let readers = [
         pump(
@@ -100,56 +168,11 @@ pub fn run(argv: &[OsString], opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> R
         ),
         pump(child.stderr.take().expect("piped stderr"), true, tx),
     ];
-
-    let interrupted = || {
-        opts.interrupt
-            .as_ref()
-            .is_some_and(|f| f.load(Ordering::SeqCst))
-    };
-    let kill_and_reap = |child: &mut std::process::Child| {
-        let _ = child.kill();
-        let _ = child.wait();
-    };
-
-    let mut tail: Vec<String> = Vec::new();
-    loop {
-        if interrupted() {
-            // Readers are not joined: a grandchild may still hold the pipes open.
-            kill_and_reap(&mut child);
-            return Err(Error::Interrupted);
-        }
-        match rx.recv_timeout(POLL_INTERVAL) {
-            Ok((_, Err(e))) => {
-                kill_and_reap(&mut child);
-                return Err(Error::Io(e));
-            }
-            Ok((is_stderr, Ok(line))) => {
-                on_line(&line);
-                if is_stderr {
-                    if tail.len() == STDERR_TAIL_LINES {
-                        tail.remove(0);
-                    }
-                    tail.push(line);
-                }
-            }
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
-        }
-    }
+    let tail = drain(&mut child, &rx, &opts, &mut |_, line| on_line(line))?;
     for reader in readers {
         let _ = reader.join();
     }
-    // The child may outlive its pipes, so keep honouring the interrupt flag while waiting.
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
-        if interrupted() {
-            kill_and_reap(&mut child);
-            return Err(Error::Interrupted);
-        }
-        std::thread::sleep(POLL_INTERVAL);
-    };
+    let status = wait_status(&mut child, &opts)?;
     if status.success() {
         Ok(Output { status })
     } else {
@@ -159,6 +182,70 @@ pub fn run(argv: &[OsString], opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> R
             stderr: tail.join("\n"),
         })
     }
+}
+
+/// Like [`run`], but feeds `stdin` to the child and returns its stdout (lossy UTF-8)
+/// instead of streaming it. Stderr lines still go to `on_stderr`. `stdin` is written from
+/// a separate thread and then closed, so a large input cannot deadlock with the child's
+/// output.
+pub fn run_capture(
+    argv: &[OsString],
+    stdin: &[u8],
+    opts: RunOpts,
+    on_stderr: &mut dyn FnMut(&str),
+) -> Result<String> {
+    let (program, args) = argv
+        .split_first()
+        .ok_or_else(|| Error::Usage("empty command".into()))?;
+    let tool = tool_name(program);
+    let mut cmd = Command::new(program);
+    cmd.args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = spawn(program, &mut cmd, &opts)?;
+    let (tx, rx) = mpsc::channel();
+    let mut child_stdin = child.stdin.take().expect("piped stdin");
+    let input = stdin.to_vec();
+    let writer = std::thread::spawn(move || {
+        use std::io::Write;
+        // Dropping `child_stdin` closes the pipe. A child that exits without reading all
+        // of its input is not an error here: its exit status reports the failure.
+        match child_stdin.write_all(&input) {
+            Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e),
+            _ => Ok(()),
+        }
+    });
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let out_tx = tx.clone();
+    // Holding a sender until EOF keeps `drain` waiting for stdout as well as stderr.
+    let out_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let res = stdout.read_to_end(&mut bytes).map(|_| bytes);
+        drop(out_tx);
+        res
+    });
+    let err_reader = pump(child.stderr.take().expect("piped stderr"), true, tx);
+
+    let tail = drain(&mut child, &rx, &opts, &mut |_, line| on_stderr(line))?;
+    let _ = err_reader.join();
+    let bytes = match out_reader.join().expect("stdout reader panicked") {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            kill_and_reap(&mut child);
+            return Err(Error::Io(e));
+        }
+    };
+    let status = wait_status(&mut child, &opts)?;
+    if !status.success() {
+        return Err(Error::Tool {
+            tool,
+            code: status.code(),
+            stderr: tail.join("\n"),
+        });
+    }
+    writer.join().expect("stdin writer panicked")?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Configured tool locations. `None` means look the tool up on the search path.
@@ -305,6 +392,45 @@ fn locate(
         }
     };
     Some(ToolInfo { path, version })
+}
+
+/// Find a single tool by configured path (when `bin` has a directory part) or on `PATH`
+/// and probe its version. `label` names it in the `Missing` entry.
+pub fn locate_tool(
+    bin: &str,
+    label: &str,
+    version_flag: &str,
+    hint: &str,
+) -> std::result::Result<ToolInfo, Missing> {
+    let mut missing = Vec::new();
+    let configured = if Path::new(bin).components().count() > 1 {
+        Some(PathBuf::from(bin))
+    } else {
+        let search = std::env::var_os("PATH").unwrap_or_default();
+        find_in(bin, &search)
+    };
+    let found = match configured {
+        Some(p) => locate(
+            &Some(p),
+            label,
+            version_flag,
+            OsStr::new(""),
+            hint,
+            &mut missing,
+        ),
+        None => {
+            missing.push(Missing {
+                name: label.to_string(),
+                hint: hint.to_string(),
+            });
+            None
+        }
+    };
+    match (found, missing.pop()) {
+        (Some(info), None) => Ok(info),
+        (_, Some(m)) => Err(m),
+        (None, None) => unreachable!("locate reports why it found nothing"),
+    }
 }
 
 /// Look at every tool and report what was found and what is missing; never fails.
