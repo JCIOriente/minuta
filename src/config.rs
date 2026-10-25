@@ -127,6 +127,9 @@ impl Scalar {
         match self {
             Scalar::Int(n) => n.to_string(),
             Scalar::Text(text) => text,
+            // toml's Display wraps a datetime in its private marker table; the datetime itself
+            // is what the user wrote.
+            Scalar::Other(toml::Value::Datetime(date)) => date.to_string(),
             Scalar::Other(value) => value.to_string(),
         }
     }
