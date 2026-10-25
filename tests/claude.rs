@@ -317,11 +317,20 @@ fn claude_scratch_dir_removed_after_interrupt() {
     env.set("FAKE_CLAUDE_HANG", "1");
     let flag = Arc::new(AtomicBool::new(false));
     let setter = Arc::clone(&flag);
+    let watched = cwd.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(200));
+        // Interrupt only once the fake is running and has recorded its directory.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if fs::read_to_string(&watched).is_ok_and(|t| t.lines().next().is_some()) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
         setter.store(true, Ordering::SeqCst);
     });
-    claude(None).complete("s", "u", &flag).unwrap_err();
+    let err = claude(None).complete("s", "u", &flag).unwrap_err();
+    assert!(matches!(err, Error::Interrupted), "{err:?}");
     assert!(!PathBuf::from(&lines(&cwd)[0]).try_exists().unwrap());
 }
 
