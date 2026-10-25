@@ -224,6 +224,20 @@ fn fingerprint_matches_spec_composition() {
 }
 
 #[test]
+fn markdown_fingerprint_unchanged() {
+    // Recorded on main before fields templates existed: sub-project 2 job folders stay cached.
+    let (dir, _) = job();
+    let t = tpl("summary", TEXT);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
+    assert_eq!(
+        run(&t, &b, "es")
+            .fingerprint(&ctx(dir.path()), "reunion")
+            .unwrap(),
+        "ca5454c45b4f122fa4df6034c740f2e03507301a9deee312fc2d47d1587755de"
+    );
+}
+
+#[test]
 fn fingerprint_sensitive_to_each_part() {
     let (dir, _) = job();
     let base_t = tpl("summary", TEXT);
