@@ -97,6 +97,8 @@ pub struct Generated {
 }
 
 type Complete<'c> = &'c (dyn Fn(&str, &str) -> Result<String> + Sync);
+/// The system prompt for part i of n.
+type SystemFor<'f> = &'f (dyn Fn(usize, usize) -> String + Sync);
 
 /// Turn `req.input` into one document with `complete(system, user)`: one call when it fits the
 /// context budget, otherwise concurrent map calls over chunks and a final consolidation call.
@@ -126,7 +128,8 @@ pub fn generate(
     let total = chunks.len();
     let mut calls = total;
     let mut notes = run_all(
-        with_systems(chunks, &map_system),
+        &chunks,
+        &map_system,
         req.concurrency,
         complete,
         &mut |done| on_event(Event::Chunk { done, total }),
@@ -140,12 +143,7 @@ pub fn generate(
         let units: Vec<&str> = units.iter().map(String::as_str).collect();
         let groups = split_inputs(&units, "\n\n", context, &map_system)?;
         calls += groups.len();
-        notes = run_all(
-            with_systems(groups, &map_system),
-            req.concurrency,
-            complete,
-            &mut |_| {},
-        )?;
+        notes = run_all(&groups, &map_system, req.concurrency, complete, &mut |_| {})?;
         let merged = join_notes(&notes);
         if estimate_tokens(&merged) >= estimate_tokens(&joined) {
             return Err(template_error(NOT_SHRINKING.to_string()));
@@ -192,7 +190,7 @@ fn split_inputs(
     units: &[&str],
     sep: &str,
     context: usize,
-    system_for: &dyn Fn(usize, usize) -> String,
+    system_for: SystemFor,
 ) -> Result<Vec<String>> {
     let digits = |n: usize| n.to_string().len();
     let mut n = 1;
@@ -204,18 +202,6 @@ fn split_inputs(
         }
         n = inputs.len();
     }
-}
-
-fn with_systems(
-    inputs: Vec<String>,
-    system_for: &dyn Fn(usize, usize) -> String,
-) -> Vec<(String, String)> {
-    let n = inputs.len();
-    inputs
-        .into_iter()
-        .enumerate()
-        .map(|(i, user)| (system_for(i + 1, n), user))
-        .collect()
 }
 
 fn part_units(notes: &[String]) -> Vec<String> {
@@ -291,41 +277,65 @@ impl Packer<'_> {
 }
 
 /// Split one line into pieces of at most `max_chars` (> 0) characters at whitespace, which is
-/// dropped at the cut. A word longer than the limit is cut at the limit.
+/// dropped at the cut. A word longer than the limit is cut at the limit. One pass, O(len).
 fn split_at_whitespace(line: &str, max_chars: usize) -> Vec<String> {
+    let s = line.trim();
     let mut out = Vec::new();
-    let mut rest = line.trim();
-    while rest.chars().count() > max_chars {
-        // Byte offset of the first character past the limit; whitespace there is a valid cut.
-        let (limit, at_limit) = rest
-            .char_indices()
-            .nth(max_chars)
-            .expect("rest has more than max_chars characters");
-        let window = &rest[..limit + at_limit.len_utf8()];
-        let cut = window
-            .char_indices()
-            .rev()
-            .find(|&(i, c)| c.is_whitespace() && i > 0)
-            .map_or(limit, |(i, _)| i);
-        out.push(rest[..cut].trim_end().to_string());
-        rest = rest[cut..].trim_start();
+    // (byte, char position) where the piece being filled starts; None while skipping the
+    // whitespace after a cut.
+    let mut start: Option<(usize, usize)> = None;
+    // Byte where the current whitespace run began.
+    let mut ws_run: Option<usize> = None;
+    // The last whitespace run inside the piece: (its start byte, then byte and char position
+    // of the next word).
+    let mut cut: Option<(usize, usize, usize)> = None;
+    for (pos, (i, c)) in s.char_indices().enumerate() {
+        let Some((start_byte, start_pos)) = start else {
+            if !c.is_whitespace() {
+                start = Some((i, pos));
+            }
+            continue;
+        };
+        let full = pos - start_pos == max_chars;
+        if c.is_whitespace() {
+            if full {
+                out.push(s[start_byte..i].trim_end().to_string());
+                (start, ws_run, cut) = (None, None, None);
+            } else {
+                ws_run.get_or_insert(i);
+            }
+            continue;
+        }
+        if let Some(run) = ws_run.take() {
+            cut = Some((run, i, pos));
+        }
+        if full {
+            let (end, resume) = match cut.take() {
+                Some((run, byte, p)) => (run, (byte, p)),
+                None => (i, (i, pos)),
+            };
+            out.push(s[start_byte..end].to_string());
+            start = Some(resume);
+        }
     }
-    if !rest.is_empty() {
-        out.push(rest.to_string());
+    if let Some((byte, _)) = start {
+        out.push(s[byte..].to_string());
     }
     out
 }
 
-/// Run every (system, user) call, at most `concurrency` at a time, and return the outputs in
-/// order. `on_done(count)` runs on the calling thread after each successful call. The first
+/// Run a call for every input, part i of n with system prompt `system_for(i, n)` (built by
+/// the worker just before its call), at most `concurrency` at a time, and return the outputs
+/// in order. `on_done(count)` runs on the calling thread after each successful call. The first
 /// error stops new calls from starting and is returned once the in-flight calls end.
 fn run_all(
-    calls: Vec<(String, String)>,
+    inputs: &[String],
+    system_for: SystemFor,
     concurrency: usize,
     complete: Complete,
     on_done: &mut dyn FnMut(usize),
 ) -> Result<Vec<String>> {
-    let total = calls.len();
+    let total = inputs.len();
     let next = AtomicUsize::new(0);
     let stop = AtomicBool::new(false);
     let mut outputs: Vec<Option<String>> = vec![None; total];
@@ -333,14 +343,14 @@ fn run_all(
     thread::scope(|scope| {
         let (tx, rx) = mpsc::channel();
         for _ in 0..concurrency.clamp(1, total.max(1)) {
-            let (tx, next, stop, calls) = (tx.clone(), &next, &stop, &calls);
+            let (tx, next, stop) = (tx.clone(), &next, &stop);
             scope.spawn(move || {
                 while !stop.load(Ordering::SeqCst) {
                     let i = next.fetch_add(1, Ordering::SeqCst);
-                    let Some((system, user)) = calls.get(i) else {
+                    let Some(user) = inputs.get(i) else {
                         break;
                     };
-                    let result = complete(system, user);
+                    let result = complete(&system_for(i + 1, total), user);
                     if result.is_err() {
                         stop.store(true, Ordering::SeqCst);
                     }
@@ -377,9 +387,9 @@ fn run_all(
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
+    use std::sync::{Barrier, Mutex};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use super::*;
     use crate::error::Error;
@@ -669,14 +679,29 @@ mod tests {
 
     #[test]
     fn overlong_line_split_at_whitespace() {
-        let cases: [(&str, usize, Vec<&str>); 3] = [
+        let cases: [(&str, usize, Vec<&str>); 5] = [
             ("aaaa bbbb cccc", 9, vec!["aaaa bbbb", "cccc"]),
             ("aaaa  bbbb", 4, vec!["aaaa", "bbbb"]),
             ("abcdefghij", 4, vec!["abcd", "efgh", "ij"]),
+            ("a bbbbbb", 4, vec!["a", "bbbb", "bb"]),
+            ("ééé ñññ", 3, vec!["ééé", "ñññ"]),
         ];
         for (line, max, want) in cases {
             assert_eq!(pack([line], "\n", max), want, "{line:?} max {max}");
         }
+    }
+
+    #[test]
+    fn huge_single_line_splits_quickly() {
+        let line = "abcdefg hij klmnopqrs tu ".repeat(80_000); // 2 MB, one line
+        let started = Instant::now();
+        let pieces = pack([line.as_str()], "\n", 30);
+        let elapsed = started.elapsed();
+        assert!(elapsed < Duration::from_secs(2), "took {elapsed:?}");
+        assert!(pieces.iter().all(|p| p.chars().count() <= 30));
+        let got: String = pieces.concat().split_whitespace().collect();
+        let want: String = line.split_whitespace().collect();
+        assert_eq!(got, want);
     }
 
     #[test]
@@ -704,20 +729,52 @@ mod tests {
 
     #[test]
     fn concurrency_limit_respected() {
+        const CONCURRENCY: usize = 3;
         let input = numbered_lines(200);
+        let started = AtomicUsize::new(0);
         let current = AtomicUsize::new(0);
-        let max = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+        // The first CONCURRENCY calls wait for each other, so they overlap for certain; a
+        // worker beyond the limit would start a call while they wait and raise the peak.
+        let barrier = Barrier::new(CONCURRENCY);
         let complete = |s: &str, _: &str| {
             if !is_final(s) {
                 let now = current.fetch_add(1, Ordering::SeqCst) + 1;
-                max.fetch_max(now, Ordering::SeqCst);
-                thread::sleep(Duration::from_millis(20));
+                peak.fetch_max(now, Ordering::SeqCst);
+                if started.fetch_add(1, Ordering::SeqCst) < CONCURRENCY {
+                    barrier.wait();
+                    thread::sleep(Duration::from_millis(20));
+                }
                 current.fetch_sub(1, Ordering::SeqCst);
             }
             Ok("n".to_string())
         };
-        generate(&request(&input, 300, 2), &complete, &mut |_| {}).unwrap();
-        assert_eq!(max.load(Ordering::SeqCst), 2);
+        let mut events = Vec::new();
+        generate(&request(&input, 300, CONCURRENCY), &complete, &mut |e| {
+            events.push(e)
+        })
+        .unwrap();
+        assert!(chunk_total(&events) > CONCURRENCY);
+        assert_eq!(peak.load(Ordering::SeqCst), CONCURRENCY);
+    }
+
+    #[test]
+    fn fit_boundary_is_inclusive() {
+        let context = 1000;
+        let system = format!("{BODY}\n\n{}", language_instruction(LANG));
+        let room = context - context / 4 - estimate_tokens(&system);
+        let exact = "x".repeat(room * 3);
+        assert!(fits(&system, &exact, context));
+        let cases = [(exact.clone(), true), (format!("{exact}x"), false)];
+        for (input, one_call) in cases {
+            let count = AtomicUsize::new(0);
+            let complete = |_: &str, _: &str| {
+                count.fetch_add(1, Ordering::SeqCst);
+                Ok("n".to_string())
+            };
+            let out = generate(&request(&input, context, 1), &complete, &mut |_| {}).unwrap();
+            assert_eq!(out.calls == 1, one_call, "input of {} chars", input.len());
+        }
     }
 
     #[test]
@@ -770,25 +827,30 @@ mod tests {
 
     #[test]
     fn multi_round_reduce() {
-        let input = numbered_lines(200);
+        let input = numbered_lines(400);
         let rec = Recorder::new();
         let complete = |s: &str, u: &str| {
             rec.record(s, u);
             if is_final(s) {
                 Ok("final".to_string())
             } else if u.starts_with("## Part") {
-                Ok("merged".to_string())
+                // Shrinks, but not enough to fit after one round.
+                Ok("y".repeat(u.chars().count() * 3 / 4))
             } else {
                 Ok("x".repeat(200))
             }
         };
-        let out = generate(&request(&input, 400, 2), &complete, &mut |_| {}).unwrap();
+        // Concurrency 1 keeps the recorded calls in order, so each round starts with part 1.
+        let out = generate(&request(&input, 400, 1), &complete, &mut |_| {}).unwrap();
         let calls = rec.calls();
-        let merges = calls
+        let rounds = calls
             .iter()
-            .filter(|(s, u)| !is_final(s) && u.starts_with("## Part"))
+            .filter(|(s, u)| u.starts_with("## Part") && s.contains("This is part 1 of "))
             .count();
-        assert!(merges > 0, "expected merge calls");
+        assert!(
+            rounds >= 2,
+            "expected at least two merge rounds, got {rounds}"
+        );
         assert_eq!(out.text, "final");
         assert_eq!(out.calls, calls.len());
         for (s, u) in &calls {
