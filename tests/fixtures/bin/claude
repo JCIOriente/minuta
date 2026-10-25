@@ -1,0 +1,26 @@
+#!/bin/sh
+# Fake `claude` for the tests. Records what it was given and prints a canned reply.
+#   FAKE_CLAUDE_ARGV    file that gets the argv, one argument per line
+#   FAKE_CLAUDE_STDIN   file that gets stdin
+#   FAKE_CLAUDE_CWD     file that gets `pwd -P`, then the names in the working directory
+#   FAKE_CLAUDE_REPLY   stdout (an empty value prints nothing; default: "fake claude reply")
+#   FAKE_CLAUDE_STDERR  text for stderr
+#   FAKE_CLAUDE_EXIT    exit status (default 0)
+#   FAKE_CLAUDE_HANG    when set, hang until killed
+if [ "$1" = "--version" ]; then echo "2.0.0-fake (Claude Code)"; exit 0; fi
+if [ -n "$FAKE_CLAUDE_ARGV" ]; then
+  : > "$FAKE_CLAUDE_ARGV"
+  for a in "$@"; do printf '%s\n' "$a" >> "$FAKE_CLAUDE_ARGV"; done
+fi
+if [ -n "$FAKE_CLAUDE_CWD" ]; then
+  { pwd -P; ls -A; } > "$FAKE_CLAUDE_CWD"
+fi
+if [ -n "$FAKE_CLAUDE_HANG" ]; then exec /bin/sleep 30; fi
+if [ -n "$FAKE_CLAUDE_STDIN" ]; then cat > "$FAKE_CLAUDE_STDIN"; else cat > /dev/null; fi
+if [ -n "$FAKE_CLAUDE_STDERR" ]; then printf '%s\n' "$FAKE_CLAUDE_STDERR" >&2; fi
+if [ "${FAKE_CLAUDE_REPLY+set}" = set ]; then
+  [ -n "$FAKE_CLAUDE_REPLY" ] && printf '%s\n' "$FAKE_CLAUDE_REPLY"
+else
+  echo "fake claude reply"
+fi
+exit "${FAKE_CLAUDE_EXIT:-0}"
