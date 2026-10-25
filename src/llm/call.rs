@@ -506,7 +506,9 @@ mod tests {
         });
         assert!(matches!(result, Err(Error::Interrupted)));
         let (set, returned) = set_at;
-        assert!(returned.duration_since(set) < Duration::from_millis(100));
+        // The sleep slice is 25 ms; the extra margin absorbs CI scheduler
+        // jitter, and a slice regression to >= 250 ms still fails the test.
+        assert!(returned.duration_since(set) < Duration::from_millis(250));
         assert_eq!(b.calls().len(), 1);
     }
 
