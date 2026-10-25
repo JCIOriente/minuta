@@ -1,1 +1,885 @@
 //! Prompt assembly, chunking and consolidation.
+
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::thread;
+
+use crate::error::{Error, Result};
+use crate::transcript::Transcript;
+
+/// Version of the prompt wrappers below. It is part of every template step's fingerprint.
+pub const PROMPT_VERSION: u32 = 1;
+
+// Prompt wrapper wording (spec: "Prompt assembly, chunking and consolidation").
+// Changing any of these requires bumping PROMPT_VERSION.
+const LANGUAGE_PREFIX: &str = "Write the entire response in ";
+const LANGUAGE_SUFFIX: &str = ", including headings and any placeholder text, regardless of \
+                               the language of the input or of these instructions.";
+const MAP_INTRO: &str = "You are preparing notes for this task:";
+const MAP_TASK: &str = "Extract everything the task needs from this part, keeping timestamps. \
+                        Do not write the final document.";
+const CONSOLIDATION: &str =
+    "The input is notes extracted from consecutive parts of a longer input.";
+
+/// Minimum span of one transcript block, in seconds.
+const BLOCK_SECONDS: f64 = 30.0;
+
+const NOT_SHRINKING: &str = "notes do not shrink below the context budget";
+
+/// The transcript as LLM input: segments merged into blocks spanning at least 30 s (the last
+/// may be shorter), one `[hh:mm:ss] text` line per block, stamped with the block start.
+pub fn transcript_text(t: &Transcript) -> String {
+    let mut lines = Vec::new();
+    let mut block: Option<(f64, String)> = None;
+    for s in &t.segments {
+        let (start, text) = block.get_or_insert_with(|| (s.start, String::new()));
+        let piece = s.text.trim();
+        if !piece.is_empty() {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(piece);
+        }
+        if s.end - *start >= BLOCK_SECONDS {
+            lines.extend(block.take().and_then(block_line));
+        }
+    }
+    lines.extend(block.and_then(block_line));
+    lines.join("\n")
+}
+
+/// `[hh:mm:ss] text`, or None for a block without text.
+fn block_line((start, text): (f64, String)) -> Option<String> {
+    if text.is_empty() {
+        return None;
+    }
+    // Truncation to whole seconds is intended; negative starts clamp to zero.
+    let secs = start.max(0.0) as u64;
+    Some(format!(
+        "[{:02}:{:02}:{:02}] {text}",
+        secs / 3600,
+        secs / 60 % 60,
+        secs % 60
+    ))
+}
+
+/// Characters / 3, rounded up, over Unicode scalar values.
+pub fn estimate_tokens(s: &str) -> usize {
+    s.chars().count().div_ceil(3)
+}
+
+/// The sentence every system prompt ends with. `output_lang` is a language name ("Spanish").
+pub fn language_instruction(output_lang: &str) -> String {
+    format!("{LANGUAGE_PREFIX}{output_lang}{LANGUAGE_SUFFIX}")
+}
+
+pub struct Request<'a> {
+    /// The rendered template body.
+    pub body: &'a str,
+    /// Output language name, as it appears in the language instruction.
+    pub output_lang: &'a str,
+    pub input: &'a str,
+    pub context_tokens: usize,
+    /// Maximum concurrent calls; 0 is treated as 1.
+    pub concurrency: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Event {
+    Chunk { done: usize, total: usize },
+    Consolidating,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Generated {
+    pub text: String,
+    pub calls: usize,
+}
+
+type Complete<'c> = &'c (dyn Fn(&str, &str) -> Result<String> + Sync);
+
+/// Turn `req.input` into one document with `complete(system, user)`: one call when it fits the
+/// context budget, otherwise concurrent map calls over chunks and a final consolidation call.
+/// `on_event` is only called on the calling thread. Template errors leave `name` empty for the
+/// caller to fill in.
+pub fn generate(
+    req: &Request,
+    complete: Complete,
+    on_event: &mut dyn FnMut(Event),
+) -> Result<Generated> {
+    let context = req.context_tokens;
+    let instruction = language_instruction(req.output_lang);
+    let system = format!("{}\n\n{instruction}", req.body);
+    if fits(&system, req.input, context) {
+        let text = complete(&system, req.input)?;
+        return Ok(Generated { text, calls: 1 });
+    }
+
+    let map_system = |i: usize, n: usize| {
+        format!(
+            "{MAP_INTRO}\n\n{}\n\nThis is part {i} of {n}. {MAP_TASK}\n\n{instruction}",
+            req.body
+        )
+    };
+    let lines: Vec<&str> = req.input.lines().collect();
+    let chunks = split_inputs(&lines, "\n", context, &map_system)?;
+    let total = chunks.len();
+    let mut calls = total;
+    let mut notes = run_all(
+        with_systems(chunks, &map_system),
+        req.concurrency,
+        complete,
+        &mut |done| on_event(Event::Chunk { done, total }),
+    )?;
+
+    on_event(Event::Consolidating);
+    let reduce_system = format!("{}\n\n{CONSOLIDATION}\n\n{instruction}", req.body);
+    let mut joined = join_notes(&notes);
+    while !fits(&reduce_system, &joined, context) {
+        let units = part_units(&notes);
+        let units: Vec<&str> = units.iter().map(String::as_str).collect();
+        let groups = split_inputs(&units, "\n\n", context, &map_system)?;
+        calls += groups.len();
+        notes = run_all(
+            with_systems(groups, &map_system),
+            req.concurrency,
+            complete,
+            &mut |_| {},
+        )?;
+        let merged = join_notes(&notes);
+        if estimate_tokens(&merged) >= estimate_tokens(&joined) {
+            return Err(template_error(NOT_SHRINKING.to_string()));
+        }
+        joined = merged;
+    }
+    let text = complete(&reduce_system, &joined)?;
+    Ok(Generated {
+        text,
+        calls: calls + 1,
+    })
+}
+
+fn template_error(message: String) -> Error {
+    Error::Template {
+        name: String::new(),
+        message,
+    }
+}
+
+/// True when a call fits: estimate(system) + estimate(user) + context/4 <= context.
+fn fits(system: &str, user: &str, context: usize) -> bool {
+    estimate_tokens(system)
+        .saturating_add(estimate_tokens(user))
+        .saturating_add(context / 4)
+        <= context
+}
+
+/// The most characters a user message may have next to `system`.
+fn input_budget(system: &str, context: usize) -> Result<usize> {
+    let tokens = (context - context / 4).saturating_sub(estimate_tokens(system));
+    if tokens == 0 {
+        return Err(template_error(format!(
+            "the prompt alone does not fit the context budget of {context} tokens"
+        )));
+    }
+    Ok(tokens.saturating_mul(3))
+}
+
+/// Pack `units` into inputs that fit next to `system_for(i, n)` for every part i of n.
+/// The budget is taken from the longest prompt, "part n of n"; n is raised until the
+/// resulting count has no more digits than the n assumed.
+fn split_inputs(
+    units: &[&str],
+    sep: &str,
+    context: usize,
+    system_for: &dyn Fn(usize, usize) -> String,
+) -> Result<Vec<String>> {
+    let digits = |n: usize| n.to_string().len();
+    let mut n = 1;
+    loop {
+        let max_chars = input_budget(&system_for(n, n), context)?;
+        let inputs = pack(units.iter().copied(), sep, max_chars);
+        if digits(inputs.len()) <= digits(n) {
+            return Ok(inputs);
+        }
+        n = inputs.len();
+    }
+}
+
+fn with_systems(
+    inputs: Vec<String>,
+    system_for: &dyn Fn(usize, usize) -> String,
+) -> Vec<(String, String)> {
+    let n = inputs.len();
+    inputs
+        .into_iter()
+        .enumerate()
+        .map(|(i, user)| (system_for(i + 1, n), user))
+        .collect()
+}
+
+fn part_units(notes: &[String]) -> Vec<String> {
+    notes
+        .iter()
+        .enumerate()
+        .map(|(i, note)| format!("## Part {}\n\n{}", i + 1, note.trim()))
+        .collect()
+}
+
+fn join_notes(notes: &[String]) -> String {
+    part_units(notes).join("\n\n")
+}
+
+/// Greedily join `units` with `sep` into pieces of at most `max_chars` characters, keeping
+/// order. A unit over the limit is split at its lines, or else at whitespace, or else (one
+/// overlong word) at the limit.
+fn pack<'a>(units: impl IntoIterator<Item = &'a str>, sep: &str, max_chars: usize) -> Vec<String> {
+    let mut packer = Packer {
+        sep,
+        sep_len: sep.chars().count(),
+        max_chars,
+        out: Vec::new(),
+        current: None,
+    };
+    for unit in units {
+        let len = unit.chars().count();
+        if len <= max_chars {
+            packer.push(unit, len);
+            continue;
+        }
+        let pieces = if unit.contains('\n') {
+            pack(unit.lines(), "\n", max_chars)
+        } else {
+            split_at_whitespace(unit, max_chars)
+        };
+        for piece in &pieces {
+            packer.push(piece, piece.chars().count());
+        }
+    }
+    packer.finish()
+}
+
+struct Packer<'s> {
+    sep: &'s str,
+    sep_len: usize,
+    max_chars: usize,
+    out: Vec<String>,
+    /// The piece being filled and its length in characters.
+    current: Option<(String, usize)>,
+}
+
+impl Packer<'_> {
+    fn push(&mut self, unit: &str, len: usize) {
+        let (sep_len, max_chars) = (self.sep_len, self.max_chars);
+        match &mut self.current {
+            Some((text, n)) if *n + sep_len + len <= max_chars => {
+                text.push_str(self.sep);
+                text.push_str(unit);
+                *n += sep_len + len;
+            }
+            _ => {
+                self.out.extend(self.current.take().map(|(text, _)| text));
+                self.current = Some((unit.to_string(), len));
+            }
+        }
+    }
+
+    fn finish(mut self) -> Vec<String> {
+        self.out.extend(self.current.take().map(|(text, _)| text));
+        self.out
+    }
+}
+
+/// Split one line into pieces of at most `max_chars` (> 0) characters at whitespace, which is
+/// dropped at the cut. A word longer than the limit is cut at the limit.
+fn split_at_whitespace(line: &str, max_chars: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = line.trim();
+    while rest.chars().count() > max_chars {
+        // Byte offset of the first character past the limit; whitespace there is a valid cut.
+        let (limit, at_limit) = rest
+            .char_indices()
+            .nth(max_chars)
+            .expect("rest has more than max_chars characters");
+        let window = &rest[..limit + at_limit.len_utf8()];
+        let cut = window
+            .char_indices()
+            .rev()
+            .find(|&(i, c)| c.is_whitespace() && i > 0)
+            .map_or(limit, |(i, _)| i);
+        out.push(rest[..cut].trim_end().to_string());
+        rest = rest[cut..].trim_start();
+    }
+    if !rest.is_empty() {
+        out.push(rest.to_string());
+    }
+    out
+}
+
+/// Run every (system, user) call, at most `concurrency` at a time, and return the outputs in
+/// order. `on_done(count)` runs on the calling thread after each successful call. The first
+/// error stops new calls from starting and is returned once the in-flight calls end.
+fn run_all(
+    calls: Vec<(String, String)>,
+    concurrency: usize,
+    complete: Complete,
+    on_done: &mut dyn FnMut(usize),
+) -> Result<Vec<String>> {
+    let total = calls.len();
+    let next = AtomicUsize::new(0);
+    let stop = AtomicBool::new(false);
+    let mut outputs: Vec<Option<String>> = vec![None; total];
+    let mut first_error = None;
+    thread::scope(|scope| {
+        let (tx, rx) = mpsc::channel();
+        for _ in 0..concurrency.clamp(1, total.max(1)) {
+            let (tx, next, stop, calls) = (tx.clone(), &next, &stop, &calls);
+            scope.spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    let i = next.fetch_add(1, Ordering::SeqCst);
+                    let Some((system, user)) = calls.get(i) else {
+                        break;
+                    };
+                    let result = complete(system, user);
+                    if result.is_err() {
+                        stop.store(true, Ordering::SeqCst);
+                    }
+                    if tx.send((i, result)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(tx);
+        let mut done = 0;
+        for (i, result) in rx {
+            match result {
+                Ok(text) => {
+                    outputs[i] = Some(text);
+                    done += 1;
+                    on_done(done);
+                }
+                Err(e) => {
+                    first_error.get_or_insert(e);
+                }
+            }
+        }
+    });
+    if let Some(e) = first_error {
+        return Err(e);
+    }
+    Ok(outputs
+        .into_iter()
+        .map(|o| o.expect("every call reported a result when none failed"))
+        .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+    use std::thread;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::error::Error;
+    use crate::transcript::Segment;
+
+    const BODY: &str = "Write meeting minutes.";
+    const LANG: &str = "Spanish";
+
+    fn seg(start: f64, end: f64, text: &str) -> Segment {
+        Segment {
+            start,
+            end,
+            text: text.into(),
+        }
+    }
+
+    fn transcript(segments: Vec<Segment>) -> Transcript {
+        Transcript {
+            language: "en".into(),
+            segments,
+        }
+    }
+
+    fn numbered_lines(n: usize) -> String {
+        (0..n)
+            .map(|i| format!("line {i:03}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn request<'a>(input: &'a str, context_tokens: usize, concurrency: usize) -> Request<'a> {
+        Request {
+            body: BODY,
+            output_lang: LANG,
+            input,
+            context_tokens,
+            concurrency,
+        }
+    }
+
+    fn fits(system: &str, user: &str, context: usize) -> bool {
+        estimate_tokens(system) + estimate_tokens(user) + context / 4 <= context
+    }
+
+    /// The `i` in "This is part i of n." of a map system prompt.
+    fn part_index(system: &str) -> usize {
+        let rest = system.split("This is part ").nth(1).expect("map prompt");
+        rest.split(' ').next().unwrap().parse().unwrap()
+    }
+
+    fn is_final(system: &str) -> bool {
+        system.contains(CONSOLIDATION)
+    }
+
+    /// Records every (system, user) pair and answers with `reply`.
+    struct Recorder {
+        calls: Mutex<Vec<(String, String)>>,
+    }
+
+    impl Recorder {
+        fn new() -> Self {
+            Recorder {
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+        fn record(&self, system: &str, user: &str) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((system.to_string(), user.to_string()));
+        }
+        fn calls(&self) -> Vec<(String, String)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    /// The map calls (the first `total` calls), sorted by part index.
+    fn map_calls(calls: &[(String, String)], total: usize) -> Vec<(String, String)> {
+        let mut maps = calls[..total].to_vec();
+        maps.sort_by_key(|(s, _)| part_index(s));
+        maps
+    }
+
+    fn chunk_total(events: &[Event]) -> usize {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Chunk { total, .. } => Some(*total),
+                Event::Consolidating => None,
+            })
+            .next()
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn blocks_span_30_seconds() {
+        let t = transcript(vec![
+            seg(0.0, 10.0, " a "),
+            seg(10.0, 20.0, "b"),
+            seg(20.0, 31.0, "c"),
+            seg(31.0, 40.0, "d"),
+            seg(40.0, 61.0, "e"),
+            seg(61.0, 65.0, "f"),
+        ]);
+        assert_eq!(
+            transcript_text(&t),
+            "[00:00:00] a b c\n[00:00:31] d e\n[00:01:01] f"
+        );
+    }
+
+    #[test]
+    fn block_timestamp_format_over_one_hour() {
+        let t = transcript(vec![seg(3725.7, 3760.0, "x")]);
+        assert_eq!(transcript_text(&t), "[01:02:05] x");
+    }
+
+    #[test]
+    fn empty_transcript_empty_text() {
+        assert_eq!(transcript_text(&transcript(vec![])), "");
+    }
+
+    #[test]
+    fn estimate_rounds_up() {
+        let cases = [
+            ("", 0),
+            ("a", 1),
+            ("abc", 1),
+            ("abcd", 2),
+            ("abcdef", 2),
+            ("ñññ", 1),
+            ("ñññn", 2),
+        ];
+        for (s, want) in cases {
+            assert_eq!(estimate_tokens(s), want, "{s:?}");
+        }
+    }
+
+    #[test]
+    fn language_instruction_last() {
+        let instruction = language_instruction(LANG);
+        assert_eq!(
+            instruction,
+            "Write the entire response in Spanish, including headings and any placeholder \
+             text, regardless of the language of the input or of these instructions."
+        );
+        let rec = Recorder::new();
+        let complete = |s: &str, u: &str| {
+            rec.record(s, u);
+            Ok("out".to_string())
+        };
+        generate(&request("hello", 1000, 1), &complete, &mut |_| {}).unwrap();
+        assert_eq!(rec.calls()[0].0, format!("{BODY}\n\n{instruction}"));
+    }
+
+    #[test]
+    fn fits_makes_one_call() {
+        let input = "[00:00:00] hello there";
+        let rec = Recorder::new();
+        let complete = |s: &str, u: &str| {
+            rec.record(s, u);
+            Ok("the minutes".to_string())
+        };
+        let mut events = Vec::new();
+        let out = generate(&request(input, 1000, 4), &complete, &mut |e| events.push(e)).unwrap();
+        assert_eq!(
+            out,
+            Generated {
+                text: "the minutes".into(),
+                calls: 1
+            }
+        );
+        let calls = rec.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].0,
+            format!("{BODY}\n\n{}", language_instruction(LANG))
+        );
+        assert_eq!(calls[0].1, input);
+        assert!(events.is_empty(), "{events:?}");
+    }
+
+    #[test]
+    fn system_alone_too_large_fails() {
+        let body = "word ".repeat(400);
+        let req = Request {
+            body: &body,
+            output_lang: LANG,
+            input: "hello",
+            context_tokens: 200,
+            concurrency: 1,
+        };
+        let err = generate(&req, &|_: &str, _: &str| Ok("x".into()), &mut |_| {}).unwrap_err();
+        assert!(
+            matches!(err, Error::Template { ref name, .. } if name.is_empty()),
+            "{err}"
+        );
+    }
+
+    /// xorshift64*: deterministic, good enough to vary test inputs.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        }
+        fn range(&mut self, lo: usize, hi: usize) -> usize {
+            lo + (self.next() % (hi - lo) as u64) as usize
+        }
+        fn words(&mut self, n: usize, max_len: usize) -> Vec<String> {
+            (0..n)
+                .map(|_| {
+                    let len = self.range(1, max_len + 1);
+                    (0..len)
+                        .map(|_| {
+                            if self.range(0, 10) == 0 {
+                                'é'
+                            } else {
+                                (b'a' + self.range(0, 26) as u8) as char
+                            }
+                        })
+                        .collect()
+                })
+                .collect()
+        }
+    }
+
+    #[test]
+    fn chunks_never_exceed_budget() {
+        let mut ok = 0;
+        for case in 0..300u64 {
+            let mut rng = Rng(case.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
+            let context = rng.range(60, 3000);
+            let body_words = rng.range(0, 60);
+            let body = rng.words(body_words, 12).join(" ");
+            let line_count = rng.range(1, 80);
+            let lines: Vec<String> = (0..line_count)
+                .map(|_| {
+                    let n = rng.range(0, 30);
+                    let max_len = if rng.range(0, 8) == 0 { 400 } else { 15 };
+                    rng.words(n, max_len).join(" ")
+                })
+                .collect();
+            let input = lines.join("\n");
+            let concurrency = rng.range(1, 5);
+            let req = Request {
+                body: &body,
+                output_lang: LANG,
+                input: &input,
+                context_tokens: context,
+                concurrency,
+            };
+            let rec = Recorder::new();
+            let complete = |s: &str, u: &str| {
+                rec.record(s, u);
+                Ok("note".to_string())
+            };
+            let mut events = Vec::new();
+            let result = generate(&req, &complete, &mut |e| events.push(e));
+            let calls = rec.calls();
+            for (s, u) in &calls {
+                assert!(fits(s, u, context), "case {case}: call over budget");
+            }
+            match result {
+                Ok(out) => {
+                    ok += 1;
+                    assert_eq!(out.calls, calls.len(), "case {case}");
+                    let total = chunk_total(&events);
+                    if total > 0 {
+                        // Overlong words are cut, so compare text without whitespace.
+                        let got: String = map_calls(&calls, total)
+                            .iter()
+                            .flat_map(|(_, u)| u.chars().filter(|c| !c.is_whitespace()))
+                            .collect();
+                        let want: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+                        assert_eq!(got, want, "case {case}: text lost or reordered");
+                    }
+                }
+                Err(Error::Template { name, .. }) => assert!(name.is_empty(), "case {case}"),
+                Err(e) => panic!("case {case}: unexpected error {e}"),
+            }
+        }
+        assert!(ok > 150, "only {ok} cases succeeded");
+    }
+
+    #[test]
+    fn overlong_line_split_at_whitespace() {
+        let cases: [(&str, usize, Vec<&str>); 3] = [
+            ("aaaa bbbb cccc", 9, vec!["aaaa bbbb", "cccc"]),
+            ("aaaa  bbbb", 4, vec!["aaaa", "bbbb"]),
+            ("abcdefghij", 4, vec!["abcd", "efgh", "ij"]),
+        ];
+        for (line, max, want) in cases {
+            assert_eq!(pack([line], "\n", max), want, "{line:?} max {max}");
+        }
+    }
+
+    #[test]
+    fn chunk_order_kept() {
+        let input = numbered_lines(200);
+        let rec = Recorder::new();
+        let complete = |s: &str, u: &str| {
+            rec.record(s, u);
+            Ok("n".to_string())
+        };
+        let mut events = Vec::new();
+        generate(&request(&input, 300, 3), &complete, &mut |e| events.push(e)).unwrap();
+        let total = chunk_total(&events);
+        assert!(total > 2, "expected several chunks, got {total}");
+        let maps = map_calls(&rec.calls(), total);
+        for (i, (s, _)) in maps.iter().enumerate() {
+            assert!(
+                s.contains(&format!("This is part {} of {total}.", i + 1)),
+                "{s}"
+            );
+        }
+        let joined: Vec<&str> = maps.iter().map(|(_, u)| u.as_str()).collect();
+        assert_eq!(joined.join("\n"), input);
+    }
+
+    #[test]
+    fn concurrency_limit_respected() {
+        let input = numbered_lines(200);
+        let current = AtomicUsize::new(0);
+        let max = AtomicUsize::new(0);
+        let complete = |s: &str, _: &str| {
+            if !is_final(s) {
+                let now = current.fetch_add(1, Ordering::SeqCst) + 1;
+                max.fetch_max(now, Ordering::SeqCst);
+                thread::sleep(Duration::from_millis(20));
+                current.fetch_sub(1, Ordering::SeqCst);
+            }
+            Ok("n".to_string())
+        };
+        generate(&request(&input, 300, 2), &complete, &mut |_| {}).unwrap();
+        assert_eq!(max.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn reduce_joins_parts_in_order() {
+        let input = numbered_lines(200);
+        let rec = Recorder::new();
+        let complete = |s: &str, u: &str| {
+            rec.record(s, u);
+            if is_final(s) {
+                Ok("final".to_string())
+            } else {
+                Ok(format!("notes on {}", u.lines().next().unwrap()))
+            }
+        };
+        let mut events = Vec::new();
+        let out = generate(&request(&input, 300, 3), &complete, &mut |e| events.push(e)).unwrap();
+        let total = chunk_total(&events);
+        let calls = rec.calls();
+        assert_eq!(
+            out,
+            Generated {
+                text: "final".into(),
+                calls: total + 1
+            }
+        );
+        let instruction = language_instruction(LANG);
+        let maps = map_calls(&calls, total);
+        for (s, _) in &maps {
+            assert!(s.ends_with(&format!("\n\n{instruction}")), "{s}");
+        }
+        let want_user = maps
+            .iter()
+            .enumerate()
+            .map(|(i, (_, u))| {
+                format!(
+                    "## Part {}\n\nnotes on {}",
+                    i + 1,
+                    u.lines().next().unwrap()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let (final_system, final_user) = calls.last().unwrap();
+        assert_eq!(final_user, &want_user);
+        assert_eq!(
+            final_system,
+            &format!("{BODY}\n\n{CONSOLIDATION}\n\n{instruction}")
+        );
+    }
+
+    #[test]
+    fn multi_round_reduce() {
+        let input = numbered_lines(200);
+        let rec = Recorder::new();
+        let complete = |s: &str, u: &str| {
+            rec.record(s, u);
+            if is_final(s) {
+                Ok("final".to_string())
+            } else if u.starts_with("## Part") {
+                Ok("merged".to_string())
+            } else {
+                Ok("x".repeat(200))
+            }
+        };
+        let out = generate(&request(&input, 400, 2), &complete, &mut |_| {}).unwrap();
+        let calls = rec.calls();
+        let merges = calls
+            .iter()
+            .filter(|(s, u)| !is_final(s) && u.starts_with("## Part"))
+            .count();
+        assert!(merges > 0, "expected merge calls");
+        assert_eq!(out.text, "final");
+        assert_eq!(out.calls, calls.len());
+        for (s, u) in &calls {
+            assert!(fits(s, u, 400), "call over budget");
+        }
+    }
+
+    #[test]
+    fn non_shrinking_notes_fail() {
+        let input = numbered_lines(200);
+        let complete = |_: &str, u: &str| {
+            if u.starts_with("## Part") {
+                Ok(u.to_string())
+            } else {
+                Ok("x".repeat(200))
+            }
+        };
+        let err = generate(&request(&input, 400, 2), &complete, &mut |_| {}).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::Template { ref name, ref message }
+                    if name.is_empty() && message == "notes do not shrink below the context budget"
+            ),
+            "{err}"
+        );
+    }
+
+    fn boom() -> Error {
+        Error::Llm {
+            backend: "fake".into(),
+            message: "boom".into(),
+            transient: false,
+        }
+    }
+
+    #[test]
+    fn first_error_stops_scheduling() {
+        let input = numbered_lines(200);
+        let count = AtomicUsize::new(0);
+        let complete = |_: &str, _: &str| {
+            if count.fetch_add(1, Ordering::SeqCst) == 1 {
+                Err(boom())
+            } else {
+                Ok("n".to_string())
+            }
+        };
+        let err = generate(&request(&input, 300, 1), &complete, &mut |_| {}).unwrap_err();
+        assert!(matches!(err, Error::Llm { ref message, .. } if message == "boom"));
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn first_error_waits_for_in_flight_calls() {
+        let input = numbered_lines(200);
+        let started = AtomicUsize::new(0);
+        let finished = AtomicUsize::new(0);
+        let complete = |_: &str, u: &str| {
+            started.fetch_add(1, Ordering::SeqCst);
+            let result = if u.starts_with("line 000") {
+                Err(boom())
+            } else {
+                thread::sleep(Duration::from_millis(50));
+                Ok("n".to_string())
+            };
+            finished.fetch_add(1, Ordering::SeqCst);
+            result
+        };
+        let err = generate(&request(&input, 300, 2), &complete, &mut |_| {}).unwrap_err();
+        assert!(matches!(err, Error::Llm { .. }), "{err}");
+        let started = started.load(Ordering::SeqCst);
+        assert!(started <= 2, "{started} calls started after the error");
+        assert_eq!(finished.load(Ordering::SeqCst), started);
+    }
+
+    #[test]
+    fn events_in_order() {
+        let input = numbered_lines(200);
+        let caller = thread::current().id();
+        let complete = |_: &str, _: &str| Ok("n".to_string());
+        let mut events = Vec::new();
+        generate(&request(&input, 300, 3), &complete, &mut |e| {
+            assert_eq!(thread::current().id(), caller);
+            events.push(e);
+        })
+        .unwrap();
+        let total = chunk_total(&events);
+        let mut want: Vec<Event> = (1..=total)
+            .map(|done| Event::Chunk { done, total })
+            .collect();
+        want.push(Event::Consolidating);
+        assert_eq!(events, want);
+    }
+}
