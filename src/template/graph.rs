@@ -54,6 +54,7 @@ fn visit(
 
 /// `of` plus every template in `order` that transitively depends on it, in `order`.
 /// `order` must be topological (as returned by [`order`]).
+/// `of` must be in `order`; callers check membership first (an unknown name returns an empty Vec).
 pub fn dependents(order: &[String], of: &str, input_of: InputOf) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for name in order {
