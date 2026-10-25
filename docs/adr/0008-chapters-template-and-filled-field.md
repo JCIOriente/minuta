@@ -1,6 +1,6 @@
 # ADR-0008: Chapters are a built-in template with output kind `chapters`, used through a filled field
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-25
 - Deciders: Arnold Gandarillas Castillo
 - Related: docs/specs/2026-10-25-chapters.md, ADR-0004, ADR-0005, ADR-0006

@@ -1,6 +1,6 @@
 # ADR-0009: `chapters.json` holds whole-second starts; `chapters.md` holds YouTube chapter lines
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-25
 - Deciders: Arnold Gandarillas Castillo
 - Related: docs/specs/2026-10-25-chapters.md, ADR-0007, ADR-0008
