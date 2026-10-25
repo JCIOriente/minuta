@@ -12,7 +12,7 @@ use crate::error::{Error, Result};
 
 use fingerprint::source_digest;
 pub use fingerprint::{fingerprint, source_record, step_fingerprint};
-pub use stale::{plan_stale, Force, Reason};
+pub use stale::{plan_stale, template_reason, Force, Reason};
 pub use state::{JobState, Source, Status, StepName, StepState};
 
 /// What a step sees of its job.
@@ -153,6 +153,60 @@ impl Job {
             state.status = Status::Stale;
             state.reason = Some(reason.to_string());
         }
+        self.save()
+    }
+
+    /// Records template `name` as done with `fingerprint`, then saves `job.json`. Fails with
+    /// `Error::Job`, recording nothing, if any of `artifacts` does not exist.
+    pub fn mark_template_done(
+        &mut self,
+        name: &str,
+        fingerprint: &str,
+        seconds: f64,
+        artifacts: &[PathBuf],
+    ) -> Result<()> {
+        for artifact in artifacts {
+            let path = self.dir.join(artifact);
+            let exists = path
+                .try_exists()
+                .map_err(|e| Error::Job(format!("cannot check {}: {e}", path.display())))?;
+            if !exists {
+                return Err(Error::Job(format!(
+                    "template {name} finished without writing {}",
+                    artifact.display()
+                )));
+            }
+        }
+        let artifacts = artifacts
+            .iter()
+            .map(|a| a.strip_prefix(&self.dir).unwrap_or(a).to_path_buf())
+            .collect();
+        let done = StepState {
+            status: Status::Done,
+            fingerprint: Some(fingerprint.to_owned()),
+            seconds: Some(seconds),
+            reason: None,
+            artifacts,
+        };
+        self.state.templates.insert(name.to_owned(), done);
+        self.save()
+    }
+
+    /// Marks template `name` stale with `reason`, then saves `job.json`.
+    pub fn mark_template_stale(&mut self, name: &str, reason: &Reason) -> Result<()> {
+        let state = self
+            .state
+            .templates
+            .entry(name.to_owned())
+            .or_insert_with(|| StepState {
+                status: Status::Stale,
+                fingerprint: None,
+                seconds: None,
+                reason: None,
+                artifacts: Vec::new(),
+            });
+        state.status = Status::Stale;
+        state.reason = Some(reason.to_string());
         self.save()
     }
 

@@ -108,6 +108,9 @@ pub struct JobState {
     pub name: String,
     pub sources: Vec<Source>,
     pub steps: BTreeMap<StepName, StepState>,
+    /// Template steps by template name. Absent in `job.json` files written before templates.
+    #[serde(default)]
+    pub templates: BTreeMap<String, StepState>,
 }
 
 impl JobState {
@@ -117,6 +120,7 @@ impl JobState {
             name: name.to_owned(),
             sources: Vec::new(),
             steps: BTreeMap::new(),
+            templates: BTreeMap::new(),
         }
     }
 

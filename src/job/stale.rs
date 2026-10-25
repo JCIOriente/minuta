@@ -2,7 +2,8 @@
 
 use std::fmt;
 
-use super::{Job, Status, StepName};
+use super::{Job, Status, StepName, StepState};
+use crate::error::{Error, Result};
 
 /// `--force`: every step, or the named step and every later one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,7 +74,19 @@ pub fn plan_stale(
 
 /// Why `step` must run, judged by its own recorded state only.
 fn own_reason(job: &Job, step: StepName, fingerprint: &str) -> Option<Reason> {
-    let Some(recorded) = job.state.steps.get(&step) else {
+    let recorded = job.state.steps.get(&step);
+    recorded_reason(recorded, fingerprint).or_else(|| {
+        recorded?
+            .artifacts
+            .iter()
+            .find(|artifact| !job.dir.join(artifact).exists())
+            .map(|artifact| Reason::MissingArtifact(artifact.display().to_string()))
+    })
+}
+
+/// The reasons that need no file access: nothing recorded, not done, or another fingerprint.
+fn recorded_reason(recorded: Option<&StepState>, fingerprint: &str) -> Option<Reason> {
+    let Some(recorded) = recorded else {
         return Some(Reason::NotRun);
     };
     if recorded.status != Status::Done {
@@ -82,9 +95,35 @@ fn own_reason(job: &Job, step: StepName, fingerprint: &str) -> Option<Reason> {
     if recorded.fingerprint.as_deref() != Some(fingerprint) {
         return Some(Reason::FingerprintChanged);
     }
-    recorded
-        .artifacts
-        .iter()
-        .find(|artifact| !job.dir.join(artifact).exists())
-        .map(|artifact| Reason::MissingArtifact(artifact.display().to_string()))
+    None
+}
+
+/// Why template `name` must run, judged by its recorded state in `job.json`. `forced` wins over
+/// every other reason. An I/O error while checking an artifact is returned, never read as
+/// "missing".
+pub fn template_reason(
+    job: &Job,
+    name: &str,
+    fingerprint: &str,
+    forced: bool,
+) -> Result<Option<Reason>> {
+    if forced {
+        return Ok(Some(Reason::Forced));
+    }
+    let recorded = job.state.templates.get(name);
+    if let Some(reason) = recorded_reason(recorded, fingerprint) {
+        return Ok(Some(reason));
+    }
+    for artifact in recorded.iter().flat_map(|r| &r.artifacts) {
+        let path = job.dir.join(artifact);
+        let exists = path
+            .try_exists()
+            .map_err(|e| Error::Job(format!("cannot check {}: {e}", path.display())))?;
+        if !exists {
+            return Ok(Some(Reason::MissingArtifact(
+                artifact.display().to_string(),
+            )));
+        }
+    }
+    Ok(None)
 }
