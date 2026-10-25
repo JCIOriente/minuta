@@ -679,7 +679,10 @@ fn numeric_keys_reject_garbage() {
             &no_env,
             Some(file.as_path()),
         ));
-        assert!(msg.contains(key), "{toml:?}: message does not name {key}: {msg}");
+        assert!(
+            msg.contains(key),
+            "{toml:?}: message does not name {key}: {msg}"
+        );
     }
 }
 
