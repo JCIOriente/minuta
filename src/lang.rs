@@ -116,7 +116,7 @@ pub fn name(code: &str) -> Option<&'static str> {
 pub fn validate(code: &str) -> Result<&'static str> {
     name(code).ok_or_else(|| {
         Error::Usage(format!(
-            "unknown language code '{code}' (use a whisper.cpp code such as en, es, pt)"
+            "unknown language code '{code}' (use a whisper.cpp code such as en, es, pt; see `minuta run --help`)"
         ))
     })
 }
@@ -144,6 +144,12 @@ mod tests {
     }
 
     #[test]
+    fn lang_table_has_100_entries() {
+        // Matches whisper.cpp g_lang: 99 + yue.
+        assert_eq!(LANGUAGES.len(), 100);
+    }
+
+    #[test]
     fn lang_table_has_no_duplicate_codes() {
         for (i, (c, _)) in LANGUAGES.iter().enumerate() {
             assert!(LANGUAGES[i + 1..].iter().all(|(d, _)| d != c), "{c}");
@@ -158,6 +164,8 @@ mod tests {
     #[test]
     fn lang_validate_unknown_is_usage() {
         let err = validate("xx").unwrap_err();
-        assert!(matches!(err, Error::Usage(ref m) if m.contains("xx")));
+        assert!(
+            matches!(err, Error::Usage(ref m) if m.contains("xx") && m.contains("see `minuta run --help`"))
+        );
     }
 }

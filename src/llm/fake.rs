@@ -88,7 +88,10 @@ mod tests {
                 ..
             })
         ));
-        assert!(b.complete("s3", "u3", &stop).is_err());
+        assert!(matches!(
+            b.complete("s3", "u3", &stop),
+            Err(Error::Llm { transient: false, ref message, .. }) if message.contains("no replies left")
+        ));
         assert_eq!(
             b.calls(),
             vec![
