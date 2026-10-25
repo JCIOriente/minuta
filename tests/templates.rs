@@ -460,7 +460,10 @@ fn project_overrides_user() {
 fn missing_dir_is_empty() {
     let e = env();
     let c = discover(&e.dirs()).unwrap();
-    assert_eq!(c.templates.keys().collect::<Vec<_>>(), ["summary"]);
+    assert_eq!(
+        c.templates.keys().collect::<Vec<_>>(),
+        ["instagram", "linkedin", "summary", "youtube"]
+    );
     assert_eq!(c.get("summary").unwrap().layer, Layer::BuiltIn);
     assert!(c.get("summary").unwrap().path.is_none());
     assert!(c.invalid.is_empty());
@@ -483,7 +486,7 @@ fn non_md_files_and_dirs_are_ignored() {
     write(&e.project, "notes.txt", "x");
     fs::create_dir_all(e.project.join("sub.md")).unwrap();
     let c = discover(&e.dirs()).unwrap();
-    assert_eq!(c.templates.len(), 1);
+    assert_eq!(c.templates.len(), 4);
     assert!(c.invalid.is_empty());
 }
 
@@ -539,7 +542,10 @@ fn get_unknown_lists_names() {
     let c = discover(&e.dirs()).unwrap();
     let m = usage(c.get("nope"));
     assert!(m.contains("nope"), "{m}");
-    assert!(m.contains("minutes, summary"), "{m}");
+    assert!(
+        m.contains("instagram, linkedin, minutes, summary, youtube"),
+        "{m}"
+    );
 }
 
 #[test]
@@ -559,6 +565,139 @@ fn builtin_summary_parses() {
         assert!(out.contains(word), "{word}");
     }
     assert!(!out.contains("{{"), "{out}");
+}
+
+fn builtin(name: &str) -> Template {
+    let e = env();
+    let c = discover(&Dirs {
+        user: None,
+        project: e.project.clone(),
+    })
+    .unwrap();
+    c.get(name).unwrap().clone()
+}
+
+fn builtin_limit(name: &str, field: Field) -> Limit {
+    let t = builtin(name);
+    spec(&t)
+        .fields
+        .iter()
+        .find(|f| f.field == field)
+        .unwrap()
+        .limit
+}
+
+fn builtin_shape(name: &str, fields: &[Field]) -> String {
+    let t = builtin(name);
+    assert_eq!(t.layer, Layer::BuiltIn);
+    assert_eq!(t.input, Input::Template("summary".into()));
+    let s = spec(&t);
+    assert_eq!(s.format, Format::Plain);
+    let got: Vec<Field> = s.fields.iter().map(|f| f.field).collect();
+    assert_eq!(got, fields);
+    assert!(t.description.is_some());
+    let out = t.render(&vars());
+    assert!(!out.contains("{{"), "{out}");
+    assert!(out.contains("reunion"), "{out}");
+    assert!(out.contains("Do not invent"), "{out}");
+    out
+}
+
+#[test]
+fn builtin_youtube_shape() {
+    let out = builtin_shape(
+        "youtube",
+        &[Field::Title, Field::Body, Field::Tags, Field::ThumbnailText],
+    );
+    assert!(out.contains("searchable"), "{out}");
+    assert!(out.contains("first two lines"), "{out}");
+    assert!(
+        out.contains("in Spanish, that timestamped chapters will be added"),
+        "{out}"
+    );
+}
+
+#[test]
+fn builtin_linkedin_shape() {
+    let out = builtin_shape("linkedin", &[Field::Body, Field::Hashtags]);
+    assert!(out.contains("is a hook"), "{out}");
+    assert!(out.contains("short paragraphs"), "{out}");
+    assert!(out.contains("Do not include links"), "{out}");
+}
+
+#[test]
+fn builtin_instagram_shape() {
+    let out = builtin_shape("instagram", &[Field::Body, Field::Hashtags]);
+    assert!(out.contains("Open with a hook"), "{out}");
+    assert!(out.contains("optional call to action"), "{out}");
+}
+
+fn chars(n: usize) -> Limit {
+    Limit {
+        max_chars: Some(n),
+        max: None,
+    }
+}
+
+#[test]
+fn builtin_youtube_title_limit() {
+    assert_eq!(builtin_limit("youtube", Field::Title), chars(100));
+}
+
+#[test]
+fn builtin_youtube_body_limit() {
+    assert_eq!(builtin_limit("youtube", Field::Body), chars(5000));
+}
+
+#[test]
+fn builtin_youtube_tags_max_limit() {
+    assert_eq!(builtin_limit("youtube", Field::Tags).max, Some(15));
+}
+
+#[test]
+fn builtin_youtube_tags_max_chars_limit() {
+    assert_eq!(builtin_limit("youtube", Field::Tags).max_chars, Some(500));
+}
+
+#[test]
+fn builtin_youtube_thumbnail_text_limit() {
+    assert_eq!(builtin_limit("youtube", Field::ThumbnailText), chars(40));
+}
+
+#[test]
+fn builtin_linkedin_body_limit() {
+    assert_eq!(builtin_limit("linkedin", Field::Body), chars(2800));
+}
+
+#[test]
+fn builtin_linkedin_hashtags_max_limit() {
+    assert_eq!(builtin_limit("linkedin", Field::Hashtags).max, Some(5));
+}
+
+#[test]
+fn builtin_linkedin_hashtags_max_chars_limit() {
+    assert_eq!(
+        builtin_limit("linkedin", Field::Hashtags).max_chars,
+        Some(150)
+    );
+}
+
+#[test]
+fn builtin_instagram_body_limit() {
+    assert_eq!(builtin_limit("instagram", Field::Body), chars(1800));
+}
+
+#[test]
+fn builtin_instagram_hashtags_max_limit() {
+    assert_eq!(builtin_limit("instagram", Field::Hashtags).max, Some(30));
+}
+
+#[test]
+fn builtin_instagram_hashtags_max_chars_limit() {
+    assert_eq!(
+        builtin_limit("instagram", Field::Hashtags).max_chars,
+        Some(390)
+    );
 }
 
 #[cfg(unix)]
