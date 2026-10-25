@@ -3,6 +3,7 @@ use minuta::error::{Error, Result};
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 fn no_env(_: &str) -> Option<String> {
     None
@@ -366,21 +367,9 @@ fn file_loads_all_keys() {
 fn show_lists_every_key_with_source_or_unset() {
     let cfg = Config::resolve(Overrides::default(), &no_env, None).unwrap();
     let shown = cfg.entries();
-    let keys: Vec<&str> = shown.iter().map(|(k, _)| *k).collect();
-    assert_eq!(
-        keys,
-        [
-            "out_dir",
-            "whisper.bin",
-            "whisper.model",
-            "whisper.lang",
-            "ffmpeg.bin",
-            "ffprobe.bin"
-        ]
-    );
     assert!(shown.iter().all(|(k, s)| match s {
         Some(s) => s.source == Source::Default,
-        None => *k == "whisper.model",
+        None => matches!(*k, "whisper.model" | "llm.output_lang" | "llm.concurrency"),
     }));
 }
 
@@ -413,6 +402,14 @@ fn env_snapshot_covers_every_minuta_name() {
         ("MINUTA_WHISPER_LANG", "env-wl".into()),
         ("MINUTA_FFMPEG_BIN", "env-ff".into()),
         ("MINUTA_FFPROBE_BIN", "env-fp".into()),
+        ("MINUTA_LLM", "env-ld".into()),
+        ("MINUTA_OUTPUT_LANG", "env-lo".into()),
+        ("MINUTA_LLM_CONCURRENCY", "2".into()),
+        ("MINUTA_LLM_RETRIES", "5".into()),
+        ("MINUTA_LLM_BACKOFF_MS", "0".into()),
+        ("MINUTA_OLLAMA_URL", "env-ou".into()),
+        ("MINUTA_OLLAMA_NUM_CTX", "4096".into()),
+        ("MINUTA_CLAUDE_BIN", "env-cb".into()),
     ];
     let read = |k: &str| {
         values
@@ -465,7 +462,7 @@ fn entries_map_each_key_to_its_own_file_value() {
     let dir = tempfile::tempdir().unwrap();
     let file = write_config(
         &dir,
-        "out_dir = \"out-v\"\n[whisper]\nbin = \"wb-v\"\nmodel = \"wm-v\"\nlang = \"wl-v\"\n[ffmpeg]\nbin = \"ff-v\"\n[ffprobe]\nbin = \"fp-v\"\n",
+        "out_dir = \"out-v\"\n[whisper]\nbin = \"wb-v\"\nmodel = \"wm-v\"\nlang = \"wl-v\"\n[ffmpeg]\nbin = \"ff-v\"\n[ffprobe]\nbin = \"fp-v\"\n[llm]\ndefault = \"ld-v\"\noutput_lang = \"lo-v\"\nconcurrency = 3\nretries = 4\nbackoff_ms = 150\n[ollama]\nurl = \"ou-v\"\nnum_ctx = 8192\n[claude]\nbin = \"cb-v\"\n",
     );
     let cfg = Config::resolve(Overrides::default(), &no_env, Some(file.as_path())).unwrap();
     let want = [
@@ -475,6 +472,14 @@ fn entries_map_each_key_to_its_own_file_value() {
         ("whisper.lang", "wl-v"),
         ("ffmpeg.bin", "ff-v"),
         ("ffprobe.bin", "fp-v"),
+        ("llm.default", "ld-v"),
+        ("llm.output_lang", "lo-v"),
+        ("llm.concurrency", "3"),
+        ("llm.retries", "4"),
+        ("llm.backoff_ms", "150"),
+        ("ollama.url", "ou-v"),
+        ("ollama.num_ctx", "8192"),
+        ("claude.bin", "cb-v"),
     ];
     let entries = cfg.entries();
     assert_eq!(entries.len(), want.len());
@@ -498,4 +503,311 @@ fn unknown_key_in_ffmpeg_table_names_line() {
         "no file name: {msg}"
     );
     assert!(msg.contains("line 2"), "no line number: {msg}");
+}
+
+#[test]
+fn llm_default_flag_beats_env() {
+    let flags = Overrides {
+        llm_default: Some("claude:sonnet".into()),
+        ..Overrides::default()
+    };
+    let cfg = Config::resolve(flags, &env_with("MINUTA_LLM", "ollama:x"), None).unwrap();
+    assert_key(
+        Some(&cfg.llm_default),
+        Some(("claude:sonnet", Source::Flag)),
+        "llm.default",
+    );
+}
+
+#[test]
+fn output_lang_flag_beats_env() {
+    let flags = Overrides {
+        llm_output_lang: Some("Spanish".into()),
+        ..Overrides::default()
+    };
+    let cfg = Config::resolve(flags, &env_with("MINUTA_OUTPUT_LANG", "French"), None).unwrap();
+    assert_key(
+        cfg.llm_output_lang.as_ref(),
+        Some(("Spanish", Source::Flag)),
+        "llm.output_lang",
+    );
+}
+
+/// One row per new config key: its TOML text with `file_value`, its env var with `env_value`,
+/// and its default (`None` when unset).
+struct NewCase {
+    key: &'static str,
+    toml: &'static str,
+    file_value: &'static str,
+    env: &'static str,
+    env_value: &'static str,
+    default: Option<&'static str>,
+    get: fn(&Config) -> Option<&Setting>,
+}
+
+fn new_cases() -> Vec<NewCase> {
+    vec![
+        NewCase {
+            key: "llm.default",
+            toml: "[llm]\ndefault = \"file\"\n",
+            file_value: "file",
+            env: "MINUTA_LLM",
+            env_value: "env",
+            default: Some("ollama:gemma4:26b"),
+            get: |c| Some(&c.llm_default),
+        },
+        NewCase {
+            key: "llm.output_lang",
+            toml: "[llm]\noutput_lang = \"file\"\n",
+            file_value: "file",
+            env: "MINUTA_OUTPUT_LANG",
+            env_value: "env",
+            default: None,
+            get: |c| c.llm_output_lang.as_ref(),
+        },
+        NewCase {
+            key: "llm.concurrency",
+            toml: "[llm]\nconcurrency = 2\n",
+            file_value: "2",
+            env: "MINUTA_LLM_CONCURRENCY",
+            env_value: "4",
+            default: None,
+            get: |c| c.llm_concurrency.as_ref(),
+        },
+        NewCase {
+            key: "llm.retries",
+            toml: "[llm]\nretries = 5\n",
+            file_value: "5",
+            env: "MINUTA_LLM_RETRIES",
+            env_value: "6",
+            default: Some("3"),
+            get: |c| Some(&c.llm_retries),
+        },
+        NewCase {
+            key: "llm.backoff_ms",
+            toml: "[llm]\nbackoff_ms = 100\n",
+            file_value: "100",
+            env: "MINUTA_LLM_BACKOFF_MS",
+            env_value: "200",
+            default: Some("2000"),
+            get: |c| Some(&c.llm_backoff_ms),
+        },
+        NewCase {
+            key: "ollama.url",
+            toml: "[ollama]\nurl = \"file\"\n",
+            file_value: "file",
+            env: "MINUTA_OLLAMA_URL",
+            env_value: "env",
+            default: Some("http://127.0.0.1:11434"),
+            get: |c| Some(&c.ollama_url),
+        },
+        NewCase {
+            key: "ollama.num_ctx",
+            toml: "[ollama]\nnum_ctx = 8192\n",
+            file_value: "8192",
+            env: "MINUTA_OLLAMA_NUM_CTX",
+            env_value: "4096",
+            default: Some("16384"),
+            get: |c| Some(&c.ollama_num_ctx),
+        },
+        NewCase {
+            key: "claude.bin",
+            toml: "[claude]\nbin = \"file\"\n",
+            file_value: "file",
+            env: "MINUTA_CLAUDE_BIN",
+            env_value: "env",
+            default: Some("claude"),
+            get: |c| Some(&c.claude_bin),
+        },
+    ]
+}
+
+#[test]
+fn each_new_key_env_beats_file() {
+    for case in new_cases() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write_config(&dir, case.toml);
+        let env = env_with(case.env, case.env_value);
+        let cfg = Config::resolve(Overrides::default(), &env, Some(file.as_path())).unwrap();
+        assert_key(
+            (case.get)(&cfg),
+            Some((case.env_value, Source::Env)),
+            case.key,
+        );
+    }
+}
+
+#[test]
+fn each_new_key_file_beats_default() {
+    for case in new_cases() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write_config(&dir, case.toml);
+        let cfg = Config::resolve(Overrides::default(), &no_env, Some(file.as_path())).unwrap();
+        assert_key(
+            (case.get)(&cfg),
+            Some((case.file_value, Source::File)),
+            case.key,
+        );
+    }
+}
+
+#[test]
+fn each_new_key_default() {
+    for case in new_cases() {
+        let cfg = Config::resolve(Overrides::default(), &no_env, None).unwrap();
+        let want = case.default.map(|d| (d, Source::Default));
+        assert_key((case.get)(&cfg), want, case.key);
+    }
+}
+
+#[test]
+fn numeric_keys_reject_garbage() {
+    let rows = [
+        ("llm.retries", "[llm]\nretries = \"abc\"\n"),
+        ("llm.retries", "[llm]\nretries = 0\n"),
+        ("llm.concurrency", "[llm]\nconcurrency = \"abc\"\n"),
+        ("llm.concurrency", "[llm]\nconcurrency = 0\n"),
+        ("llm.backoff_ms", "[llm]\nbackoff_ms = \"abc\"\n"),
+        ("ollama.num_ctx", "[ollama]\nnum_ctx = \"abc\"\n"),
+        ("ollama.num_ctx", "[ollama]\nnum_ctx = 0\n"),
+        ("llm.backoff_ms", "[llm]\nbackoff_ms = 1.5\n"),
+        ("llm.retries", "[llm]\nretries = true\n"),
+    ];
+    for (key, toml) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write_config(&dir, toml);
+        let msg = config_err(Config::resolve(
+            Overrides::default(),
+            &no_env,
+            Some(file.as_path()),
+        ));
+        assert!(
+            msg.contains(key),
+            "{toml:?}: message does not name {key}: {msg}"
+        );
+    }
+}
+
+#[test]
+fn backoff_zero_allowed() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_config(&dir, "[llm]\nbackoff_ms = 0\n");
+    let cfg = Config::resolve(Overrides::default(), &no_env, Some(file.as_path())).unwrap();
+    assert_eq!(cfg.backoff(), Duration::ZERO);
+}
+
+#[test]
+fn typed_accessors_return_resolved_values() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_config(
+        &dir,
+        "[llm]\nconcurrency = 2\nretries = 5\nbackoff_ms = 100\n[ollama]\nnum_ctx = 8192\n",
+    );
+    let cfg = Config::resolve(Overrides::default(), &no_env, Some(file.as_path())).unwrap();
+    assert_eq!(cfg.retries(), 5);
+    assert_eq!(cfg.backoff(), Duration::from_millis(100));
+    assert_eq!(cfg.num_ctx(), 8192);
+    assert_eq!(cfg.concurrency(), Some(2));
+
+    let defaults = Config::resolve(Overrides::default(), &no_env, None).unwrap();
+    assert_eq!(defaults.retries(), 3);
+    assert_eq!(defaults.backoff(), Duration::from_millis(2000));
+    assert_eq!(defaults.num_ctx(), 16384);
+    assert_eq!(defaults.concurrency(), None);
+}
+
+#[test]
+fn entries_list_new_keys() {
+    let cfg = Config::resolve(Overrides::default(), &no_env, None).unwrap();
+    let keys: Vec<&str> = cfg.entries().iter().map(|(k, _)| *k).collect();
+    assert_eq!(
+        keys,
+        [
+            "out_dir",
+            "whisper.bin",
+            "whisper.model",
+            "whisper.lang",
+            "ffmpeg.bin",
+            "ffprobe.bin",
+            "llm.default",
+            "llm.output_lang",
+            "llm.concurrency",
+            "llm.retries",
+            "llm.backoff_ms",
+            "ollama.url",
+            "ollama.num_ctx",
+            "claude.bin",
+        ]
+    );
+}
+
+#[test]
+fn unknown_llm_key_rejected() {
+    for (table, toml) in [
+        ("llm", "[llm]\ndefualt = \"x\"\n"),
+        ("ollama", "[ollama]\nurl2 = \"x\"\n"),
+        ("claude", "[claude]\nbinary = \"x\"\n"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write_config(&dir, toml);
+        let msg = config_err(Config::resolve(
+            Overrides::default(),
+            &no_env,
+            Some(file.as_path()),
+        ));
+        assert!(msg.contains("unknown field"), "[{table}]: {msg}");
+        assert!(msg.contains("line 2"), "[{table}] no line number: {msg}");
+    }
+}
+
+#[test]
+fn numeric_env_rejects_garbage() {
+    let rows = [
+        ("llm.retries", "MINUTA_LLM_RETRIES"),
+        ("llm.backoff_ms", "MINUTA_LLM_BACKOFF_MS"),
+        ("llm.concurrency", "MINUTA_LLM_CONCURRENCY"),
+        ("ollama.num_ctx", "MINUTA_OLLAMA_NUM_CTX"),
+    ];
+    for (key, env) in rows {
+        let msg = config_err(Config::resolve(
+            Overrides::default(),
+            &env_with(env, "abc"),
+            None,
+        ));
+        assert!(
+            msg.contains(key),
+            "{env}=abc: message does not name {key}: {msg}"
+        );
+    }
+}
+
+#[test]
+fn numeric_keys_accept_toml_strings() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_config(
+        &dir,
+        "[llm]\nretries = \"5\"\n[ollama]\nnum_ctx = \"8192\"\n",
+    );
+    let cfg = Config::resolve(Overrides::default(), &no_env, Some(file.as_path())).unwrap();
+    assert_eq!(cfg.retries(), 5);
+    assert_eq!(cfg.num_ctx(), 8192);
+}
+
+#[test]
+fn datetime_numeric_value_message_names_key_without_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_config(&dir, "[llm]\nretries = 1979-05-27\n");
+    let msg = config_err(Config::resolve(
+        Overrides::default(),
+        &no_env,
+        Some(file.as_path()),
+    ));
+    assert!(
+        msg.contains("llm.retries"),
+        "message does not name the key: {msg}"
+    );
+    assert!(
+        !msg.contains("$__toml_private"),
+        "leaked toml marker: {msg}"
+    );
 }

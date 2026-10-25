@@ -678,7 +678,15 @@ fn config_show_lists_values_and_sources() {
          whisper.model = (unset)\n\
          whisper.lang = es (file)\n\
          ffmpeg.bin = /opt/ffmpeg (env)\n\
-         ffprobe.bin = ffprobe (default)\n"
+         ffprobe.bin = ffprobe (default)\n\
+         llm.default = ollama:gemma4:26b (default)\n\
+         llm.output_lang = (unset)\n\
+         llm.concurrency = (unset)\n\
+         llm.retries = 3 (default)\n\
+         llm.backoff_ms = 2000 (default)\n\
+         ollama.url = http://127.0.0.1:11434 (default)\n\
+         ollama.num_ctx = 16384 (default)\n\
+         claude.bin = claude (default)\n"
     );
 }
 

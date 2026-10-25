@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -10,7 +12,7 @@ const DEFAULT_OUT_DIR: &str = "./minuta-out";
 const DEFAULT_LANG: &str = "auto";
 
 /// Every environment variable minuta reads.
-const ENV_NAMES: [&str; 7] = [
+const ENV_NAMES: [&str; 15] = [
     "MINUTA_CONFIG",
     "MINUTA_OUT_DIR",
     "MINUTA_WHISPER_BIN",
@@ -18,6 +20,14 @@ const ENV_NAMES: [&str; 7] = [
     "MINUTA_WHISPER_LANG",
     "MINUTA_FFMPEG_BIN",
     "MINUTA_FFPROBE_BIN",
+    "MINUTA_LLM",
+    "MINUTA_OUTPUT_LANG",
+    "MINUTA_LLM_CONCURRENCY",
+    "MINUTA_LLM_RETRIES",
+    "MINUTA_LLM_BACKOFF_MS",
+    "MINUTA_OLLAMA_URL",
+    "MINUTA_OLLAMA_NUM_CTX",
+    "MINUTA_CLAUDE_BIN",
 ];
 
 /// Where a resolved value came from, highest precedence first.
@@ -45,6 +55,8 @@ pub struct Overrides {
     pub whisper_lang: Option<String>,
     pub ffmpeg_bin: Option<String>,
     pub ffprobe_bin: Option<String>,
+    pub llm_default: Option<String>,
+    pub llm_output_lang: Option<String>,
 }
 
 /// The merged configuration, with the file it was read from (if resolved).
@@ -58,6 +70,16 @@ pub struct Config {
     pub whisper_lang: Setting,
     pub ffmpeg_bin: Setting,
     pub ffprobe_bin: Setting,
+    pub llm_default: Setting,
+    /// `None` when no layer sets a non-empty value: the detected speech language is used.
+    pub llm_output_lang: Option<Setting>,
+    /// `None` when unset: the backend picks its own default.
+    pub llm_concurrency: Option<Setting>,
+    pub llm_retries: Setting,
+    pub llm_backoff_ms: Setting,
+    pub ollama_url: Setting,
+    pub ollama_num_ctx: Setting,
+    pub claude_bin: Setting,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -67,6 +89,50 @@ struct FileConfig {
     whisper: Option<ToolTable>,
     ffmpeg: Option<BinTable>,
     ffprobe: Option<BinTable>,
+    llm: Option<LlmTable>,
+    ollama: Option<OllamaTable>,
+    claude: Option<BinTable>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LlmTable {
+    default: Option<String>,
+    output_lang: Option<String>,
+    concurrency: Option<Scalar>,
+    retries: Option<Scalar>,
+    backoff_ms: Option<Scalar>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OllamaTable {
+    url: Option<String>,
+    num_ctx: Option<Scalar>,
+}
+
+/// A numeric key may be written as a TOML integer or as a string. Any other TOML value
+/// (float, bool, ...) is kept as its text, so `Config::resolve` rejects it by key name
+/// like any other non-integer.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum Scalar {
+    Int(i64),
+    Text(String),
+    Other(toml::Value),
+}
+
+impl Scalar {
+    fn into_text(self) -> String {
+        match self {
+            Scalar::Int(n) => n.to_string(),
+            Scalar::Text(text) => text,
+            // toml's Display wraps a datetime in its private marker table; the datetime itself
+            // is what the user wrote.
+            Scalar::Other(toml::Value::Datetime(date)) => date.to_string(),
+            Scalar::Other(value) => value.to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -143,8 +209,11 @@ impl Config {
         let whisper = from_file.whisper.unwrap_or_default();
         let ffmpeg = from_file.ffmpeg.unwrap_or_default();
         let ffprobe = from_file.ffprobe.unwrap_or_default();
+        let llm = from_file.llm.unwrap_or_default();
+        let ollama = from_file.ollama.unwrap_or_default();
+        let claude = from_file.claude.unwrap_or_default();
 
-        Ok(Config {
+        let config = Config {
             path,
             out_dir: pick(
                 flags.out_dir,
@@ -181,7 +250,82 @@ impl Config {
                 ffprobe.bin,
                 "ffprobe",
             ),
-        })
+            llm_default: pick(
+                flags.llm_default,
+                env("MINUTA_LLM"),
+                llm.default,
+                "ollama:gemma4:26b",
+            ),
+            llm_output_lang: pick_opt(
+                flags.llm_output_lang,
+                env("MINUTA_OUTPUT_LANG"),
+                llm.output_lang,
+            ),
+            llm_concurrency: pick_opt(
+                None,
+                env("MINUTA_LLM_CONCURRENCY"),
+                llm.concurrency.map(Scalar::into_text),
+            ),
+            llm_retries: pick(
+                None,
+                env("MINUTA_LLM_RETRIES"),
+                llm.retries.map(Scalar::into_text),
+                "3",
+            ),
+            llm_backoff_ms: pick(
+                None,
+                env("MINUTA_LLM_BACKOFF_MS"),
+                llm.backoff_ms.map(Scalar::into_text),
+                "2000",
+            ),
+            ollama_url: pick(
+                None,
+                env("MINUTA_OLLAMA_URL"),
+                ollama.url,
+                "http://127.0.0.1:11434",
+            ),
+            ollama_num_ctx: pick(
+                None,
+                env("MINUTA_OLLAMA_NUM_CTX"),
+                ollama.num_ctx.map(Scalar::into_text),
+                "16384",
+            ),
+            claude_bin: pick(None, env("MINUTA_CLAUDE_BIN"), claude.bin, "claude"),
+        };
+        config.check_numbers()?;
+        Ok(config)
+    }
+
+    /// Reject numeric settings that the accessors below would not be able to parse.
+    /// Runs after every layer is merged, so a bad value is caught whichever layer it came from.
+    fn check_numbers(&self) -> Result<()> {
+        int_setting::<u32>(&self.llm_retries, "llm.retries", 1)?;
+        int_setting::<u64>(&self.llm_backoff_ms, "llm.backoff_ms", 0)?;
+        int_setting::<usize>(&self.ollama_num_ctx, "ollama.num_ctx", 1)?;
+        if let Some(setting) = &self.llm_concurrency {
+            int_setting::<usize>(setting, "llm.concurrency", 1)?;
+        }
+        Ok(())
+    }
+
+    /// Retry attempts in total, including the first. Valid by `check_numbers`.
+    pub fn retries(&self) -> u32 {
+        parse_checked(&self.llm_retries)
+    }
+
+    /// Initial delay between attempts; doubles after each failed attempt.
+    pub fn backoff(&self) -> Duration {
+        Duration::from_millis(parse_checked(&self.llm_backoff_ms))
+    }
+
+    /// Context window requested from Ollama, in tokens.
+    pub fn num_ctx(&self) -> usize {
+        parse_checked(&self.ollama_num_ctx)
+    }
+
+    /// Parallel LLM calls, or `None` to let the backend decide.
+    pub fn concurrency(&self) -> Option<usize> {
+        self.llm_concurrency.as_ref().map(parse_checked)
     }
 
     /// Every key with its resolved setting in documented order; `None` means unset.
@@ -193,6 +337,14 @@ impl Config {
             ("whisper.lang", Some(&self.whisper_lang)),
             ("ffmpeg.bin", Some(&self.ffmpeg_bin)),
             ("ffprobe.bin", Some(&self.ffprobe_bin)),
+            ("llm.default", Some(&self.llm_default)),
+            ("llm.output_lang", self.llm_output_lang.as_ref()),
+            ("llm.concurrency", self.llm_concurrency.as_ref()),
+            ("llm.retries", Some(&self.llm_retries)),
+            ("llm.backoff_ms", Some(&self.llm_backoff_ms)),
+            ("ollama.url", Some(&self.ollama_url)),
+            ("ollama.num_ctx", Some(&self.ollama_num_ctx)),
+            ("claude.bin", Some(&self.claude_bin)),
         ]
     }
 }
@@ -210,6 +362,33 @@ fn pick_opt(flag: Option<String>, env: Option<String>, file: Option<String>) -> 
             .filter(|v| !v.is_empty())
             .map(|value| Setting { value, source })
     })
+}
+
+/// Parse a numeric setting that `Config::resolve` has already validated.
+fn parse_checked<T: FromStr>(setting: &Setting) -> T {
+    setting
+        .value
+        .parse()
+        .unwrap_or_else(|_| panic!("{} was not validated in Config::resolve", setting.value))
+}
+
+/// Parse a whole number that must be at least `min`. The message names the key.
+fn int_setting<T: FromStr + PartialOrd + std::fmt::Display>(
+    setting: &Setting,
+    key: &str,
+    min: T,
+) -> Result<T> {
+    setting
+        .value
+        .parse::<T>()
+        .ok()
+        .filter(|n| *n >= min)
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "{key} must be an integer of at least {min}, got {:?}",
+                setting.value
+            ))
+        })
 }
 
 fn pick(flag: Option<String>, env: Option<String>, file: Option<String>, default: &str) -> Setting {
