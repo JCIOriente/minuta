@@ -233,8 +233,10 @@ The backend for a template is chosen by `--llm` > template `llm:` > `llm.default
 ```
 - Fingerprint = SHA-256 of: `"template"`, the name, the raw file bytes, `PROMPT_VERSION` (a
   constant bumped when minuta's prompt wrappers change), the backend id, the context budget,
-  the output language code, and the content hash of the input artifact (`transcript.json` or
-  `<input>.md`).
+  the output language code, the content hash of the input artifact (`transcript.json` or
+  `<input>.md`), and the rendered variable values (`output_lang`, `output_lang_code`,
+  `speech_lang`, `job_name`, `duration`). The variables come from `transcript.json` even
+  when the input is another template, so a chained template reruns when they change.
 - The fingerprint is computed just before the template would run, after its input exists.
   Upstream changes therefore propagate through content, not through a precomputed chain.
 - Stale reasons reuse `Reason`: not run, unfinished, forced, fingerprint changed, missing

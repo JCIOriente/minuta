@@ -121,13 +121,13 @@ impl Job { pub fn mark_template_stale(&mut self, name: &str, reason: &Reason) ->
                                      artifacts: &[PathBuf]) -> Result<()>; }
 
 // generate.rs (T10)
-pub fn output_lang(flag: Option<&str>, template: Option<&str>, config: Option<&str>, detected: &str) -> Result<String>; // a code
+pub fn output_lang(name: &str, flag: Option<&str>, template: Option<&str>, config: Option<&str>, detected: &str) -> Result<String>; // a code; name = template, for the unknown-detected error
 pub fn backend_id(flag: Option<&BackendId>, template: Option<&BackendId>, default: &BackendId) -> BackendId;
 pub struct TemplateRun<'a> { pub template: &'a Template, pub backend: &'a dyn Backend,
                              pub output_lang: String /* code */, pub forced: bool }
 impl TemplateRun<'_> {
     pub fn artifact(&self) -> PathBuf;                               // "<name>.md"
-    pub fn fingerprint(&self, ctx: &Ctx) -> Result<String>;          // reads the input artifact
+    pub fn fingerprint(&self, ctx: &Ctx, job_name: &str) -> Result<String>; // reads the input artifact and transcript.json (for the variables)
     pub fn execute(&self, ctx: &Ctx, job_name: &str, policy: &Policy, concurrency: usize,
                    interrupt: &AtomicBool, on_event: &mut dyn FnMut(Event)) -> Result<Generated>;
 }
@@ -341,14 +341,14 @@ Reviews run on opus.
 - Owns: `src/generate.rs`, `tests/generate.rs`
 - Touches (read-only or additive): `src/template/**`, `src/llm/**`, `src/job/**`, `src/lang.rs`, `src/transcript.rs`
 - Acceptance:
-  - [ ] `output_lang` precedence flag > template > config > detected, one test per layer; an unknown detected code with no other source is a Usage error suggesting `--output-lang`; every chosen code is validated with `lang::validate`
+  - [ ] `output_lang` precedence flag > template > config > detected, one test per layer; an unknown detected code with no other source is an `Error::Template` (exit 1) naming the template and suggesting `--output-lang`; every chosen code is validated with `lang::validate` (an unknown flag, template or config code is a Usage error)
   - [ ] `backend_id` precedence flag > template > default, one test per layer
-  - [ ] `fingerprint` covers `"template"`, the name, `raw`, `PROMPT_VERSION`, `backend.id()`, `context_tokens()`, the output language code and the SHA-256 of the input artifact bytes (`transcript.json` or `<input>.md`); changing any one changes it (one assertion per part); a missing input artifact is an error naming it
+  - [ ] `fingerprint` covers `"template"`, the name, `raw`, `PROMPT_VERSION`, `backend.id()`, `context_tokens()`, the output language code, the SHA-256 of the input artifact bytes (`transcript.json` or `<input>.md`) and the rendered variable values (all five `Vars` fields, from `transcript.json` even for a template input); changing any one changes it (one assertion per part); a missing input artifact is an error naming it
   - [ ] `execute` builds `Vars` (output and speech language names, job name, `duration` as `h:mm:ss` from the last segment end), renders the body, feeds `transcript_text` (or the upstream Markdown) to `chunk::generate` with `call` as `complete` (refresh = `forced`), and writes `<name>.md` with `write_atomic`
   - [ ] a transcript with zero segments fails with `Error::Template { message: "transcript is empty" }` and makes no call
   - [ ] `Error::Template` from `generate` carries the template name
   - [ ] with a `ScriptedBackend`, a second `execute` with an unchanged fingerprint inputs reads every call from the cache (backend receives no calls)
-- Tests first: `output_lang_flag_wins`, `output_lang_template_beats_config`, `output_lang_config_beats_detected`, `output_lang_detected_default`, `output_lang_unknown_detected_is_usage`, `backend_flag_wins`, `backend_template_beats_default`, `backend_default`, `fingerprint_sensitive_to_each_part` (table), `fingerprint_missing_input_is_error`, `execute_writes_markdown`, `execute_renders_variables`, `empty_transcript_fails_without_calls`, `second_execute_hits_cache`, `forced_execute_refreshes_cache`
+- Tests first: `output_lang_flag_wins`, `output_lang_template_beats_config`, `output_lang_config_beats_detected`, `output_lang_detected_default`, `output_lang_unknown_detected_fails_the_template`, `backend_flag_wins`, `backend_template_beats_default`, `backend_default`, `fingerprint_sensitive_to_each_part` (table), `fingerprint_sensitive_to_each_variable` (table), `fingerprint_missing_input_is_error`, `execute_writes_markdown`, `execute_renders_variables`, `empty_transcript_fails_without_calls`, `second_execute_hits_cache`, `forced_execute_refreshes_cache`
 - Notes: this is the heart of ADR-0005. The fingerprint is computed only after the input exists. Never precompute dependents' fingerprints.
 
 ### T11: Runner, CLI, progress, preflight and doctor  (#36)
