@@ -137,10 +137,16 @@ mod tests {
         let b = ScriptedBackend::new("fake:x", 1000, vec![Ok("a".into()), Ok("b".into())]);
         let stop = AtomicBool::new(false);
         let schema = serde_json::json!({"type": "object"});
-        b.complete_json("s", "u", &schema, &stop).unwrap();
-        b.complete("s", "u", &stop).unwrap();
+        b.complete_json("s1", "u1", &schema, &stop).unwrap();
+        b.complete("s2", "u2", &stop).unwrap();
         assert_eq!(b.schemas(), vec![Some(schema), None]);
-        assert_eq!(b.calls().len(), 2);
+        assert_eq!(
+            b.calls(),
+            vec![
+                ("s1".to_string(), "u1".to_string()),
+                ("s2".to_string(), "u2".to_string()),
+            ]
+        );
     }
 
     #[test]
