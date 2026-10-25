@@ -434,4 +434,17 @@ None.
 
 ## Implementation status
 Updated by the PRs that implement this spec.
-- [ ] Plan: docs/plans/2026-10-24-templates-and-backends.md (not written yet)
+- [x] Plan: docs/plans/2026-10-24-templates-and-backends.md (#26)
+- [x] T1 foundations: module skeleton, error variants, Backend trait, language table (#39)
+- [x] T2 config keys for LLMs and output language (#40)
+- [x] T3 template files, variables and layered discovery (#46)
+- [x] T4 template dependency order and dependents (#41)
+- [x] T5 Ollama backend and fake Ollama server (#45)
+- [x] T6 `claude -p` backend, `tools::run_capture` and fake claude (#43)
+- [x] T7 call cache, retries and output cleanup (#44)
+- [x] T8 prompt assembly, chunking and consolidation (#49)
+- [x] T9 template step state in `job.json` (#42)
+- [x] T10 template step with content-hash fingerprint (#50)
+- [x] T11 runner, CLI, progress, preflight and doctor (this PR, issue #36)
+- [x] Fix: flaky backoff interrupt bound in CI (#48)
+- [ ] T12 integration suite and opt-in LLM e2e (#37)

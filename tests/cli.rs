@@ -12,6 +12,9 @@ use std::time::{Duration, Instant};
 use assert_cmd::assert::OutputAssertExt;
 use predicates::str::contains;
 
+/// An address no test server ever binds (port 9, discard), so no real Ollama is reached.
+const NO_OLLAMA: &str = "http://127.0.0.1:9";
+
 const FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/whisper/sample.json"
@@ -152,6 +155,11 @@ echo "[00:00:00.000 --> 00:00:03.500]   Buenos dias a todos."
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // Never probe a real local Ollama. `config` is left alone: `config show` lists the
+        // default URL.
+        if args.first() != Some(&"config") {
+            cmd.env("MINUTA_OLLAMA_URL", NO_OLLAMA);
+        }
         cmd
     }
 
@@ -712,4 +720,674 @@ fn models_pull_unknown_name_is_usage_error() {
         .assert()
         .code(2)
         .stderr(contains("tiny, base, small, medium, large-v3"));
+}
+
+// ---------------------------------------------------------------------------------------
+// Templates and LLM backends. The fake Ollama answers chats; the fake `claude` fixture
+// stands in for Claude Code.
+
+#[path = "support/fake_ollama.rs"]
+mod fake_ollama;
+
+use fake_ollama::{FakeOllama, Reply};
+use std::sync::Arc;
+
+const FAKE_CLAUDE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/claude");
+
+/// A fake Ollama serving the default model; every chat gets `reply`.
+fn ollama(reply: &'static str) -> FakeOllama {
+    ollama_with(Arc::new(move |_| Reply::chat(reply)))
+}
+
+fn ollama_with(responder: fake_ollama::Responder) -> FakeOllama {
+    FakeOllama::start(
+        &["gemma4:26b"],
+        serde_json::json!({
+            "model_info": {"gemma3.context_length": 32768},
+            "capabilities": ["completion"]
+        }),
+        responder,
+    )
+}
+
+impl Env {
+    /// Writes `<dir>/<name>.md`, where `dir` is relative to the temp dir.
+    fn template(&self, dir: &str, name: &str, text: &str) {
+        let dir = self.path(dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(format!("{name}.md")), text).unwrap();
+    }
+
+    /// `command` pointed at `fake`, with zero retry backoff and the fake `claude`.
+    fn llm_command(&self, args: &[&str], fake: &FakeOllama) -> Command {
+        let mut cmd = self.command(args);
+        cmd.env("MINUTA_OLLAMA_URL", fake.url())
+            .env("MINUTA_LLM_BACKOFF_MS", "0")
+            .env("MINUTA_CLAUDE_BIN", FAKE_CLAUDE)
+            // The fake `claude` needs `cat`; the fake tools in `bin/` still come first.
+            .env("PATH", format!("{}:/usr/bin:/bin", self.bin().display()));
+        cmd
+    }
+
+    fn minuta_llm(&self, args: &[&str], fake: &FakeOllama) -> Output {
+        self.run_cmd(self.llm_command(args, fake))
+    }
+}
+
+fn template_state(job: &Path, name: &str) -> serde_json::Value {
+    let json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(job.join("job.json")).unwrap()).unwrap();
+    json["templates"][name].clone()
+}
+
+#[test]
+fn run_accepts_repeated_templates() {
+    let env = Env::new();
+    env.template("templates", "a", "Write A.");
+    env.template("templates", "b", "Write B.");
+    let fake = ollama("generated text");
+    let out = env.minuta_llm(&["run", "clase-4.mp4", "-t", "a", "--template", "b"], &fake);
+    out.clone().assert().success();
+    let job = env.job_dir("clase-4");
+    assert_eq!(stdout(&out), format!("{}\n", job.display()));
+    for name in ["a", "b"] {
+        assert_eq!(
+            fs::read_to_string(job.join(format!("{name}.md"))).unwrap(),
+            "generated text\n",
+            "{name}"
+        );
+        assert_eq!(template_state(&job, name)["status"], "done", "{name}");
+    }
+    assert_eq!(fake.chat_count(), 2);
+}
+
+#[test]
+fn transcribe_rejects_template_flag() {
+    let env = Env::new();
+    env.minuta(&["transcribe", "clase-4.mp4", "-t", "summary"])
+        .assert()
+        .code(2);
+    env.minuta(&["transcribe", "clase-4.mp4", "--template", "summary"])
+        .assert()
+        .code(2);
+    env.minuta(&["transcribe", "clase-4.mp4", "--llm", "claude"])
+        .assert()
+        .code(2);
+    env.minuta(&["transcribe", "clase-4.mp4", "--output-lang", "en"])
+        .assert()
+        .code(2);
+    assert!(!env.path("minuta-out").exists());
+}
+
+#[test]
+fn force_accepts_template_name() {
+    let env = Env::new();
+    let fake = ollama("summary text");
+    env.minuta_llm(&["run", "clase-4.mp4", "-t", "summary"], &fake)
+        .assert()
+        .success();
+    assert_eq!(fake.chat_count(), 1);
+    let calls = env.calls();
+
+    let out = env.minuta_llm(
+        &["run", "clase-4.mp4", "-t", "summary", "--force", "summary"],
+        &fake,
+    );
+    out.clone().assert().success();
+    assert_eq!(
+        fake.chat_count(),
+        2,
+        "a forced template skips the call cache"
+    );
+    assert_eq!(env.calls(), calls, "no pipeline step is forced");
+    let err = stderr(&out);
+    assert_eq!(cached_lines(&err), 5, "stderr was {err}");
+    assert!(!err.contains("summary     cached"), "stderr was {err}");
+}
+
+#[test]
+fn force_template_also_forces_its_dependents() {
+    let env = Env::new();
+    env.template("templates", "a", "Write A.");
+    env.template("templates", "b", "---\ninput: a\n---\nWrite B.");
+    env.template("templates", "c", "Write C.");
+    let fake = ollama("text");
+    let args = ["run", "clase-4.mp4", "-t", "b", "-t", "c"];
+    env.minuta_llm(&args, &fake).assert().success();
+    assert_eq!(fake.chat_count(), 3);
+
+    let mut forced = args.to_vec();
+    forced.extend(["--force", "a"]);
+    let out = env.minuta_llm(&forced, &fake);
+    out.clone().assert().success();
+    assert_eq!(fake.chat_count(), 5, "a and b rerun, c stays cached");
+    let err = stderr(&out);
+    assert!(err.contains("[8/8] c           cached"), "stderr was {err}");
+}
+
+#[test]
+fn force_step_also_forces_templates() {
+    let env = Env::new();
+    let fake = ollama("summary text");
+    env.minuta_llm(&["run", "clase-4.mp4", "-t", "summary"], &fake)
+        .assert()
+        .success();
+    let out = env.minuta_llm(
+        &["run", "clase-4.mp4", "-t", "summary", "--force", "outputs"],
+        &fake,
+    );
+    out.clone().assert().success();
+    assert_eq!(fake.chat_count(), 2);
+    assert_eq!(cached_lines(&stderr(&out)), 4, "{}", stderr(&out));
+}
+
+#[test]
+fn force_unknown_is_usage() {
+    let env = Env::new();
+    let fake = ollama("unused");
+    let out = env.minuta_llm(
+        &["run", "clase-4.mp4", "-t", "summary", "--force", "nope"],
+        &fake,
+    );
+    out.clone().assert().code(2).stdout("");
+    assert!(stderr(&out).contains("`nope`"), "{}", stderr(&out));
+    assert!(stderr(&out).contains("summary"), "{}", stderr(&out));
+    assert!(!env.path("minuta-out").exists());
+    assert!(
+        fake.requests().is_empty(),
+        "resolution comes before preflight"
+    );
+}
+
+#[test]
+fn unknown_template_exits_2_before_job_folder() {
+    let env = Env::new();
+    let fake = ollama("unused");
+    let out = env.minuta_llm(&["run", "clase-4.mp4", "-t", "nope"], &fake);
+    out.clone().assert().code(2).stdout("");
+    let err = stderr(&out);
+    assert!(err.contains("unknown template 'nope'"), "{err}");
+    assert!(err.contains("summary"), "lists the available names: {err}");
+    assert!(!env.path("minuta-out").exists());
+    assert!(env.calls().is_empty());
+    assert!(fake.requests().is_empty());
+}
+
+#[test]
+fn resolution_problems_exit_2_before_job_folder() {
+    let env = Env::new();
+    env.template("templates", "x", "---\ninput: y\n---\nX.");
+    env.template("templates", "y", "---\ninput: x\n---\nY.");
+    env.template("templates", "bad", "---\nllm: gpt:4\n---\nBad.");
+    let fake = ollama("unused");
+    let cases: [(&[&str], &str); 5] = [
+        (&["-t", "x"], "template cycle"),
+        (&["-t", "summary", "--llm", "gpt:4"], "gpt:4"),
+        (&["-t", "summary", "--output-lang", "xx"], "'xx'"),
+        (&["--output-lang", "xx"], "'xx'"),
+        (&["-t", "bad"], "gpt:4"),
+    ];
+    for (extra, expected) in cases {
+        let mut args = vec!["run", "clase-4.mp4"];
+        args.extend(extra);
+        let out = env.minuta_llm(&args, &fake);
+        assert_eq!(out.status.code(), Some(2), "{extra:?}: {}", stderr(&out));
+        assert!(
+            stderr(&out).contains(expected),
+            "{extra:?}: {}",
+            stderr(&out)
+        );
+    }
+    assert!(!env.path("minuta-out").exists());
+    assert!(fake.requests().is_empty());
+}
+
+#[test]
+fn preflight_reports_backend_and_tools_together() {
+    let env = Env::new();
+    fs::remove_file(env.bin().join("whisper-cli")).unwrap();
+    let out = env.run_cmd({
+        let mut cmd = env.command(&["run", "clase-4.mp4", "-t", "summary"]);
+        cmd.env("MINUTA_OLLAMA_URL", NO_OLLAMA);
+        cmd
+    });
+    out.clone().assert().code(1).stdout("");
+    let err = stderr(&out);
+    assert!(err.contains("  whisper-cli: "), "{err}");
+    assert!(
+        err.contains("  ollama: start Ollama (`ollama serve`)"),
+        "{err}"
+    );
+    assert!(!env.path("minuta-out").exists());
+}
+
+#[test]
+fn preflight_reports_missing_ollama_model_and_claude() {
+    let env = Env::new();
+    env.template("templates", "acta", "---\nllm: claude\n---\nMinutes.");
+    let fake = FakeOllama::start(
+        &["other:7b"],
+        serde_json::json!({}),
+        Arc::new(|_| Reply::chat("unused")),
+    );
+    let out = env.run_cmd({
+        let mut cmd = env.llm_command(
+            &["run", "clase-4.mp4", "-t", "summary", "-t", "acta"],
+            &fake,
+        );
+        cmd.env(
+            "MINUTA_CLAUDE_BIN",
+            env.path("no-claude").display().to_string(),
+        );
+        cmd
+    });
+    out.clone().assert().code(1);
+    let err = stderr(&out);
+    assert!(
+        err.contains("  ollama:gemma4:26b: ollama pull gemma4:26b"),
+        "{err}"
+    );
+    assert!(err.contains("  claude: "), "{err}");
+    assert!(!env.path("minuta-out").exists());
+}
+
+#[test]
+fn run_without_templates_contacts_no_backend() {
+    let env = Env::new();
+    let fake = ollama("unused");
+    env.minuta_llm(&["run", "clase-4.mp4"], &fake)
+        .assert()
+        .success();
+    assert!(fake.requests().is_empty());
+    assert!(!env.job_dir("clase-4").join("llm-cache").exists());
+}
+
+#[test]
+fn second_template_run_is_cached() {
+    let env = Env::new();
+    let fake = ollama("summary text");
+    env.minuta_llm(&["run", "clase-4.mp4", "-t", "summary"], &fake)
+        .assert()
+        .success();
+    let out = env.minuta_llm(&["run", "clase-4.mp4", "-t", "summary"], &fake);
+    out.clone().assert().success();
+    assert_eq!(fake.chat_count(), 1);
+    let err = stderr(&out);
+    assert_eq!(cached_lines(&err), 6, "stderr was {err}");
+    assert!(err.contains("[6/6] summary     cached"), "stderr was {err}");
+    assert!(err.contains("(0 run, 6 cached)"), "stderr was {err}");
+}
+
+#[test]
+fn progress_template_line_format() {
+    let env = Env::new();
+    let fake = ollama("summary text");
+    let out = env.minuta_llm(&["run", "clase-4.mp4", "-t", "summary"], &fake);
+    out.clone().assert().success();
+    let err = stderr(&out);
+    let line = err
+        .lines()
+        .find(|l| l.starts_with("[6/6] summary"))
+        .unwrap_or_else(|| panic!("no template line in {err}"));
+    let rest = line
+        .strip_prefix("[6/6] summary     ollama:gemma4:26b  1 call  ")
+        .unwrap_or_else(|| panic!("line was {line:?}"));
+    assert!(rest.ends_with('s'), "time: {rest:?}");
+}
+
+#[test]
+fn progress_total_includes_templates() {
+    let env = Env::new();
+    env.template("templates", "a", "Write A.");
+    env.template("templates", "b", "---\ninput: a\n---\nWrite B.");
+    let fake = ollama("text");
+    let out = env.minuta_llm(&["run", "clase-4.mp4", "-t", "b"], &fake);
+    out.clone().assert().success();
+    let err = stderr(&out);
+    for line in ["[1/7] probe", "[5/7] outputs", "[6/7] a    ", "[7/7] b    "] {
+        assert!(err.contains(line), "missing {line:?} in {err}");
+    }
+    assert!(err.contains("(7 run, 0 cached)"), "{err}");
+}
+
+#[test]
+fn off_machine_note_printed_once() {
+    let env = Env::new();
+    env.template("templates", "acta", "---\nllm: claude\n---\nMinutes.");
+    let fake = ollama("local text");
+    let out = env.minuta_llm(
+        &[
+            "run",
+            "clase-4.mp4",
+            "-t",
+            "acta",
+            "-t",
+            "summary",
+            "-t",
+            "acta",
+        ],
+        &fake,
+    );
+    out.clone().assert().success();
+    let err = stderr(&out);
+    let note = "note: acta sends its input to claude (Anthropic)";
+    assert_eq!(err.matches(note).count(), 1, "{err}");
+    assert!(!err.contains("summary sends"), "{err}");
+    let job = env.job_dir("clase-4");
+    assert_eq!(
+        fs::read_to_string(job.join("acta.md")).unwrap(),
+        "fake claude reply\n"
+    );
+    assert_eq!(fake.chat_count(), 1, "only summary uses Ollama");
+}
+
+#[test]
+fn llm_flag_overrides_the_backend() {
+    let env = Env::new();
+    let fake = ollama("unused");
+    let out = env.minuta_llm(
+        &["run", "clase-4.mp4", "-t", "summary", "--llm", "claude"],
+        &fake,
+    );
+    out.clone().assert().success();
+    assert!(fake.requests().is_empty(), "no Ollama check for claude");
+    assert!(stderr(&out).contains("note: summary sends its input to claude (Anthropic)"));
+    assert!(stderr(&out).contains("[6/6] summary     claude  1 call  "));
+}
+
+#[test]
+fn output_lang_flag_reaches_the_prompt() {
+    let env = Env::new();
+    let fake = ollama("text");
+    env.minuta_llm(
+        &["run", "clase-4.mp4", "-t", "summary", "--output-lang", "en"],
+        &fake,
+    )
+    .assert()
+    .success();
+    let chat = fake
+        .requests()
+        .into_iter()
+        .find(|r| r.path == "/api/chat")
+        .unwrap();
+    let system = chat.body["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(system.contains("in English"), "{system}");
+}
+
+#[test]
+fn template_failure_stops_the_run() {
+    let env = Env::new();
+    env.template("templates", "a", "Write A.");
+    let fake = ollama_with(Arc::new(|_| Reply::error(400, "bad request")));
+    let out = env.minuta_llm(&["run", "clase-4.mp4", "-t", "a", "-t", "summary"], &fake);
+    out.clone().assert().code(1).stdout("");
+    assert!(stderr(&out).contains("bad request"), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("[6/7] a           failed"),
+        "{}",
+        stderr(&out)
+    );
+    let job = env.job_dir("clase-4");
+    assert_eq!(template_state(&job, "a")["status"], "stale");
+    assert_eq!(template_state(&job, "summary"), serde_json::Value::Null);
+    assert_eq!(
+        fake.chat_count(),
+        1,
+        "a 400 is not retried and summary never runs"
+    );
+}
+
+#[test]
+fn interrupt_during_template_exits_130() {
+    let env = Env::new();
+    let fake = ollama_with(Arc::new(|_| Reply::Hang));
+    let child = env.spawn(&mut env.llm_command(&["run", "clase-4.mp4", "-t", "summary"], &fake));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while fake.chat_count() == 0 {
+        assert!(Instant::now() < deadline, "the chat never started");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let mut kill = Command::new("kill");
+    kill.args(["-INT", &child.id().to_string()]);
+    assert!(env.spawn(&mut kill).wait().unwrap().success());
+    let out = child.wait_with_output().unwrap();
+    out.clone().assert().code(130).stdout("");
+    assert!(stderr(&out).contains("interrupted"), "{}", stderr(&out));
+    let job = env.job_dir("clase-4");
+    assert!(!job.join("summary.md").exists());
+    assert_eq!(template_state(&job, "summary")["status"], "stale");
+    assert_eq!(step_status(&job, "outputs").as_deref(), Some("done"));
+}
+
+#[test]
+fn templates_list_shows_layers() {
+    let env = Env::new();
+    env.template(
+        "home/.config/minuta/templates",
+        "acta",
+        "---\ndescription: Formal minutes\nllm: claude\n---\nMinutes.",
+    );
+    env.template("templates", "notes", "---\ninput: acta\n---\nNotes.");
+    env.template("templates", "summary", "My own summary.");
+    env.template("templates", "broken", "---\nnope: 1\n---\nX.");
+    let out = env.minuta(&["templates", "list"]);
+    out.clone().assert().success();
+    let text = stdout(&out);
+    let rows: Vec<Vec<&str>> = text
+        .lines()
+        .map(|l| {
+            l.split("  ")
+                .map(str::trim)
+                .filter(|c| !c.is_empty())
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        rows[0],
+        ["NAME", "LAYER", "INPUT", "LLM", "DESCRIPTION"],
+        "{text}"
+    );
+    assert!(
+        rows.contains(&vec![
+            "acta",
+            "user",
+            "transcript",
+            "claude",
+            "Formal minutes"
+        ]),
+        "{text}"
+    );
+    assert!(
+        rows.contains(&vec!["notes", "project", "acta", "(default)"]),
+        "{text}"
+    );
+    assert!(
+        rows.contains(&vec!["summary", "project", "transcript", "(default)"]),
+        "{text}"
+    );
+    let broken = env.path("templates/broken.md").display().to_string();
+    let invalid = text
+        .lines()
+        .find(|l| l.contains(&broken))
+        .unwrap_or_else(|| panic!("no invalid entry in {text}"));
+    assert!(invalid.contains("nope"), "{invalid}");
+}
+
+#[test]
+fn templates_list_shows_built_in() {
+    let env = Env::new();
+    let out = env.minuta(&["templates", "list"]);
+    out.clone().assert().success();
+    let text = stdout(&out);
+    let summary = text.lines().find(|l| l.starts_with("summary")).unwrap();
+    let cols: Vec<&str> = summary
+        .split("  ")
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .collect();
+    assert_eq!(
+        cols,
+        [
+            "summary",
+            "built-in",
+            "transcript",
+            "(default)",
+            "Short summary of the recording"
+        ]
+    );
+}
+
+#[test]
+fn templates_show_prints_winning_file() {
+    let env = Env::new();
+    let out = env.minuta(&["templates", "show", "summary"]);
+    out.clone().assert().success();
+    assert_eq!(stderr(&out), "built-in\n");
+    assert!(
+        stdout(&out).starts_with("---\ndescription: Short summary"),
+        "{}",
+        stdout(&out)
+    );
+
+    env.template("templates", "summary", "Mine.\n");
+    let out = env.minuta(&["templates", "show", "summary"]);
+    out.clone().assert().success();
+    assert_eq!(
+        stderr(&out),
+        // The project layer is `./templates`, found through the canonical current directory.
+        format!(
+            "{}\n",
+            fs::canonicalize(env.path("templates/summary.md"))
+                .unwrap()
+                .display()
+        )
+    );
+    assert_eq!(stdout(&out), "Mine.\n");
+}
+
+#[test]
+fn templates_show_unknown_exits_2() {
+    let env = Env::new();
+    env.minuta(&["templates", "show", "nope"])
+        .assert()
+        .code(2)
+        .stdout("")
+        .stderr(contains("unknown template 'nope'"));
+}
+
+#[test]
+fn doctor_reports_llm_without_affecting_exit_code() {
+    let env = Env::new();
+    let fake = ollama("unused");
+    let out = env.minuta_llm(&["doctor"], &fake);
+    out.clone().assert().success();
+    assert!(
+        stdout(&out).contains("llm          ollama:gemma4:26b (ok)"),
+        "{}",
+        stdout(&out)
+    );
+
+    let out = env.run_cmd({
+        let mut cmd = env.llm_command(&["doctor"], &fake);
+        cmd.env("MINUTA_LLM", "ollama:missing:1b");
+        cmd
+    });
+    out.clone().assert().success();
+    assert!(
+        stdout(&out)
+            .contains("llm          ollama:missing:1b (model missing: ollama pull missing:1b)"),
+        "{}",
+        stdout(&out)
+    );
+
+    let out = env.run_cmd({
+        let mut cmd = env.command(&["doctor"]);
+        cmd.env("MINUTA_OLLAMA_URL", NO_OLLAMA);
+        cmd
+    });
+    out.clone().assert().success();
+    assert!(
+        stdout(&out).contains("llm          ollama:gemma4:26b (not reachable: "),
+        "{}",
+        stdout(&out)
+    );
+}
+
+/// Every char that could move the cursor or start an escape sequence.
+fn control_chars(text: &str) -> Vec<char> {
+    text.chars()
+        .filter(|c| c.is_control() && *c != '\n')
+        .collect()
+}
+
+#[test]
+fn templates_list_neutralizes_control_characters() {
+    let env = Env::new();
+    env.template(
+        "templates",
+        "evil",
+        "---\ndescription: \"ok\\e[2K\\rfake\\nsummary  built-in\"\n---\nX.",
+    );
+    // An ignored file whose name, shown in the path and the error, has a control character.
+    env.template("templates", "bro\x1b[31mken", "X.");
+    let out = env.minuta(&["templates", "list"]);
+    out.clone().assert().success();
+    let text = stdout(&out);
+    assert_eq!(control_chars(&text), Vec::<char>::new(), "{text:?}");
+    let evil: Vec<&str> = text.lines().filter(|l| l.contains("fake")).collect();
+    assert_eq!(evil.len(), 1, "{text}");
+    assert!(evil[0].starts_with("evil "), "{text}");
+    let broken: Vec<&str> = text.lines().filter(|l| l.contains("bro?[31mken")).collect();
+    assert_eq!(broken.len(), 1, "{text}");
+    assert!(broken[0].starts_with("invalid "), "{text}");
+    assert_eq!(
+        text.lines().filter(|l| l.starts_with("summary")).count(),
+        1,
+        "no fake row: {text}"
+    );
+}
+
+#[test]
+fn doctor_reports_ollama_show_failure_as_not_reachable() {
+    let env = Env::new();
+    let fake =
+        FakeOllama::start_with_show(&["gemma4:26b"], None, Arc::new(|_| Reply::chat("unused")));
+    let out = env.minuta_llm(&["doctor"], &fake);
+    out.clone().assert().success();
+    let report = stdout(&out);
+    assert!(
+        report.contains("llm          ollama:gemma4:26b (not reachable: "),
+        "{report}"
+    );
+    assert!(!report.contains("model missing"), "{report}");
+}
+
+/// A template whose `output` value carries an SGR sequence and an OSC title change.
+const EVIL_OUTPUT: &str = "---\noutput: \"x\\e[31mRED\\e]0;pwned\\a\"\n---\nX.";
+
+#[test]
+fn template_errors_reach_stderr_without_control_characters() {
+    let env = Env::new();
+    env.template("templates", "acta", EVIL_OUTPUT);
+    env.template("templates", "notes", "---\ninput: acta\n---\nNotes.");
+    let fake = ollama("unused");
+    let cases: [&[&str]; 3] = [
+        &["run", "clase-4.mp4", "-t", "acta"],
+        &["run", "clase-4.mp4", "-t", "notes"],
+        &["templates", "show", "acta"],
+    ];
+    for args in cases {
+        let out = env.minuta_llm(args, &fake);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {}", stderr(&out));
+        let err = stderr(&out);
+        assert!(
+            err.contains("RED"),
+            "{args:?}: the error names the value: {err:?}"
+        );
+        assert_eq!(control_chars(&err), Vec::<char>::new(), "{args:?}: {err:?}");
+    }
+    assert!(!env.path("minuta-out").exists());
 }

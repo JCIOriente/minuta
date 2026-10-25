@@ -1,5 +1,5 @@
-//! Progress on stderr: a step counter, per-step timing, live tool output and a summary.
-//! stdout is never written here.
+//! Progress on stderr: a step counter over pipeline steps and templates, per-step timing,
+//! live tool output or template progress, and a summary. stdout is never written here.
 
 use std::ffi::OsString;
 use std::io::IsTerminal;
@@ -8,6 +8,7 @@ use std::time::Duration;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::job::StepName;
+use crate::llm::chunk::Event;
 
 /// How much progress to show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +44,7 @@ impl Mode {
     }
 }
 
-/// Reports the steps of one run.
+/// Reports the steps and templates of one run. A label is a step or template name.
 pub struct Progress {
     mode: Mode,
     total: usize,
@@ -59,6 +60,11 @@ impl Progress {
         }
     }
 
+    /// The number of steps plus templates in the run (the pipeline steps by default).
+    pub fn set_total(&mut self, total: usize) {
+        self.total = total;
+    }
+
     fn print(&self, text: &str) {
         if self.mode != Mode::Quiet {
             eprintln!("{text}");
@@ -70,28 +76,57 @@ impl Progress {
         self.print(&format!("note: {text}"));
     }
 
+    /// A note that is shown even with `--quiet`, such as data leaving the machine.
+    pub fn notice(&mut self, text: &str) {
+        eprintln!("note: {text}");
+    }
+
     /// A warning, shown even with `--quiet`.
     pub fn warn(&mut self, text: &str) {
         eprintln!("warning: {text}");
     }
 
-    /// `step` (1-based `index`) is reused from an earlier run.
-    pub fn cached(&mut self, index: usize, step: StepName) {
-        self.print(&step_line(index, self.total, step, "cached"));
+    /// `label` (1-based `index`) is reused from an earlier run.
+    pub fn cached(&mut self, index: usize, label: &str) {
+        self.print(&step_line(index, self.total, label, "cached"));
     }
 
-    /// `step` starts running.
-    pub fn start(&mut self, index: usize, step: StepName) {
+    /// Step `label` starts running; the spinner shows the tool's latest output line.
+    pub fn start(&mut self, index: usize, label: &str) {
+        self.spin(
+            index,
+            label,
+            "{spinner:.cyan} {prefix:.bold} {wide_msg:.dim}",
+        );
+    }
+
+    /// Template `label` starts running; the spinner shows its chunk progress and the
+    /// elapsed time.
+    pub fn start_template(&mut self, index: usize, label: &str) {
+        self.spin(
+            index,
+            label,
+            "{spinner:.cyan} {prefix:.bold} {msg:.dim}  {elapsed:.dim}",
+        );
+    }
+
+    fn spin(&mut self, index: usize, label: &str, template: &str) {
         if self.mode != Mode::Live {
             return;
         }
-        let style = ProgressStyle::with_template("{spinner:.cyan} {prefix:.bold} {wide_msg:.dim}")
-            .expect("valid template");
+        let style = ProgressStyle::with_template(template).expect("valid template");
         let spinner = ProgressBar::new_spinner()
             .with_style(style)
-            .with_prefix(format!("[{index}/{}] {step}", self.total));
+            .with_prefix(format!("[{index}/{}] {label}", self.total));
         spinner.enable_steady_tick(Duration::from_millis(100));
         self.spinner = Some(spinner);
+    }
+
+    /// Progress of the running template.
+    pub fn event(&mut self, event: Event) {
+        if let Some(spinner) = &self.spinner {
+            spinner.set_message(event_text(event));
+        }
     }
 
     /// A line of output from the running tool.
@@ -101,22 +136,22 @@ impl Progress {
         }
     }
 
-    /// `step` finished after `seconds`; `detail` says what it did, when worth saying.
-    pub fn done(&mut self, index: usize, step: StepName, detail: Option<&str>, seconds: f64) {
+    /// `label` finished after `seconds`; `detail` says what it did, when worth saying.
+    pub fn done(&mut self, index: usize, label: &str, detail: Option<&str>, seconds: f64) {
         self.clear();
         let time = format_duration(seconds);
         let text = match detail {
             Some(detail) => format!("{detail}  {time}"),
             None => time,
         };
-        self.print(&step_line(index, self.total, step, &text));
+        self.print(&step_line(index, self.total, label, &text));
     }
 
-    /// `step` stopped early; the caller reports the error itself.
-    pub fn failed(&mut self, index: usize, step: StepName, interrupted: bool) {
+    /// `label` stopped early; the caller reports the error itself.
+    pub fn failed(&mut self, index: usize, label: &str, interrupted: bool) {
         self.clear();
         let what = if interrupted { "interrupted" } else { "failed" };
-        self.print(&step_line(index, self.total, step, what));
+        self.print(&step_line(index, self.total, label, what));
     }
 
     /// The final line of a run.
@@ -140,9 +175,23 @@ impl Drop for Progress {
     }
 }
 
-/// `[2/5] join        stream copy  12.4s`: step names are padded so the text lines up.
-fn step_line(index: usize, total: usize, step: StepName, text: &str) -> String {
-    format!("[{index}/{total}] {:<12}{text}", step.as_str())
+/// `[2/5] join        stream copy  12.4s`: labels are padded so the text lines up.
+fn step_line(index: usize, total: usize, label: &str, text: &str) -> String {
+    format!("[{index}/{total}] {label:<12}{text}")
+}
+
+/// What a finished template did: `ollama:gemma4:26b  3 calls`.
+pub fn template_detail(backend: &str, calls: usize) -> String {
+    let plural = if calls == 1 { "" } else { "s" };
+    format!("{backend}  {calls} call{plural}")
+}
+
+/// The spinner message for a template event.
+fn event_text(event: Event) -> String {
+    match event {
+        Event::Chunk { done, total } => format!("chunk {done}/{total}"),
+        Event::Consolidating => "consolidating".to_string(),
+    }
 }
 
 /// The last non-blank part of a tool line; ffmpeg separates its status updates with `\r`.
@@ -197,14 +246,35 @@ mod tests {
 
     #[test]
     fn step_lines_line_up() {
+        assert_eq!(step_line(1, 5, "probe", "0.3s"), "[1/5] probe       0.3s");
         assert_eq!(
-            step_line(1, 5, StepName::Probe, "0.3s"),
-            "[1/5] probe       0.3s"
-        );
-        assert_eq!(
-            step_line(4, 5, StepName::Transcribe, "cached"),
+            step_line(4, 5, "transcribe", "cached"),
             "[4/5] transcribe  cached"
         );
+    }
+
+    #[test]
+    fn template_line_shows_backend_calls_and_time() {
+        let text = format!("{}  {}", template_detail("ollama:gemma4:26b", 1), "48.2s");
+        assert_eq!(
+            step_line(6, 6, "summary", &text),
+            "[6/6] summary     ollama:gemma4:26b  1 call  48.2s"
+        );
+        assert_eq!(template_detail("claude", 3), "claude  3 calls");
+    }
+
+    #[test]
+    fn template_events() {
+        assert_eq!(event_text(Event::Chunk { done: 2, total: 5 }), "chunk 2/5");
+        assert_eq!(event_text(Event::Consolidating), "consolidating");
+    }
+
+    #[test]
+    fn total_defaults_to_the_pipeline_steps() {
+        let mut progress = Progress::new(Mode::Quiet);
+        assert_eq!(progress.total, 5);
+        progress.set_total(7);
+        assert_eq!(progress.total, 7);
     }
 
     #[test]
