@@ -448,6 +448,14 @@ mod tests {
                 .unwrap();
             assert!(!timeout.timed_out(), "{failure}");
         }
+        /// Block until the count exceeds `n` or `timeout` passes, whichever comes first.
+        fn wait_above(&self, n: usize, timeout: Duration) {
+            let guard = self.count.lock().unwrap();
+            let (_count, _timeout) = self
+                .changed
+                .wait_timeout_while(guard, timeout, |count| *count <= n)
+                .unwrap();
+        }
     }
 
     fn request<'a>(input: &'a str, context_tokens: usize, concurrency: usize) -> Request<'a> {
@@ -782,16 +790,18 @@ mod tests {
         let started = AtomicUsize::new(0);
         let current = AtomicUsize::new(0);
         let peak = AtomicUsize::new(0);
-        // The first CONCURRENCY calls wait for each other, so they overlap for certain; a
-        // worker beyond the limit would start a call while they wait and raise the peak.
+        // The first CONCURRENCY calls wait for each other, so they overlap for certain. They
+        // then hold on for up to 100 ms more, giving a worker beyond the limit time to start
+        // a call and raise the peak; for correct code that wait simply times out.
         let arrived = Gate::new();
         let complete = |s: &str, _: &str| {
             if !is_final(s) {
                 let now = current.fetch_add(1, Ordering::SeqCst) + 1;
                 peak.fetch_max(now, Ordering::SeqCst);
+                arrived.raise();
                 if started.fetch_add(1, Ordering::SeqCst) < CONCURRENCY {
-                    arrived.raise();
                     arrived.wait_for(CONCURRENCY, "fewer than 3 calls overlapped");
+                    arrived.wait_above(CONCURRENCY, Duration::from_millis(100));
                 }
                 current.fetch_sub(1, Ordering::SeqCst);
             }
