@@ -1,6 +1,6 @@
 # ADR-0006: Shared closed field set, rendered-length limits, repair calls, accepted-only caching
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-25
 - Deciders: Arnold Gandarillas Castillo
 - Related: docs/specs/2026-10-25-fields-and-social-templates.md, ADR-0004, ADR-0005

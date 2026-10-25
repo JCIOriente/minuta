@@ -1,6 +1,6 @@
 # ADR-0007: Fields templates write a versioned JSON artifact plus a rendered `<name>.md`
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-25
 - Deciders: Arnold Gandarillas Castillo
 - Related: docs/specs/2026-10-25-fields-and-social-templates.md, ADR-0005, ADR-0006

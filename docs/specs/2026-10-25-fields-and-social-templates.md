@@ -1,6 +1,6 @@
 # Structured fields and social templates (sub-project 3 of 6) — Spec
 
-- Status: draft
+- Status: approved
 - Date: 2026-10-25
 - Owner: Arnold Gandarillas Castillo
 - Related: docs/brief.md, docs/specs/2026-10-24-templates-and-backends.md, ADR-0001, ADR-0003,
@@ -425,4 +425,4 @@ None.
 
 ## Implementation status
 Updated by the PRs that implement this spec.
-- [ ] Plan
+- [ ] Plan: docs/plans/2026-10-25-fields-and-social-templates.md
