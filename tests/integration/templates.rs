@@ -250,7 +250,12 @@ fn templates_failed_chunk_resumes_with_unfinished_calls_only() {
 
     let out = configure(env.llm_command(&args, &fake.url()));
     assert!(out.status.success(), "{}", stderr(&out));
-    let second = &chats(&fake)[first.len()..];
+    let all = chats(&fake);
+    for r in &all {
+        let chars = message(r, 0).chars().count() + message(r, 1).chars().count();
+        assert!(chars.div_ceil(3) + 190 / 4 <= 190, "request exceeds budget");
+    }
+    let second = &all[first.len()..];
     // The first run sent parts 1, 2 and the failed 3; the rerun sends 3 and 4, then the reduce.
     assert!(message(&first[0], 0).contains("part 1 of 4"));
     assert!(message(&first[1], 0).contains("part 2 of 4"));
@@ -267,14 +272,25 @@ fn templates_interrupt_during_chat_exits_130_without_output() {
     require_ffmpeg!();
     let env = env_with_clip();
     let fake = ollama_with(Arc::new(|_| Reply::Hang));
-    let child = env
+    let mut child = env
         .llm_command(&["run", "a.mp4", "-t", "summary"], &fake.url())
         .spawn()
         .unwrap();
     wait_until("the chat request", || fake.chat_count() >= 1);
     signal("-INT", &child);
-    let out = child.wait_with_output().unwrap();
-    assert_eq!(out.status.code(), Some(130), "{}", stderr(&out));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("minuta did not exit after SIGINT");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(status.code(), Some(130));
     assert!(!env.job_dir("a").join("summary.md").exists());
 }
 
@@ -303,6 +319,7 @@ fn templates_missing_model_exits_1_with_ollama_pull() {
     let out = env.run_llm(&["run", "a.mp4", "-t", "summary"], &fake);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert!(stderr(&out).contains("ollama pull"), "{}", stderr(&out));
+    assert_eq!(fake.chat_count(), 1, "404 is not retried");
     assert!(!env.job_dir("a").join("summary.md").exists());
 }
 
@@ -332,6 +349,26 @@ fn templates_output_lang_flag_overrides_the_language() {
     let sent = chats(&fake);
     assert!(message(&sent[0], 0).contains("in English"));
     assert!(!message(&sent[0], 0).contains("in Spanish"));
+}
+
+#[test]
+fn templates_output_lang_change_reruns_template() {
+    require_ffmpeg!();
+    let env = env_with_clip();
+    let fake = ollama("text");
+    assert!(env
+        .run_llm(&["run", "a.mp4", "-t", "summary"], &fake)
+        .status
+        .success());
+    assert_eq!(fake.chat_count(), 1);
+    let out = env.run_llm(
+        &["run", "a.mp4", "-t", "summary", "--output-lang", "en"],
+        &fake,
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(fake.chat_count(), 2);
+    assert!(!cached_steps(&stderr(&out)).contains(&"summary".to_string()));
+    assert!(message(&chats(&fake)[1], 0).contains("in English"));
 }
 
 #[test]
