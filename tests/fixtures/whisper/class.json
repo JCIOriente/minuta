@@ -1,0 +1,307 @@
+{
+	"systeminfo": "WHISPER : VITISAI = 0 | COREML = 0 | OPENVINO = 0 | MTL : EMBED_LIBRARY = 1 | CPU : NEON = 1 | ARM_FMA = 1 | FP16_VA = 1 | MATMUL_INT8 = 1 | DOTPROD = 1 | SME = 1 | ACCELERATE = 1 | OPENMP = 1 | REPACK = 1 | ",
+	"model": {
+		"type": "tiny",
+		"multilingual": true,
+		"vocab": 51865,
+		"audio": {
+			"ctx": 1500,
+			"state": 384,
+			"head": 6,
+			"layer": 4
+		},
+		"text": {
+			"ctx": 448,
+			"state": 384,
+			"head": 6,
+			"layer": 4
+		},
+		"mels": 80,
+		"ftype": 1
+	},
+	"params": {
+		"model": "/opt/homebrew/share/whisper.cpp/for-tests-ggml-tiny.bin",
+		"language": "es",
+		"translate": false
+	},
+	"result": {
+		"language": "es"
+	},
+	"transcription": [
+		{
+			"timestamps": {
+				"from": "00:00:00,000",
+				"to": "00:00:04,000"
+			},
+			"offsets": {
+				"from": 0,
+				"to": 4000
+			},
+			"text": " Buenos días a todos y bienvenidos a la clase de hoy."
+		},
+		{
+			"timestamps": {
+				"from": "00:00:04,000",
+				"to": "00:00:10,500"
+			},
+			"offsets": {
+				"from": 4000,
+				"to": 10500
+			},
+			"text": " Hoy vamos a hablar de uno de los conceptos más importantes de Rust, la propiedad."
+		},
+		{
+			"timestamps": {
+				"from": "00:00:10,500",
+				"to": "00:00:29,500"
+			},
+			"offsets": {
+				"from": 10500,
+				"to": 29500
+			},
+			"text": " Antes de empezar, un repaso rápido de lo que vimos la semana pasada: variables, tipos básicos y funciones, y cómo se declara una variable mutable con la palabra mut."
+		},
+		{
+			"timestamps": {
+				"from": "00:00:29,500",
+				"to": "00:00:32,500"
+			},
+			"offsets": {
+				"from": 29500,
+				"to": 32500
+			},
+			"text": " ¿Alguna duda hasta aquí?"
+		},
+		{
+			"timestamps": {
+				"from": "00:00:32,500",
+				"to": "00:00:55,000"
+			},
+			"offsets": {
+				"from": 32500,
+				"to": 55000
+			},
+			"text": " Muy bien. La propiedad es el conjunto de reglas con el que Rust gestiona la memoria sin recolector de basura. Cada valor tiene un único dueño, y cuando el dueño sale de su ámbito, el valor se libera automáticamente."
+		},
+		{
+			"timestamps": {
+				"from": "00:00:55,000",
+				"to": "00:01:02,000"
+			},
+			"offsets": {
+				"from": 55000,
+				"to": 62000
+			},
+			"text": " Veamos un ejemplo con un String que se crea dentro de una función."
+		},
+		{
+			"timestamps": {
+				"from": "00:01:02,000",
+				"to": "00:01:18,000"
+			},
+			"offsets": {
+				"from": 62000,
+				"to": 78000
+			},
+			"text": " Fíjense que al terminar la función no hace falta llamar a ninguna función para liberar la memoria. Rust inserta la llamada a drop por nosotros al cerrar la llave."
+		},
+		{
+			"timestamps": {
+				"from": "00:01:18,000",
+				"to": "00:01:23,500"
+			},
+			"offsets": {
+				"from": 78000,
+				"to": 83500
+			},
+			"text": " Esa es la primera regla: un dueño por valor."
+		},
+		{
+			"timestamps": {
+				"from": "00:01:23,500",
+				"to": "00:01:47,500"
+			},
+			"offsets": {
+				"from": 83500,
+				"to": 107500
+			},
+			"text": " Ahora pasemos a los movimientos. Si asigno un String a otra variable, el valor se mueve y la variable original deja de ser válida. No se copian los datos del montón, solo se transfiere la propiedad."
+		},
+		{
+			"timestamps": {
+				"from": "00:01:47,500",
+				"to": "00:01:55,500"
+			},
+			"offsets": {
+				"from": 107500,
+				"to": 115500
+			},
+			"text": " Si intento usar la variable anterior, el compilador me da un error."
+		},
+		{
+			"timestamps": {
+				"from": "00:01:55,500",
+				"to": "00:02:14,000"
+			},
+			"offsets": {
+				"from": 115500,
+				"to": 134000
+			},
+			"text": " Con los tipos simples como los enteros pasa algo distinto, porque implementan el rasgo Copy y se duplican en lugar de moverse. Con clone puedo hacer una copia profunda cuando de verdad la necesito."
+		},
+		{
+			"timestamps": {
+				"from": "00:02:14,000",
+				"to": "00:02:18,500"
+			},
+			"offsets": {
+				"from": 134000,
+				"to": 138500
+			},
+			"text": " ¿Se entiende la diferencia entre mover y copiar?"
+		},
+		{
+			"timestamps": {
+				"from": "00:02:18,500",
+				"to": "00:02:43,500"
+			},
+			"offsets": {
+				"from": 138500,
+				"to": 163500
+			},
+			"text": " Perfecto. Entonces, ¿qué hacemos si queremos usar un valor en una función sin quedarnos sin él? Para eso existen las referencias y el préstamo. Con el símbolo ampersand creo una referencia que presta el valor sin tomar su propiedad."
+		},
+		{
+			"timestamps": {
+				"from": "00:02:43,500",
+				"to": "00:02:58,500"
+			},
+			"offsets": {
+				"from": 163500,
+				"to": 178500
+			},
+			"text": " Las referencias inmutables se pueden tener en cualquier cantidad, pero una referencia mutable tiene que ser única mientras exista."
+		},
+		{
+			"timestamps": {
+				"from": "00:02:58,500",
+				"to": "00:03:04,500"
+			},
+			"offsets": {
+				"from": 178500,
+				"to": 184500
+			},
+			"text": " Lo vemos con una función que calcula la longitud de una cadena."
+		},
+		{
+			"timestamps": {
+				"from": "00:03:04,500",
+				"to": "00:03:25,500"
+			},
+			"offsets": {
+				"from": 184500,
+				"to": 205500
+			},
+			"text": " La función recibe una referencia a String, calcula la longitud y devuelve un número, y la variable original sigue siendo nuestra después de la llamada. Eso es tomar prestado."
+		},
+		{
+			"timestamps": {
+				"from": "00:03:25,500",
+				"to": "00:03:49,000"
+			},
+			"offsets": {
+				"from": 205500,
+				"to": 229000
+			},
+			"text": " Esto nos lleva al verificador de préstamos, el borrow checker. Es la parte del compilador que comprueba en tiempo de compilación que ninguna referencia viva más que el valor al que apunta, y que no haya una referencia mutable junto a otras."
+		},
+		{
+			"timestamps": {
+				"from": "00:03:49,000",
+				"to": "00:03:58,000"
+			},
+			"offsets": {
+				"from": 229000,
+				"to": 238000
+			},
+			"text": " Los errores del borrow checker asustan al principio, pero son muy descriptivos."
+		},
+		{
+			"timestamps": {
+				"from": "00:03:58,000",
+				"to": "00:04:15,000"
+			},
+			"offsets": {
+				"from": 238000,
+				"to": 255000
+			},
+			"text": " El más común dice que no se puede tomar prestado como mutable porque ya está prestado como inmutable. La solución suele ser acortar la vida de la primera referencia."
+		},
+		{
+			"timestamps": {
+				"from": "00:04:15,000",
+				"to": "00:04:20,000"
+			},
+			"offsets": {
+				"from": 255000,
+				"to": 260000
+			},
+			"text": " Otro error típico es devolver una referencia a una variable local."
+		},
+		{
+			"timestamps": {
+				"from": "00:04:20,000",
+				"to": "00:04:40,000"
+			},
+			"offsets": {
+				"from": 260000,
+				"to": 280000
+			},
+			"text": " En ese caso el compilador pide anotaciones de tiempo de vida, los lifetimes, que veremos en detalle en la próxima clase. Por ahora basta con entender que la referencia no puede sobrevivir al dato."
+		},
+		{
+			"timestamps": {
+				"from": "00:04:40,000",
+				"to": "00:04:54,000"
+			},
+			"offsets": {
+				"from": 280000,
+				"to": 294000
+			},
+			"text": " Pasemos a los ejercicios. Les voy a dar tres ejercicios cortos para practicar lo que hemos visto hoy."
+		},
+		{
+			"timestamps": {
+				"from": "00:04:54,000",
+				"to": "00:05:16,000"
+			},
+			"offsets": {
+				"from": 294000,
+				"to": 316000
+			},
+			"text": " En el primero tienen que arreglar un programa que mueve un vector y luego intenta usarlo. En el segundo, escribir una función que reciba una referencia mutable y añada un elemento. El tercero es dejar que el compilador les explique un error de préstamo."
+		},
+		{
+			"timestamps": {
+				"from": "00:05:16,000",
+				"to": "00:05:23,500"
+			},
+			"offsets": {
+				"from": 316000,
+				"to": 323500
+			},
+			"text": " Tienen hasta el viernes para entregarlos en el repositorio de la clase."
+		},
+		{
+			"timestamps": {
+				"from": "00:05:23,500",
+				"to": "00:05:35,500"
+			},
+			"offsets": {
+				"from": 323500,
+				"to": 335500
+			},
+			"text": " Eso es todo por hoy. Gracias por venir, y nos vemos la próxima semana con los tiempos de vida."
+		}
+	]
+}

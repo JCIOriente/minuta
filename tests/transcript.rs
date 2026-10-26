@@ -3,6 +3,7 @@ use minuta::transcript::{from_whisper_json, to_srt, to_txt, Segment, Transcript}
 
 const SAMPLE: &str = include_str!("fixtures/whisper/sample.json");
 const EMPTY: &str = include_str!("fixtures/whisper/empty.json");
+const CLASS: &str = include_str!("fixtures/whisper/class.json");
 
 fn whisper(segments: &[(u64, u64, &str)]) -> String {
     let items: Vec<String> = segments
@@ -146,4 +147,21 @@ fn json_roundtrip() {
     );
     let back: Transcript = serde_json::from_value(json).unwrap();
     assert_eq!(back, t);
+}
+
+#[test]
+fn class_fixture_parses() {
+    let t = from_whisper_json(CLASS).unwrap();
+    assert_eq!(t.language, "es");
+    assert_eq!(t.segments.len(), 25);
+    assert_eq!(t.segments[24].end, 335.5);
+    assert!(t.segments.windows(2).all(|w| w[0].start < w[1].start));
+    assert!(t
+        .segments
+        .windows(2)
+        .any(|w| w[1].start - w[0].start < 10.0));
+    assert_eq!(
+        t.segments[4],
+        seg(32.5, 55.0, " Muy bien. La propiedad es el conjunto de reglas con el que Rust gestiona la memoria sin recolector de basura. Cada valor tiene un único dueño, y cuando el dueño sale de su ámbito, el valor se libera automáticamente.")
+    );
 }
