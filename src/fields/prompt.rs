@@ -13,10 +13,11 @@ const MARKDOWN_SENTENCE: &str = "`body` may use Markdown; the other values are p
 const KEYS_SENTENCE: &str =
     "Keep the keys exactly as written, in English; write the values in the language given below.";
 
-/// The fields block of the final and repair system prompts (no language instruction).
+/// The fields block of the final and repair system prompts (no language instruction). Filled
+/// fields are left out.
 pub fn fields_block(spec: &FieldsSpec) -> String {
     let mut lines = vec![BLOCK_INTRO.to_string()];
-    lines.extend(spec.fields.iter().map(field_line));
+    lines.extend(spec.fields.iter().filter_map(field_line));
     let format_sentence = match spec.format {
         Format::Plain => PLAIN_SENTENCE,
         Format::Markdown => MARKDOWN_SENTENCE,
@@ -25,24 +26,28 @@ pub fn fields_block(spec: &FieldsSpec) -> String {
     lines.join("\n")
 }
 
-fn field_line(spec: &FieldSpec) -> String {
+/// `None` for a filled field: the model is not asked for it.
+fn field_line(spec: &FieldSpec) -> Option<String> {
     let field = spec.field;
     let kind = match field.kind() {
         Kind::Text => "string",
         Kind::List => "array of strings",
+        Kind::Chapters => return None,
     };
     let mut line = format!("\"{}\" ({kind}): {}", field.name(), field.description());
     if let Some(limits) = limit_sentence(spec) {
         line.push(' ');
         line.push_str(&limits);
     }
-    line
+    Some(line)
 }
 
 fn limit_sentence(spec: &FieldSpec) -> Option<String> {
     let Limit { max_chars, max } = spec.limit;
-    if spec.field.kind() == Kind::Text {
-        return max_chars.map(|n| format!("At most {n} characters."));
+    match spec.field.kind() {
+        Kind::Text => return max_chars.map(|n| format!("At most {n} characters.")),
+        Kind::Chapters => return None,
+        Kind::List => {}
     }
     let joined = if spec.field == Field::Hashtags {
         "joined with \" \" and prefixed with #"
@@ -77,20 +82,26 @@ pub fn repair_user(previous: &str, violations: &[Violation]) -> String {
     )
 }
 
-/// JSON schema for structured output: the declared fields, no length constraints.
+/// JSON schema for structured output: the declared fields the model answers (filled fields
+/// are left out), no length constraints.
 pub fn schema(spec: &FieldsSpec) -> Json {
-    let properties: serde_json::Map<String, Json> = spec
+    let asked: Vec<(&str, Json)> = spec
         .fields
         .iter()
-        .map(|f| {
+        .filter_map(|f| {
             let property = match f.field.kind() {
                 Kind::Text => json!({"type": "string"}),
                 Kind::List => json!({"type": "array", "items": {"type": "string"}}),
+                Kind::Chapters => return None,
             };
-            (f.field.name().to_string(), property)
+            Some((f.field.name(), property))
         })
         .collect();
-    let required: Vec<&str> = spec.fields.iter().map(|f| f.field.name()).collect();
+    let required: Vec<&str> = asked.iter().map(|(name, _)| *name).collect();
+    let properties: serde_json::Map<String, Json> = asked
+        .into_iter()
+        .map(|(name, property)| (name.to_string(), property))
+        .collect();
     json!({"type": "object", "properties": properties, "required": required})
 }
 
@@ -260,6 +271,78 @@ Write the values as plain text without Markdown. Keep the keys exactly as writte
         assert_eq!(
             schema(&spec)["required"],
             json!(["thumbnail_text", "body", "hashtags"])
+        );
+    }
+
+    fn youtube_spec(fields: &[Field]) -> FieldsSpec {
+        let limit = |max_chars, max| Limit { max_chars, max };
+        FieldsSpec {
+            fields: fields
+                .iter()
+                .map(|&field| FieldSpec {
+                    field,
+                    limit: match field {
+                        Field::Title => limit(Some(100), None),
+                        Field::Body => limit(Some(5000), None),
+                        Field::Tags => limit(Some(500), Some(15)),
+                        Field::ThumbnailText => limit(Some(40), None),
+                        _ => no_limit(),
+                    },
+                })
+                .collect(),
+            format: Format::Plain,
+        }
+    }
+
+    const WITH_CHAPTERS: [Field; 5] = [
+        Field::Title,
+        Field::Body,
+        Field::Chapters,
+        Field::Tags,
+        Field::ThumbnailText,
+    ];
+
+    #[test]
+    fn block_skips_chapters() {
+        let expected = "Return only a JSON object with exactly these keys, and no text before or after it:\n\
+\"title\" (string): A title. At most 100 characters.\n\
+\"body\" (string): The main text. At most 5000 characters.\n\
+\"tags\" (array of strings): Search keywords, without `#`. At most 15 items, at most 500 characters joined with \", \".\n\
+\"thumbnail_text\" (string): A few words to show on a thumbnail image. At most 40 characters.\n\
+Write the values as plain text without Markdown. Keep the keys exactly as written, in English; write the values in the language given below.";
+        assert_eq!(fields_block(&youtube_spec(&WITH_CHAPTERS)), expected);
+        assert_eq!(
+            fields_block(&youtube_spec(&[
+                Field::Title,
+                Field::Body,
+                Field::Tags,
+                Field::ThumbnailText
+            ])),
+            expected
+        );
+    }
+
+    #[test]
+    fn schema_skips_chapters() {
+        let expected = json!({
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "body": {"type": "string"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "thumbnail_text": {"type": "string"}
+            },
+            "required": ["title", "body", "tags", "thumbnail_text"]
+        });
+        assert_eq!(schema(&youtube_spec(&WITH_CHAPTERS)), expected);
+        assert_eq!(
+            schema(&youtube_spec(&[
+                Field::Title,
+                Field::Body,
+                Field::Tags,
+                Field::ThumbnailText
+            ])),
+            expected
         );
     }
 }
