@@ -759,9 +759,9 @@ mod tests {
     #[test]
     fn huge_single_line_splits_quickly() {
         const WORDS: &str = "abcdefg hij klmnopqrs tu "; // 25 bytes
-        let small = WORDS.repeat(20_000); // 500 KB, one line
-        let large = WORDS.repeat(80_000); // 2 MB, one line
-                                          // Best of three runs, floored at 1 ms so tiny timings do not make a noisy ratio.
+        let small = WORDS.repeat(5_000); // 125 KB, one line
+        let large = WORDS.repeat(320_000); // 8 MB, one line, 64x the small one
+                                           // Best of three runs, floored at 1 ms so tiny timings do not make a noisy ratio.
         let time = |line: &str| {
             (0..3)
                 .map(|_| {
@@ -774,11 +774,12 @@ mod tests {
                 .max(Duration::from_millis(1))
         };
         let (t_small, t_large) = (time(&small), time(&large));
-        // Linear growth gives a ratio near 4, quadratic near 16.
+        // 64x the input: linear growth gives a ratio near 64, quadratic near 4096. The limit of
+        // 1024 leaves over 10x headroom for a loaded machine and stays well below quadratic.
         let ratio = t_large.as_secs_f64() / t_small.as_secs_f64();
         assert!(
-            ratio < 8.0,
-            "4x input took {ratio:.1}x as long ({t_small:?} -> {t_large:?})"
+            ratio < 1024.0,
+            "64x input took {ratio:.1}x as long ({t_small:?} -> {t_large:?})"
         );
         let pieces = pack([large.as_str()], "\n", 30);
         assert!(pieces.iter().all(|p| p.chars().count() <= 30));
