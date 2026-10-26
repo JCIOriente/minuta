@@ -16,6 +16,10 @@ use fake_ollama::{FakeOllama, Reply, Request};
 use crate::common::*;
 
 const FAKE_CLAUDE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/claude");
+const CLASS_FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/whisper/class.json"
+);
 const BLOCK_INTRO: &str = "Return only a JSON object with exactly these keys";
 
 fn ollama_with(responder: fake_ollama::Responder) -> FakeOllama {
@@ -45,6 +49,16 @@ fn has_format(req: &Request) -> bool {
     !req.body["format"].is_null()
 }
 
+/// Whether the request is a call of the `chapters` template (its schema asks for `chapters`).
+fn is_chapters(req: &Request) -> bool {
+    !req.body["format"]["properties"]["chapters"].is_null()
+}
+
+/// Whether the request is a structured call of the built-in `youtube` template.
+fn is_youtube(req: &Request) -> bool {
+    has_format(req) && !is_chapters(req)
+}
+
 fn is_repair(req: &Request) -> bool {
     message(req, 1).starts_with("Previous answer:")
 }
@@ -69,6 +83,14 @@ fn run_llm(env: &Env, args: &[&str], fake: &FakeOllama) -> Output {
     llm_command(env, args, &fake.url()).output().unwrap()
 }
 
+/// Like `run_llm` with the transcript of `class.json`, which is long enough for chapters.
+fn run_youtube(env: &Env, args: &[&str], fake: &FakeOllama) -> Output {
+    llm_command(env, args, &fake.url())
+        .env("FAKE_WHISPER_FIXTURE", CLASS_FIXTURE)
+        .output()
+        .unwrap()
+}
+
 fn env_with_clip() -> Env {
     let env = Env::new();
     env.clip("a.mp4", 440);
@@ -90,10 +112,52 @@ fn valid_youtube() -> String {
     youtube_answer("Rust ownership", "A class about ownership.")
 }
 
-/// Fake Ollama that answers structured requests with `fields` and the rest with a summary.
+/// A valid chapters answer for `class.json`: every start is a segment start of the transcript.
+fn valid_chapters() -> String {
+    serde_json::json!({
+        "chapters": [
+            {"start": "00:00:00", "title": "Introducción"},
+            {"start": "00:00:32", "title": "La propiedad"},
+            {"start": "00:01:47", "title": "Movimientos y copias"},
+            {"start": "00:03:25", "title": "Préstamos"},
+            {"start": "00:04:40", "title": "Ejercicios"},
+        ]
+    })
+    .to_string()
+}
+
+/// The `youtube.md` of a run that answered `valid_youtube` and `valid_chapters`.
+const VALID_YOUTUBE_MD: &str = "Rust ownership\n\nA class about ownership.\n\n0:00 Introducción\n0:32 La propiedad\n1:47 Movimientos y copias\n3:25 Préstamos\n4:40 Ejercicios\n\nrust, ownership\n\nOwnership\n";
+
+/// The `youtube.json` of a run that answered `valid_youtube` and `valid_chapters`.
+fn valid_youtube_json() -> serde_json::Value {
+    serde_json::json!({
+        "version": 1,
+        "template": "youtube",
+        "output_lang": "es",
+        "fields": {
+            "title": "Rust ownership",
+            "body": "A class about ownership.",
+            "chapters": [
+                {"start": 0, "title": "Introducción"},
+                {"start": 32, "title": "La propiedad"},
+                {"start": 107, "title": "Movimientos y copias"},
+                {"start": 205, "title": "Préstamos"},
+                {"start": 280, "title": "Ejercicios"},
+            ],
+            "tags": ["rust", "ownership"],
+            "thumbnail_text": "Ownership",
+        },
+    })
+}
+
+/// Fake Ollama that answers chapters requests with `valid_chapters`, the other structured
+/// requests with `fields` and the rest with a summary.
 fn summary_and_fields(fields: impl Fn(&Request) -> String + Send + Sync + 'static) -> FakeOllama {
     ollama_with(Arc::new(move |req| {
-        if has_format(req) {
+        if is_chapters(req) {
+            Reply::chat(&valid_chapters())
+        } else if has_format(req) {
             Reply::chat(&fields(req))
         } else {
             Reply::chat("the summary")
@@ -110,30 +174,17 @@ fn fields_run_then_cached() {
     require_ffmpeg!();
     let env = env_with_clip();
     let fake = summary_and_fields(|_| valid_youtube());
-    let out = run_llm(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
+    let out = run_youtube(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     let job = env.job_dir("a");
     assert_eq!(
         fs::read_to_string(job.join("summary.md")).unwrap(),
         "the summary\n"
     );
-    assert_eq!(
-        read_json(job.join("youtube.json")),
-        serde_json::json!({
-            "version": 1,
-            "template": "youtube",
-            "output_lang": "es",
-            "fields": {
-                "title": "Rust ownership",
-                "body": "A class about ownership.",
-                "tags": ["rust", "ownership"],
-                "thumbnail_text": "Ownership",
-            },
-        })
-    );
+    assert_eq!(read_json(job.join("youtube.json")), valid_youtube_json());
     assert_eq!(
         fs::read_to_string(job.join("youtube.md")).unwrap(),
-        "Rust ownership\n\nA class about ownership.\n\nrust, ownership\n\nOwnership\n"
+        VALID_YOUTUBE_MD
     );
     let state = job_json(&job);
     assert_eq!(state["templates"]["youtube"]["status"], "done");
@@ -141,21 +192,35 @@ fn fields_run_then_cached() {
         state["templates"]["youtube"]["artifacts"],
         serde_json::json!(["youtube.json", "youtube.md"])
     );
-    assert_eq!(fake.chat_count(), 2, "summary and youtube");
+    assert_eq!(fake.chat_count(), 3, "summary, chapters and youtube");
 
-    let out = run_llm(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
+    let out = run_youtube(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
-    assert_eq!(fake.chat_count(), 2, "the second run makes no chat request");
+    assert_eq!(fake.chat_count(), 3, "the second run makes no chat request");
     let cached = cached_steps(&stderr(&out));
-    assert!(cached.contains(&"summary".to_string()), "{}", stderr(&out));
-    assert!(cached.contains(&"youtube".to_string()), "{}", stderr(&out));
+    assert_eq!(
+        cached,
+        [
+            "probe",
+            "join",
+            "audio",
+            "transcribe",
+            "outputs",
+            "summary",
+            "chapters",
+            "youtube"
+        ],
+        "{}",
+        stderr(&out)
+    );
 }
 
 #[test]
 fn fields_repair_request() {
     require_ffmpeg!();
     let env = env_with_clip();
-    let over = youtube_answer("Rust ownership", &"x".repeat(5001));
+    let over = youtube_answer("Rust ownership", &"x".repeat(3451));
+    let previous = over.clone();
     let fake = summary_and_fields(move |req| {
         if is_repair(req) {
             valid_youtube()
@@ -163,23 +228,30 @@ fn fields_repair_request() {
             over.clone()
         }
     });
-    let out = run_llm(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
+    let out = run_youtube(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     let sent = chats(&fake);
-    let youtube: Vec<_> = sent.iter().filter(|r| has_format(r)).collect();
+    let youtube: Vec<_> = sent.iter().filter(|r| is_youtube(r)).collect();
+    assert_eq!(
+        sent.len(),
+        4,
+        "summary, chapters, the final request and one repair"
+    );
     assert_eq!(youtube.len(), 2, "the final request and one repair");
     assert!(!is_repair(youtube[0]));
     assert!(is_repair(youtube[1]));
-    assert!(
-        message(youtube[1], 1).contains("\"body\" has 5001 characters; the limit is 5000"),
-        "{}",
-        message(youtube[1], 1)
+    assert_eq!(
+        message(youtube[1], 1),
+        format!(
+            "Previous answer:\n{previous}\n\nProblems:\n- \"body\" has 3451 characters; the limit is 3450. Shorten it to at most 3450 characters."
+        )
     );
     assert!(message(youtube[1], 0).starts_with("You correct a JSON object."));
     let job = env.job_dir("a");
+    assert_eq!(read_json(job.join("youtube.json")), valid_youtube_json());
     assert_eq!(
-        read_json(job.join("youtube.json"))["fields"]["body"],
-        "A class about ownership."
+        fs::read_to_string(job.join("youtube.md")).unwrap(),
+        VALID_YOUTUBE_MD
     );
 }
 
@@ -187,32 +259,39 @@ fn fields_repair_request() {
 fn fields_repairs_exhausted() {
     require_ffmpeg!();
     let env = env_with_clip();
-    let over = youtube_answer("Rust ownership", &"x".repeat(5001));
+    let over = youtube_answer("Rust ownership", &"x".repeat(3451));
     let fake = summary_and_fields(move |_| over.clone());
     let args = ["run", "a.mp4", "-t", "youtube"];
-    let out = run_llm(&env, &args, &fake);
+    let out = run_youtube(&env, &args, &fake);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     let err = stderr(&out);
-    assert!(err.contains("still breaks 1 limit"), "{err}");
-    assert!(err.contains("\"body\" has 5001 characters"), "{err}");
+    assert_eq!(
+        err.lines().last(),
+        Some("minuta: template youtube: the answer still breaks 1 limit after 2 repairs: \"body\" has 3451 characters; the limit is 3450. Shorten it to at most 3450 characters; raise llm.repairs, relax the limit in a project template, or use a stronger backend with --llm"),
+        "{err}"
+    );
     let job = env.job_dir("a");
     assert!(!job.join("youtube.json").exists());
     assert!(!job.join("youtube.md").exists());
     assert_eq!(
         fake.chat_count(),
-        4,
-        "summary, the final request, two repairs"
+        5,
+        "summary, chapters, the final request, two repairs"
     );
 
-    let out = run_llm(&env, &args, &fake);
+    let out = run_youtube(&env, &args, &fake);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     let sent = chats(&fake);
-    assert_eq!(sent.len(), 7, "summary stays cached; youtube asks again");
+    assert_eq!(
+        sent.len(),
+        8,
+        "summary and chapters stay cached; youtube asks again"
+    );
     assert!(
-        !is_repair(&sent[4]),
+        !is_repair(&sent[5]),
         "the rerun starts with a new final request"
     );
-    assert!(is_repair(&sent[5]) && is_repair(&sent[6]));
+    assert!(is_repair(&sent[6]) && is_repair(&sent[7]));
 }
 
 #[test]
@@ -226,10 +305,15 @@ fn fields_invalid_json_repaired() {
             "Sure! Here is your copy.".to_string()
         }
     });
-    let out = run_llm(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
+    let out = run_youtube(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     let sent = chats(&fake);
-    let youtube: Vec<_> = sent.iter().filter(|r| has_format(r)).collect();
+    let youtube: Vec<_> = sent.iter().filter(|r| is_youtube(r)).collect();
+    assert_eq!(
+        sent.len(),
+        4,
+        "summary, chapters, the final request and one repair"
+    );
     assert_eq!(youtube.len(), 2);
     assert!(
         message(youtube[1], 1).contains("the answer is not a JSON object"),
@@ -237,9 +321,11 @@ fn fields_invalid_json_repaired() {
         message(youtube[1], 1)
     );
     assert!(message(youtube[1], 1).contains("Sure! Here is your copy."));
+    let job = env.job_dir("a");
+    assert_eq!(read_json(job.join("youtube.json")), valid_youtube_json());
     assert_eq!(
-        read_json(env.job_dir("a").join("youtube.json"))["fields"]["title"],
-        "Rust ownership"
+        fs::read_to_string(job.join("youtube.md")).unwrap(),
+        VALID_YOUTUBE_MD
     );
 }
 
@@ -373,7 +459,9 @@ fn fields_chained_reads_md() {
         "---\ninput: youtube\n---\nWrite the post.",
     );
     let fake = ollama_with(Arc::new(|req| {
-        if has_format(req) {
+        if is_chapters(req) {
+            Reply::chat(&valid_chapters())
+        } else if has_format(req) {
             Reply::chat(&valid_youtube())
         } else if message(req, 0).contains("Write the post.") {
             Reply::chat("the post")
@@ -381,16 +469,18 @@ fn fields_chained_reads_md() {
             Reply::chat("the summary")
         }
     }));
-    let out = run_llm(&env, &["run", "a.mp4", "-t", "post"], &fake);
+    let out = run_youtube(&env, &["run", "a.mp4", "-t", "post"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     let job = env.job_dir("a");
     let youtube_md = fs::read_to_string(job.join("youtube.md")).unwrap();
-    assert!(youtube_md.contains("A class about ownership."));
+    assert_eq!(youtube_md, VALID_YOUTUBE_MD);
+    assert_eq!(read_json(job.join("youtube.json")), valid_youtube_json());
     let sent = chats(&fake);
     let post: Vec<_> = sent
         .iter()
         .filter(|r| message(r, 0).contains("Write the post."))
         .collect();
+    assert_eq!(sent.len(), 4, "summary, chapters, youtube and post");
     assert_eq!(post.len(), 1);
     assert_eq!(message(post[0], 1).trim_end(), youtube_md.trim_end());
     assert_eq!(
