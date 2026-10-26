@@ -664,7 +664,7 @@ fn missing_dir_is_empty() {
     let c = discover(&e.dirs()).unwrap();
     assert_eq!(
         c.templates.keys().collect::<Vec<_>>(),
-        ["instagram", "linkedin", "summary", "youtube"]
+        ["chapters", "instagram", "linkedin", "summary", "youtube"]
     );
     assert_eq!(c.get("summary").unwrap().layer, Layer::BuiltIn);
     assert!(c.get("summary").unwrap().path.is_none());
@@ -688,7 +688,7 @@ fn non_md_files_and_dirs_are_ignored() {
     write(&e.project, "notes.txt", "x");
     fs::create_dir_all(e.project.join("sub.md")).unwrap();
     let c = discover(&e.dirs()).unwrap();
-    assert_eq!(c.templates.len(), 4);
+    assert_eq!(c.templates.len(), 5);
     assert!(c.invalid.is_empty());
 }
 
@@ -745,7 +745,7 @@ fn get_unknown_lists_names() {
     let m = usage(c.get("nope"));
     assert!(m.contains("nope"), "{m}");
     assert!(
-        m.contains("instagram, linkedin, minutes, summary, youtube"),
+        m.contains("chapters, instagram, linkedin, minutes, summary, youtube"),
         "{m}"
     );
 }
@@ -832,6 +832,51 @@ fn builtin_instagram_shape() {
     let out = builtin_shape("instagram", &[Field::Body, Field::Hashtags]);
     assert!(out.contains("Open with a hook"), "{out}");
     assert!(out.contains("optional call to action"), "{out}");
+}
+
+#[test]
+fn builtin_chapters_shape() {
+    let t = builtin("chapters");
+    assert_eq!(t.layer, Layer::BuiltIn);
+    assert_eq!(t.input, Input::Transcript);
+    assert_eq!(
+        t.output,
+        Output::Chapters(ChaptersSpec {
+            max: Some(20),
+            max_chars: Some(1500)
+        })
+    );
+    assert_eq!(
+        t.description.as_deref(),
+        Some("Timestamped chapters (YouTube rules)")
+    );
+}
+
+#[test]
+fn builtin_chapters_max_limit() {
+    let Output::Chapters(spec) = builtin("chapters").output else {
+        panic!("chapters is not a chapters output");
+    };
+    assert_eq!(spec.max, Some(20));
+}
+
+#[test]
+fn builtin_chapters_max_chars_limit() {
+    let Output::Chapters(spec) = builtin("chapters").output else {
+        panic!("chapters is not a chapters output");
+    };
+    assert_eq!(spec.max_chars, Some(1500));
+}
+
+#[test]
+fn builtin_chapters_prompt_exact() {
+    assert_eq!(
+        builtin("chapters").render(&vars()),
+        "Divide the recording \"reunion\" (1:02:03) into chapters by topic, for the YouTube\n\
+         description. Start a chapter where the speakers move to a new topic, not at every pause. Each\n\
+         title names the topic in a few words that a viewer would recognize. Use only topics that are\n\
+         in the input.\n"
+    );
 }
 
 fn chars(n: usize) -> Limit {

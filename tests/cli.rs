@@ -1250,6 +1250,53 @@ fn templates_list_shows_built_in() {
 }
 
 #[test]
+fn templates_list_shows_built_in_chapters() {
+    let env = Env::new();
+    let out = env.minuta(&["templates", "list"]);
+    out.clone().assert().success();
+    let text = stdout(&out);
+    let chapters = text.lines().find(|l| l.starts_with("chapters")).unwrap();
+    let cols: Vec<&str> = chapters
+        .split("  ")
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .collect();
+    assert_eq!(
+        cols,
+        [
+            "chapters",
+            "built-in",
+            "transcript",
+            "chapters",
+            "(default)",
+            "Timestamped chapters (YouTube rules)"
+        ]
+    );
+}
+
+#[test]
+fn templates_show_chapters() {
+    let env = Env::new();
+    let out = env.minuta(&["templates", "show", "chapters"]);
+    out.clone().assert().success();
+    assert_eq!(stderr(&out), "built-in\n");
+    assert_eq!(
+        stdout(&out),
+        "---\n\
+         description: Timestamped chapters (YouTube rules)\n\
+         input: transcript\n\
+         output: chapters\n\
+         limits:\n\
+         \x20 chapters: { max: 20, max_chars: 1500 }\n\
+         ---\n\
+         Divide the recording \"{{job_name}}\" ({{duration}}) into chapters by topic, for the YouTube\n\
+         description. Start a chapter where the speakers move to a new topic, not at every pause. Each\n\
+         title names the topic in a few words that a viewer would recognize. Use only topics that are\n\
+         in the input.\n"
+    );
+}
+
+#[test]
 fn templates_list_shows_output_column() {
     let env = Env::new();
     env.template(

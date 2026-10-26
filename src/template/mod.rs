@@ -80,11 +80,12 @@ const RESERVED: [&str; 7] = [
     "job",
 ];
 
-const BUILTIN: [(&str, &str); 4] = [
+const BUILTIN: [(&str, &str); 5] = [
     ("summary", include_str!("builtin/summary.md")),
     ("youtube", include_str!("builtin/youtube.md")),
     ("linkedin", include_str!("builtin/linkedin.md")),
     ("instagram", include_str!("builtin/instagram.md")),
+    ("chapters", include_str!("builtin/chapters.md")),
 ];
 
 #[derive(Deserialize)]
