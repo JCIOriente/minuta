@@ -3,6 +3,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+#[path = "../support/fake_ollama.rs"]
+pub mod fake_ollama;
+
+use fake_ollama::{FakeOllama, Request};
+
 pub const FAKE_WHISPER: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/bin/whisper-cli"
@@ -33,6 +38,12 @@ macro_rules! require_ffmpeg {
     };
 }
 pub(crate) use require_ffmpeg;
+
+pub const FAKE_CLAUDE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/claude");
+pub const CLASS_FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/whisper/class.json"
+);
 
 /// A hermetic temp dir: own HOME, an empty config, the output folder and the sources.
 pub struct Env {
@@ -120,7 +131,102 @@ impl Env {
     pub fn job_dir(&self, name: &str) -> PathBuf {
         fs::canonicalize(self.path("minuta-out").join(name)).unwrap()
     }
+
+    /// Writes `<dir>/<name>.md`, where `dir` is relative to the temp dir.
+    pub fn template(&self, dir: &str, name: &str, text: &str) {
+        let dir = self.path(dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(format!("{name}.md")), text).unwrap();
+    }
+
+    /// `command` pointed at `url`, with zero retry backoff and the fake `claude`.
+    pub fn llm_command(&self, args: &[&str], url: &str) -> Command {
+        let mut cmd = self.command(args);
+        cmd.env("MINUTA_OLLAMA_URL", url)
+            .env("MINUTA_LLM_BACKOFF_MS", "0")
+            .env("MINUTA_CLAUDE_BIN", FAKE_CLAUDE);
+        cmd
+    }
+
+    pub fn run_llm(&self, args: &[&str], fake: &FakeOllama) -> Output {
+        self.llm_command(args, &fake.url()).output().unwrap()
+    }
 }
+
+pub fn env_with_clip() -> Env {
+    let env = Env::new();
+    env.clip("a.mp4", 440);
+    env
+}
+
+pub fn ollama_with(responder: fake_ollama::Responder) -> FakeOllama {
+    FakeOllama::start(
+        &["gemma4:26b"],
+        serde_json::json!({
+            "model_info": {"gemma4.context_length": 32768},
+            "capabilities": ["completion"]
+        }),
+        responder,
+    )
+}
+
+pub fn message(req: &Request, index: usize) -> &str {
+    req.body["messages"][index]["content"].as_str().unwrap()
+}
+
+pub fn chats(fake: &FakeOllama) -> Vec<Request> {
+    fake.requests()
+        .into_iter()
+        .filter(|r| r.path == "/api/chat")
+        .collect()
+}
+
+/// Whether the request asks for structured output (final and repair calls only).
+pub fn has_format(req: &Request) -> bool {
+    !req.body["format"].is_null()
+}
+
+/// Whether the request is a call of the `chapters` template (its schema asks for `chapters`).
+pub fn is_chapters(req: &Request) -> bool {
+    !req.body["format"]["properties"]["chapters"].is_null()
+}
+
+pub fn is_repair(req: &Request) -> bool {
+    message(req, 1).starts_with("Previous answer:")
+}
+
+pub fn chapters_answer(chapters: &[(&str, &str)]) -> String {
+    let list: Vec<_> = chapters
+        .iter()
+        .map(|(start, title)| serde_json::json!({"start": start, "title": title}))
+        .collect();
+    serde_json::json!({ "chapters": list }).to_string()
+}
+
+/// A valid chapters answer for `class.json`: every start is a segment start of the transcript.
+pub fn valid_chapters() -> String {
+    chapters_answer(&[
+        ("00:00:00", "Introducción"),
+        ("00:00:32", "La propiedad"),
+        ("00:01:47", "Movimientos y copias"),
+        ("00:03:25", "Préstamos"),
+        ("00:04:40", "Ejercicios"),
+    ])
+}
+
+/// A valid answer for the built-in `youtube` template.
+pub fn valid_youtube() -> String {
+    serde_json::json!({
+        "title": "Rust ownership",
+        "body": "A class about ownership.",
+        "tags": ["rust", "ownership"],
+        "thumbnail_text": "Ownership",
+    })
+    .to_string()
+}
+
+/// The `youtube.md` of a run that answered `valid_youtube` and `valid_chapters`.
+pub const VALID_YOUTUBE_MD: &str = "Rust ownership\n\nA class about ownership.\n\n0:00 Introducción\n0:32 La propiedad\n1:47 Movimientos y copias\n3:25 Préstamos\n4:40 Ejercicios\n\nrust, ownership\n\nOwnership\n";
 
 pub fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()

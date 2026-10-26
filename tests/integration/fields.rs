@@ -1,100 +1,28 @@
 //! Fields templates end to end: the real binary, real ffmpeg on a generated clip, the fake
 //! whisper, the fake Ollama (scripted per request) and the fake `claude`.
 
-// templates.rs loads the same file; it is private there, so this module loads its own copy.
-#[allow(clippy::duplicate_mod)]
-#[path = "../support/fake_ollama.rs"]
-mod fake_ollama;
-
 use std::fs;
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::Output;
 use std::sync::Arc;
 
 use fake_ollama::{FakeOllama, Reply, Request};
 
 use crate::common::*;
 
-const FAKE_CLAUDE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/claude");
-const CLASS_FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/whisper/class.json"
-);
 const BLOCK_INTRO: &str = "Return only a JSON object with exactly these keys";
-
-fn ollama_with(responder: fake_ollama::Responder) -> FakeOllama {
-    FakeOllama::start(
-        &["gemma4:26b"],
-        serde_json::json!({
-            "model_info": {"gemma4.context_length": 32768},
-            "capabilities": ["completion"]
-        }),
-        responder,
-    )
-}
-
-fn message(req: &Request, index: usize) -> &str {
-    req.body["messages"][index]["content"].as_str().unwrap()
-}
-
-fn chats(fake: &FakeOllama) -> Vec<Request> {
-    fake.requests()
-        .into_iter()
-        .filter(|r| r.path == "/api/chat")
-        .collect()
-}
-
-/// Whether the request asks for structured output (final and repair calls only).
-fn has_format(req: &Request) -> bool {
-    !req.body["format"].is_null()
-}
-
-/// Whether the request is a call of the `chapters` template (its schema asks for `chapters`).
-fn is_chapters(req: &Request) -> bool {
-    !req.body["format"]["properties"]["chapters"].is_null()
-}
 
 /// Whether the request is a structured call of the built-in `youtube` template.
 fn is_youtube(req: &Request) -> bool {
     has_format(req) && !is_chapters(req)
 }
 
-fn is_repair(req: &Request) -> bool {
-    message(req, 1).starts_with("Previous answer:")
-}
-
-/// Writes `<dir>/<name>.md`, where `dir` is relative to the temp dir.
-fn write_template(env: &Env, dir: &str, name: &str, text: &str) {
-    let dir = env.path(dir);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join(format!("{name}.md")), text).unwrap();
-}
-
-/// `minuta args` pointed at `url`, with zero retry backoff and the fake `claude`.
-fn llm_command(env: &Env, args: &[&str], url: &str) -> Command {
-    let mut cmd = env.command(args);
-    cmd.env("MINUTA_OLLAMA_URL", url)
-        .env("MINUTA_LLM_BACKOFF_MS", "0")
-        .env("MINUTA_CLAUDE_BIN", FAKE_CLAUDE);
-    cmd
-}
-
-fn run_llm(env: &Env, args: &[&str], fake: &FakeOllama) -> Output {
-    llm_command(env, args, &fake.url()).output().unwrap()
-}
-
 /// Like `run_llm` with the transcript of `class.json`, which is long enough for chapters.
 fn run_youtube(env: &Env, args: &[&str], fake: &FakeOllama) -> Output {
-    llm_command(env, args, &fake.url())
+    env.llm_command(args, &fake.url())
         .env("FAKE_WHISPER_FIXTURE", CLASS_FIXTURE)
         .output()
         .unwrap()
-}
-
-fn env_with_clip() -> Env {
-    let env = Env::new();
-    env.clip("a.mp4", 440);
-    env
 }
 
 /// A valid answer for the built-in `youtube` template.
@@ -107,27 +35,6 @@ fn youtube_answer(title: &str, body: &str) -> String {
     })
     .to_string()
 }
-
-fn valid_youtube() -> String {
-    youtube_answer("Rust ownership", "A class about ownership.")
-}
-
-/// A valid chapters answer for `class.json`: every start is a segment start of the transcript.
-fn valid_chapters() -> String {
-    serde_json::json!({
-        "chapters": [
-            {"start": "00:00:00", "title": "Introducción"},
-            {"start": "00:00:32", "title": "La propiedad"},
-            {"start": "00:01:47", "title": "Movimientos y copias"},
-            {"start": "00:03:25", "title": "Préstamos"},
-            {"start": "00:04:40", "title": "Ejercicios"},
-        ]
-    })
-    .to_string()
-}
-
-/// The `youtube.md` of a run that answered `valid_youtube` and `valid_chapters`.
-const VALID_YOUTUBE_MD: &str = "Rust ownership\n\nA class about ownership.\n\n0:00 Introducción\n0:32 La propiedad\n1:47 Movimientos y copias\n3:25 Préstamos\n4:40 Ejercicios\n\nrust, ownership\n\nOwnership\n";
 
 /// The `youtube.json` of a run that answered `valid_youtube` and `valid_chapters`.
 fn valid_youtube_json() -> serde_json::Value {
@@ -355,9 +262,7 @@ fn long_transcript(env: &Env, n: usize) -> PathBuf {
 fn fields_chunked_format_only_final() {
     require_ffmpeg!();
     let env = env_with_clip();
-    write_template(
-        &env,
-        "templates",
+    env.template("templates",
         "headline",
         "---\noutput: fields\nfields: [title]\nlimits:\n  title: { max_chars: 10 }\n---\nWrite a headline.",
     );
@@ -368,7 +273,7 @@ fn fields_chunked_format_only_final() {
         (true, false) => Reply::chat(r#"{"title": "A headline that is too long"}"#),
         (true, true) => Reply::chat(r#"{"title": "Short"}"#),
     }));
-    let mut cmd = llm_command(&env, &["run", "a.mp4", "-t", "headline"], &fake.url());
+    let mut cmd = env.llm_command(&["run", "a.mp4", "-t", "headline"], &fake.url());
     let out = cmd
         .env("FAKE_WHISPER_FIXTURE", &fixture)
         .env("MINUTA_OLLAMA_NUM_CTX", "600")
@@ -411,15 +316,14 @@ fn fields_chunked_format_only_final() {
 fn fields_on_claude() {
     require_ffmpeg!();
     let env = env_with_clip();
-    write_template(
-        &env,
+    env.template(
         "templates",
         "post",
         "---\nllm: claude\noutput: fields\nfields: [title, tags]\n---\nWrite a post.",
     );
     let argv = env.path("claude.argv");
     let fake = ollama_with(Arc::new(|_| Reply::chat("unused")));
-    let mut cmd = llm_command(&env, &["run", "a.mp4", "-t", "post"], &fake.url());
+    let mut cmd = env.llm_command(&["run", "a.mp4", "-t", "post"], &fake.url());
     let out = cmd
         .env("FAKE_CLAUDE_ARGV", &argv)
         .env(
@@ -452,8 +356,7 @@ fn fields_on_claude() {
 fn fields_chained_reads_md() {
     require_ffmpeg!();
     let env = env_with_clip();
-    write_template(
-        &env,
+    env.template(
         "templates",
         "post",
         "---\ninput: youtube\n---\nWrite the post.",
@@ -500,14 +403,13 @@ fn youtube_override(title_max: usize) -> String {
 fn fields_limit_edit_reruns() {
     require_ffmpeg!();
     let env = env_with_clip();
-    write_template(&env, "templates", "youtube", &youtube_override(100));
-    write_template(
-        &env,
+    env.template("templates", "youtube", &youtube_override(100));
+    env.template(
         "templates",
         "post",
         "---\ninput: youtube\n---\nWrite the post.",
     );
-    write_template(&env, "templates", "other", "Write the other.");
+    env.template("templates", "other", "Write the other.");
     // The title follows the limit in the prompt, so the edit changes youtube.md and
     // the dependent sees a new input.
     let fake = ollama_with(Arc::new(|req| {
@@ -523,12 +425,12 @@ fn fields_limit_edit_reruns() {
         }
     }));
     let args = ["run", "a.mp4", "-t", "post", "-t", "other"];
-    let out = run_llm(&env, &args, &fake);
+    let out = env.run_llm(&args, &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(fake.chat_count(), 4, "summary, youtube, post, other");
 
-    write_template(&env, "templates", "youtube", &youtube_override(90));
-    let out = run_llm(&env, &args, &fake);
+    env.template("templates", "youtube", &youtube_override(90));
+    let out = env.run_llm(&args, &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(fake.chat_count(), 6, "youtube and post rerun");
     let mut cached: Vec<_> = cached_steps(&stderr(&out))
@@ -546,13 +448,12 @@ fn fields_limit_edit_reruns() {
 #[test]
 fn templates_list_output_column() {
     let env = Env::new();
-    write_template(
-        &env,
+    env.template(
         "templates",
         "reel",
         "---\noutput: fields\nfields: [title]\n---\nWrite a reel.",
     );
-    write_template(&env, "templates", "notes", "Notes.");
+    env.template("templates", "notes", "Notes.");
     let out = env.minuta(&["templates", "list"]);
     assert!(out.status.success(), "{}", stderr(&out));
     let text = stdout(&out);
