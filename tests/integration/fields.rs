@@ -582,6 +582,10 @@ fn templates_list_output_column() {
             "summary",
             ["built-in", "transcript", "markdown", "(default)"],
         ),
+        (
+            "chapters",
+            ["built-in", "transcript", "chapters", "(default)"],
+        ),
         ("reel", ["project", "transcript", "fields", "(default)"]),
         ("notes", ["project", "transcript", "markdown", "(default)"]),
     ];
