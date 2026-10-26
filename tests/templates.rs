@@ -532,6 +532,44 @@ fn chapters_error_max_chars_zero() {
 }
 
 #[test]
+fn chapters_limits_at_minimum_parse() {
+    let t = parse(
+        "chapters",
+        "---\noutput: chapters\nlimits:\n  chapters: { max: 3, max_chars: 1 }\n---\nx",
+    )
+    .unwrap();
+    assert_eq!(
+        t.output,
+        Output::Chapters(ChaptersSpec {
+            max: Some(3),
+            max_chars: Some(1)
+        })
+    );
+}
+
+#[test]
+fn chapters_error_duplicate_limit() {
+    assert_eq!(
+        chapters_error(
+            "chapters",
+            "limits:\n  chapters: { max: 5 }\n  chapters: { max: 5 }\n"
+        ),
+        "template chapters: duplicate limit for \"chapters\""
+    );
+}
+
+#[test]
+fn chapters_explicit_input_transcript_parses() {
+    let t = parse(
+        "chapters",
+        "---\noutput: chapters\ninput: transcript\n---\nx",
+    )
+    .unwrap();
+    assert_eq!(t.input, Input::Transcript);
+    assert_eq!(t.output, Output::Chapters(ChaptersSpec::default()));
+}
+
+#[test]
 fn input_chapters_parses() {
     let t = parse("a", "---\ninput: chapters\n---\nx").unwrap();
     assert_eq!(t.input, Input::Template("chapters".into()));
