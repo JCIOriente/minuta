@@ -89,6 +89,7 @@ impl TemplateRun<'_> {
         match self.template.output {
             Output::Markdown => vec![file("md")],
             Output::Fields(_) => vec![file("json"), file("md")],
+            Output::Chapters(_) => vec![PathBuf::from(crate::chapters::JSON_FILE), file("md")],
         }
     }
 
@@ -214,6 +215,9 @@ impl TemplateRun<'_> {
                     .map_err(named)?;
                 let json = artifact_json(&self.template.name, &self.output_lang, &values);
                 (generated, vec![json, render(&values, spec.format)])
+            }
+            Output::Chapters(_) => {
+                return Err(self.error("output chapters is not supported yet".into()));
             }
         };
 

@@ -300,6 +300,7 @@ fn templates_list() -> Result<()> {
             match &t.output {
                 Output::Markdown => "markdown",
                 Output::Fields(_) => "fields",
+                Output::Chapters(_) => "chapters",
             }
             .to_string(),
             t.llm
