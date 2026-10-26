@@ -586,7 +586,7 @@ const HINT: &str = "raise llm.repairs, relax the limit in a project template, \
 fn fields_spec(t: &Template) -> &FieldsSpec {
     match &t.output {
         Output::Fields(spec) => spec,
-        Output::Markdown => panic!("{} is not a fields template", t.name),
+        Output::Markdown | Output::Chapters(_) => panic!("{} is not a fields template", t.name),
     }
 }
 
