@@ -1,6 +1,12 @@
 //! Chapter rendering: the chapters artifact and its text forms (ADR-0009).
 
-use super::Chapter;
+use serde::{Deserialize, Serialize};
+use serde_json::Value as Json;
+
+use super::{lines, Chapter};
+
+/// The version of the `chapters.json` layout this build writes and reads (ADR-0009).
+const ARTIFACT_VERSION: u64 = 1;
 
 /// A chapters artifact as read back from `chapters.json`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,17 +17,68 @@ pub struct Artifact {
 
 /// The `chapters.md` text: the chapter lines, one trailing newline.
 pub fn markdown(chapters: &[Chapter]) -> String {
-    todo!("markdown {chapters:?}")
+    format!("{}\n", lines(chapters))
 }
 
 /// The `chapters.json` artifact (ADR-0009), pretty-printed with a trailing newline.
 pub fn artifact_json(output_lang_code: &str, chapters: &[Chapter]) -> String {
-    todo!("artifact_json {output_lang_code} {chapters:?}")
+    let artifact = ArtifactJson {
+        version: ARTIFACT_VERSION,
+        output_lang: output_lang_code,
+        chapters,
+    };
+    let mut json = serde_json::to_string_pretty(&artifact).expect("artifact serializes");
+    json.push('\n');
+    json
+}
+
+#[derive(Serialize)]
+struct ArtifactJson<'a> {
+    version: u64,
+    output_lang: &'a str,
+    chapters: &'a [Chapter],
+}
+
+/// The shape of `chapters.json`, checked after its version.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Envelope {
+    // Checked on the untyped value before this struct is read, so it is never read here.
+    #[allow(dead_code)]
+    version: u64,
+    output_lang: String,
+    chapters: Vec<WireChapter>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireChapter {
+    start: u64,
+    title: String,
 }
 
 /// Reads a `chapters.json` text. Errors are the spec's wording after "chapters.json".
 pub fn read_artifact(text: &str) -> Result<Artifact, String> {
-    todo!("read_artifact {text}")
+    let value: Json = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    if let Some(version) = value.get("version").and_then(Json::as_u64) {
+        if version != ARTIFACT_VERSION {
+            return Err(format!(
+                "has version {version}, which this version of minuta cannot read"
+            ));
+        }
+    }
+    let envelope: Envelope = serde_json::from_value(value).map_err(|e| e.to_string())?;
+    Ok(Artifact {
+        output_lang: envelope.output_lang,
+        chapters: envelope
+            .chapters
+            .into_iter()
+            .map(|c| Chapter {
+                start: c.start,
+                title: c.title,
+            })
+            .collect(),
+    })
 }
 
 #[cfg(test)]
@@ -82,8 +139,20 @@ mod tests {
     #[test]
     fn read_artifact_rejects_string_start() {
         assert_eq!(
-            read_artifact(r#"{"version":1,"output_lang":"es","chapters":[{"start":"4:12","title":"Intro"}]}"#),
+            read_artifact(
+                r#"{"version":1,"output_lang":"es","chapters":[{"start":"4:12","title":"Intro"}]}"#
+            ),
             Err("invalid type: string \"4:12\", expected u64".to_string())
+        );
+    }
+
+    #[test]
+    fn read_artifact_rejects_unknown_chapter_key() {
+        assert_eq!(
+            read_artifact(
+                r#"{"version":1,"output_lang":"es","chapters":[{"start":0,"title":"Intro","end":5}]}"#
+            ),
+            Err("unknown field `end`, expected `start` or `title`".to_string())
         );
     }
 
@@ -91,7 +160,7 @@ mod tests {
     fn read_artifact_rejects_non_object() {
         assert_eq!(
             read_artifact("[]"),
-            Err("invalid type: sequence, expected struct Envelope".to_string())
+            Err("invalid length 0, expected struct Envelope with 3 elements".to_string())
         );
     }
 }

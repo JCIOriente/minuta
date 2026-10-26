@@ -1,22 +1,60 @@
 //! Chapter prompts: the chapters block and its repair prompt (ADR-0008).
 
-use serde_json::Value as Json;
+use serde_json::{json, Value as Json};
 
-use super::ChaptersSpec;
+use super::{ChaptersSpec, MIN_CHAPTERS, MIN_SECONDS};
+use crate::fields::prompt::REPAIR_INTRO;
+use crate::llm::chunk::language_instruction;
+
+const BLOCK_INTRO: &str = r#"Return only a JSON object with one key, "chapters", and no text before or after it. "chapters" is an array of objects, one per chapter, in the order they happen:"#;
+const START_LINE: &str = r#""start" (string): when the chapter starts, copied from a timestamp in the input, like "00:04:12". The first chapter starts at "00:00:00"."#;
+const TITLE_LINE: &str =
+    r#""title" (string): the chapter title, on one line, in plain text without Markdown."#;
+const KEYS_LINE: &str = r#"Keep the keys exactly as written, in English; write the titles in the language given below."#;
 
 /// The chapters block of the final and repair system prompts (no language instruction).
 pub fn chapters_block(spec: &ChaptersSpec) -> String {
-    todo!("chapters_block {spec:?}")
+    let count = match spec.max {
+        Some(max) => format!("Give at least {MIN_CHAPTERS} and at most {max} chapters."),
+        None => format!("Give at least {MIN_CHAPTERS} chapters."),
+    };
+    let mut limits = format!("{count} Each chapter lasts at least {MIN_SECONDS} seconds.");
+    if let Some(max_chars) = spec.max_chars {
+        limits.push_str(&format!(
+            r#" As "0:00 Title" lines, all chapters together have at most {max_chars} characters."#
+        ));
+    }
+    [BLOCK_INTRO, START_LINE, TITLE_LINE, &limits, KEYS_LINE].join("\n")
 }
 
 /// System prompt of a repair call; the language instruction is last.
 pub fn repair_system(spec: &ChaptersSpec, output_lang: &str) -> String {
-    todo!("repair_system {spec:?} {output_lang}")
+    format!(
+        "{REPAIR_INTRO}\n\n{}\n\n{}",
+        chapters_block(spec),
+        language_instruction(output_lang)
+    )
 }
 
 /// JSON schema for structured output: the `chapters` list, no length constraints.
 pub fn schema() -> Json {
-    todo!("schema")
+    json!({
+        "type": "object",
+        "properties": {
+            "chapters": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "start": {"type": "string"},
+                        "title": {"type": "string"}
+                    },
+                    "required": ["start", "title"]
+                }
+            }
+        },
+        "required": ["chapters"]
+    })
 }
 
 #[cfg(test)]
@@ -46,7 +84,9 @@ Keep the keys exactly as written, in English; write the titles in the language g
         };
         assert_eq!(
             chapters_block(&spec).lines().nth(3),
-            Some(r#"Give at least 3 chapters. Each chapter lasts at least 10 seconds. As "0:00 Title" lines, all chapters together have at most 1500 characters."#)
+            Some(
+                r#"Give at least 3 chapters. Each chapter lasts at least 10 seconds. As "0:00 Title" lines, all chapters together have at most 1500 characters."#
+            )
         );
     }
 
@@ -58,7 +98,9 @@ Keep the keys exactly as written, in English; write the titles in the language g
         };
         assert_eq!(
             chapters_block(&spec).lines().nth(3),
-            Some("Give at least 3 and at most 20 chapters. Each chapter lasts at least 10 seconds.")
+            Some(
+                "Give at least 3 and at most 20 chapters. Each chapter lasts at least 10 seconds."
+            )
         );
     }
 
