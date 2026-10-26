@@ -60,11 +60,20 @@ struct WireChapter {
 /// Reads a `chapters.json` text. Errors are the spec's wording after "chapters.json".
 pub fn read_artifact(text: &str) -> Result<Artifact, String> {
     let value: Json = serde_json::from_str(text).map_err(|e| e.to_string())?;
-    if let Some(version) = value.get("version").and_then(Json::as_u64) {
+    let Some(object) = value.as_object() else {
+        return Err("expected an object".to_string());
+    };
+    if let Some(version) = object.get("version").and_then(Json::as_u64) {
         if version != ARTIFACT_VERSION {
             return Err(format!(
                 "has version {version}, which this version of minuta cannot read"
             ));
+        }
+    }
+    // Serde's derived structs also read arrays, so each chapter must be an object here.
+    if let Some(Json::Array(chapters)) = object.get("chapters") {
+        if let Some(i) = chapters.iter().position(|c| !c.is_object()) {
+            return Err(format!("chapter {} is not an object", i + 1));
         }
     }
     let envelope: Envelope = serde_json::from_value(value).map_err(|e| e.to_string())?;
@@ -158,9 +167,49 @@ mod tests {
 
     #[test]
     fn read_artifact_rejects_non_object() {
+        assert_eq!(read_artifact("[]"), Err("expected an object".to_string()));
+    }
+
+    #[test]
+    fn read_artifact_rejects_array_envelope() {
         assert_eq!(
-            read_artifact("[]"),
-            Err("invalid length 0, expected struct Envelope with 3 elements".to_string())
+            read_artifact(r#"[1,"es",[[0,"Intro"]]]"#),
+            Err("expected an object".to_string())
+        );
+    }
+
+    #[test]
+    fn read_artifact_rejects_array_chapter() {
+        assert_eq!(
+            read_artifact(r#"{"version":1,"output_lang":"es","chapters":[[0,"Intro"]]}"#),
+            Err("chapter 1 is not an object".to_string())
+        );
+    }
+
+    #[test]
+    fn read_artifact_rejects_unknown_top_level_key() {
+        assert_eq!(
+            read_artifact(r#"{"version":1,"output_lang":"es","chapters":[],"extra":1}"#),
+            Err(
+                "unknown field `extra`, expected one of `version`, `output_lang`, `chapters`"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn read_artifact_rejects_missing_version() {
+        assert_eq!(
+            read_artifact(r#"{"output_lang":"es","chapters":[]}"#),
+            Err("missing field `version`".to_string())
+        );
+    }
+
+    #[test]
+    fn read_artifact_rejects_version_0() {
+        assert_eq!(
+            read_artifact(r#"{"version":0,"output_lang":"es","chapters":[]}"#),
+            Err("has version 0, which this version of minuta cannot read".to_string())
         );
     }
 }
