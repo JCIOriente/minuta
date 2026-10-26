@@ -276,7 +276,7 @@ fn fingerprint_matches_spec_composition() {
 }
 
 #[test]
-fn markdown_fingerprint_unchanged() {
+fn markdown_fingerprint_pinned() {
     // Recorded on main before fields templates existed: sub-project 2 job folders stay cached.
     let (dir, _) = job();
     let t = tpl("summary", TEXT);
@@ -286,6 +286,20 @@ fn markdown_fingerprint_unchanged() {
             .fingerprint(&ctx(dir.path()), "reunion")
             .unwrap(),
         "ca5454c45b4f122fa4df6034c740f2e03507301a9deee312fc2d47d1587755de"
+    );
+}
+
+#[test]
+fn fields_fingerprint_pinned() {
+    // Recorded on main before the chapters field existed: sub-project 3 job folders stay cached.
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
+    assert_eq!(
+        run(&t, &b, "es")
+            .fingerprint(&ctx(dir.path()), "reunion")
+            .unwrap(),
+        "617f4ee7afa369b04af79a6655dc2edcf940e7c309b71a619af0f6b004c64b1a"
     );
 }
 
