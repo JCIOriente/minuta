@@ -481,6 +481,36 @@ mod tests {
     }
 
     #[test]
+    fn violation_rule_7_reports_each() {
+        let a = answer(&[
+            ("0:00", "A"),
+            ("5:00", "B"),
+            ("4:12", "C"),
+            ("4:20", "D"),
+            ("4:00", "E"),
+        ]);
+        assert_eq!(
+            messages(parse(&a)),
+            vec![
+                r#"chapter 3 ("C") starts at 4:12, before chapter 2 at 5:00. List the chapters in the order they happen."#,
+                r#"chapter 5 ("E") starts at 4:00, before chapter 4 at 4:20. List the chapters in the order they happen."#,
+            ]
+        );
+    }
+
+    #[test]
+    fn violation_rule_8_reports_each() {
+        let a = answer(&[("0:00", "A"), ("0:04", "B"), ("5:00", "C"), ("9:55", "D")]);
+        assert_eq!(
+            messages(parse(&a)),
+            vec![
+                r#"chapter 1 ("A") lasts 4 s (0:00 to 0:04); each chapter must last at least 10 s. Merge it with a neighboring chapter or move a start."#,
+                r#"chapter 4 ("D") lasts 5 s (9:55 to the end at 10:00); each chapter must last at least 10 s. Merge it with a neighboring chapter or move a start."#,
+            ]
+        );
+    }
+
+    #[test]
     fn violation_rule_9_over_max_chars() {
         let spec = ChaptersSpec {
             max: None,
