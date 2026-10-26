@@ -1295,6 +1295,39 @@ fn templates_list_shows_output_column() {
 }
 
 #[test]
+fn templates_list_output_chapters() {
+    let env = Env::new();
+    env.template(
+        "templates",
+        "chapters",
+        "---\ndescription: Chapters\noutput: chapters\n---\nWrite.",
+    );
+    let out = env.minuta(&["templates", "list"]);
+    out.clone().assert().success();
+    let text = stdout(&out);
+    let rows: Vec<Vec<&str>> = text
+        .lines()
+        .map(|l| {
+            l.split("  ")
+                .map(str::trim)
+                .filter(|c| !c.is_empty())
+                .collect()
+        })
+        .collect();
+    assert!(
+        rows.contains(&vec![
+            "chapters",
+            "project",
+            "transcript",
+            "chapters",
+            "(default)",
+            "Chapters"
+        ]),
+        "{text}"
+    );
+}
+
+#[test]
 fn templates_show_prints_winning_file() {
     let env = Env::new();
     let out = env.minuta(&["templates", "show", "summary"]);

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+use crate::chapters::{ChaptersSpec, MIN_CHAPTERS, NAME};
 use crate::error::{Error, Result};
 use crate::fields::{Field, FieldSpec, FieldsSpec, Format, Kind, Limit};
 use crate::lang;
@@ -27,11 +28,12 @@ pub enum Input {
     Template(String),
 }
 
-/// What a template produces: free Markdown or a set of structured fields.
+/// What a template produces: free Markdown, a set of structured fields or chapters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Output {
     Markdown,
     Fields(FieldsSpec),
+    Chapters(ChaptersSpec),
 }
 
 #[derive(Debug, Clone)]
@@ -68,9 +70,8 @@ pub const VARIABLES: [&str; 5] = [
     "duration",
 ];
 
-const RESERVED: [&str; 8] = [
+const RESERVED: [&str; 7] = [
     "transcript",
-    "chapters",
     "probe",
     "join",
     "audio",
@@ -270,6 +271,50 @@ fn fields_spec(
     })
 }
 
+/// Build the chapters spec from the frontmatter keys of the `chapters` template.
+fn chapters_spec(fm: &Frontmatter) -> std::result::Result<ChaptersSpec, String> {
+    if fm.fields.is_some() || fm.format.is_some() {
+        let key = if fm.fields.is_some() {
+            "fields"
+        } else {
+            "format"
+        };
+        return Err(format!("'{key}' is not allowed with 'output: chapters'"));
+    }
+    if let Some(dep) = fm.input.as_deref().filter(|dep| *dep != "transcript") {
+        return Err(format!(
+            "'output: chapters' reads the transcript, not '{dep}'"
+        ));
+    }
+    let mut spec = ChaptersSpec::default();
+    let mut seen = false;
+    for (key, raw) in fm.limits.iter().flat_map(|l| &l.0) {
+        if key != NAME {
+            return Err(format!(
+                "limit for {key:?}; a chapters template only limits '{NAME}'"
+            ));
+        }
+        if seen {
+            return Err(format!("duplicate limit for {key:?}"));
+        }
+        seen = true;
+        let positive = |what: &str, v: Option<u64>, least: u64, note: &str| match v {
+            Some(n) if n < least => Err(format!(
+                "'{what}' of {key:?} must be at least {least}{note}"
+            )),
+            other => Ok(other.map(|n| usize::try_from(n).unwrap_or(usize::MAX))),
+        };
+        spec.max = positive(
+            "max",
+            raw.max,
+            MIN_CHAPTERS as u64,
+            " (YouTube needs 3 chapters)",
+        )?;
+        spec.max_chars = positive("max_chars", raw.max_chars, 1, "")?;
+    }
+    Ok(spec)
+}
+
 impl Template {
     /// Parse a template file. Every problem is a usage error naming the template.
     pub fn parse(name: &str, layer: Layer, path: Option<PathBuf>, text: &str) -> Result<Template> {
@@ -311,10 +356,24 @@ impl Template {
             body: body.to_string(),
         };
 
+        let declares_chapters = fm
+            .as_ref()
+            .is_some_and(|f| f.output.as_deref() == Some("chapters"));
+        if name == NAME && !declares_chapters {
+            return Err(fail(format!(
+                "the template named '{NAME}' requires 'output: chapters'"
+            )));
+        }
+        if declares_chapters && name != NAME {
+            return Err(fail(format!(
+                "'output: chapters' is only for the template named '{NAME}'"
+            )));
+        }
+
         if let Some(fm) = fm {
-            tpl.description = fm.description;
+            tpl.description = fm.description.clone();
             let is_fields = match fm.output.as_deref() {
-                None | Some("markdown") => false,
+                None | Some("markdown") | Some("chapters") => false,
                 Some("fields") => true,
                 Some(other) => {
                     return Err(fail(format!(
@@ -322,7 +381,9 @@ impl Template {
                     )))
                 }
             };
-            if is_fields {
+            if declares_chapters {
+                tpl.output = Output::Chapters(chapters_spec(&fm).map_err(fail)?);
+            } else if is_fields {
                 tpl.output =
                     Output::Fields(fields_spec(fm.fields, fm.limits, fm.format).map_err(fail)?);
             } else {
