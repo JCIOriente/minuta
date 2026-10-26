@@ -145,6 +145,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_stamp_rejects_plus_sign() {
+        assert_eq!(parse_stamp("+4:12"), None);
+    }
+
+    #[test]
+    fn parse_stamp_rejects_sixty_seconds_with_hours() {
+        assert_eq!(parse_stamp("1:00:60"), None);
+    }
+
+    #[test]
     fn parse_stamp_rejects_unit_letters() {
         assert_eq!(parse_stamp("4m12"), None);
     }
