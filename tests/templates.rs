@@ -809,14 +809,32 @@ fn builtin_shape(name: &str, fields: &[Field]) -> String {
 fn builtin_youtube_shape() {
     let out = builtin_shape(
         "youtube",
-        &[Field::Title, Field::Body, Field::Tags, Field::ThumbnailText],
+        &[
+            Field::Title,
+            Field::Body,
+            Field::Chapters,
+            Field::Tags,
+            Field::ThumbnailText,
+        ],
     );
     assert!(out.contains("searchable"), "{out}");
     assert!(out.contains("first two lines"), "{out}");
-    assert!(
-        out.contains("in Spanish, that timestamped chapters will be added"),
-        "{out}"
+}
+
+#[test]
+fn builtin_youtube_chapters_instruction() {
+    let out = builtin("youtube").render(&vars());
+    let lines: Vec<&str> = out.lines().filter(|l| l.contains("chapters")).collect();
+    assert_eq!(
+        lines,
+        ["- Do not write chapters or timestamps in the body. The chapter list is added after it."]
     );
+}
+
+#[test]
+fn builtin_youtube_no_placeholder() {
+    let out = builtin("youtube").render(&vars());
+    assert_eq!(out.matches("[Add chapters").count(), 0, "{out}");
 }
 
 #[test]
@@ -893,7 +911,7 @@ fn builtin_youtube_title_limit() {
 
 #[test]
 fn builtin_youtube_body_limit() {
-    assert_eq!(builtin_limit("youtube", Field::Body), chars(5000));
+    assert_eq!(builtin_limit("youtube", Field::Body), chars(3450));
 }
 
 #[test]
