@@ -915,10 +915,11 @@ fn fields_markdown_write_failure_removes_json() {
 
 const CHAPTERS: &str = "---\noutput: chapters\nlimits:\n  chapters: { max: 20, max_chars: 1500 }\n---\nSplit {{job_name}} into chapters.\n";
 
-/// Six chapters on `class.json`; the starts after the first snap to 32, 83, 138 and 205.
+/// Six chapters on `class.json`. "La propiedad" at 0:34 is off a segment start: it snaps to
+/// the nearest one (32.5 s), floored to 32. The other starts are already floored segment starts.
 const CHAPTERS_VALID: &str = r#"{"chapters": [
   {"start": "00:00:00", "title": "Introducción"},
-  {"start": "00:00:32", "title": "La propiedad"},
+  {"start": "00:00:34", "title": "La propiedad"},
   {"start": "00:01:23", "title": "Movimientos"},
   {"start": "00:02:18", "title": "Referencias y préstamo"},
   {"start": "00:03:25", "title": "El borrow checker"},
@@ -1187,6 +1188,34 @@ fn chapters_short_transcript_no_call() {
     );
     assert!(b.calls().is_empty(), "{:?}", b.calls());
     assert_no_chapters_artifacts(dir.path());
+}
+
+#[test]
+fn chapters_transcript_of_30s_runs() {
+    let dir = TempDir::new().unwrap();
+    write_transcript(
+        dir.path(),
+        &transcript(
+            "es",
+            &[
+                (0.0, 10.0, "Hola."),
+                (10.0, 20.0, "Uno."),
+                (20.0, 30.9, "Dos."),
+            ],
+        ),
+    );
+    let t = tpl("chapters", CHAPTERS);
+    let answer = r#"{"chapters": [
+  {"start": "00:00:00", "title": "Inicio"},
+  {"start": "00:00:10", "title": "Uno"},
+  {"start": "00:00:20", "title": "Dos"}
+]}"#;
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(answer.into())]);
+    let generated = execute(&run(&t, &b, "es"), dir.path()).unwrap();
+    assert_eq!(generated.calls, 1);
+    assert_eq!(b.calls().len(), 1);
+    let md = fs::read_to_string(dir.path().join("chapters.md")).unwrap();
+    assert_eq!(md, "0:00 Inicio\n0:10 Uno\n0:20 Dos\n");
 }
 
 #[test]
