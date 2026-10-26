@@ -414,7 +414,7 @@ fn run_all(
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Condvar, Mutex};
+    use std::sync::{mpsc, Condvar, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -761,19 +761,35 @@ mod tests {
         const WORDS: &str = "abcdefg hij klmnopqrs tu "; // 25 bytes
         let small = WORDS.repeat(5_000); // 125 KB, one line
         let large = WORDS.repeat(320_000); // 8 MB, one line, 64x the small one
-                                           // Best of three runs, floored at 1 ms so tiny timings do not make a noisy ratio.
-        let time = |line: &str| {
-            (0..3)
-                .map(|_| {
-                    let started = Instant::now();
-                    pack([line], "\n", 30);
-                    started.elapsed()
-                })
-                .min()
-                .unwrap()
-                .max(Duration::from_millis(1))
+        const LIMIT: Duration = Duration::from_secs(30);
+        let started = Instant::now();
+        // One deadline for the whole measurement: a quadratic split fails instead of hanging.
+        // The worker is left running on timeout; the process ends when the test binary does.
+        let run = |line: &str| {
+            let (tx, rx) = mpsc::channel();
+            let owned = line.to_string();
+            thread::spawn(move || {
+                let began = Instant::now();
+                let pieces = pack([owned.as_str()], "\n", 30);
+                let _ = tx.send((began.elapsed(), pieces));
+            });
+            let left = LIMIT.saturating_sub(started.elapsed());
+            rx.recv_timeout(left).unwrap_or_else(|_| {
+                panic!(
+                    "pack did not finish within {LIMIT:?} on a {}-byte line; \
+                     split_at_whitespace is likely not linear",
+                    line.len()
+                )
+            })
         };
-        let (t_small, t_large) = (time(&small), time(&large));
+        // Best of three runs for the small line, floored at 1 ms so a tiny timing does not make
+        // a noisy ratio. The large line runs once.
+        let t_small = (0..3)
+            .map(|_| run(&small).0)
+            .min()
+            .unwrap()
+            .max(Duration::from_millis(1));
+        let (t_large, pieces) = run(&large);
         // 64x the input: linear growth gives a ratio near 64, quadratic near 4096. The limit of
         // 1024 leaves over 10x headroom for a loaded machine and stays well below quadratic.
         let ratio = t_large.as_secs_f64() / t_small.as_secs_f64();
@@ -781,7 +797,6 @@ mod tests {
             ratio < 1024.0,
             "64x input took {ratio:.1}x as long ({t_small:?} -> {t_large:?})"
         );
-        let pieces = pack([large.as_str()], "\n", 30);
         assert!(pieces.iter().all(|p| p.chars().count() <= 30));
         let got: String = pieces.concat().split_whitespace().collect();
         let want: String = large.split_whitespace().collect();
