@@ -129,6 +129,28 @@ fn valid_chapters() -> String {
 /// The `youtube.md` of a run that answered `valid_youtube` and `valid_chapters`.
 const VALID_YOUTUBE_MD: &str = "Rust ownership\n\nA class about ownership.\n\n0:00 Introducción\n0:32 La propiedad\n1:47 Movimientos y copias\n3:25 Préstamos\n4:40 Ejercicios\n\nrust, ownership\n\nOwnership\n";
 
+/// The `youtube.json` of a run that answered `valid_youtube` and `valid_chapters`.
+fn valid_youtube_json() -> serde_json::Value {
+    serde_json::json!({
+        "version": 1,
+        "template": "youtube",
+        "output_lang": "es",
+        "fields": {
+            "title": "Rust ownership",
+            "body": "A class about ownership.",
+            "chapters": [
+                {"start": 0, "title": "Introducción"},
+                {"start": 32, "title": "La propiedad"},
+                {"start": 107, "title": "Movimientos y copias"},
+                {"start": 205, "title": "Préstamos"},
+                {"start": 280, "title": "Ejercicios"},
+            ],
+            "tags": ["rust", "ownership"],
+            "thumbnail_text": "Ownership",
+        },
+    })
+}
+
 /// Fake Ollama that answers chapters requests with `valid_chapters`, the other structured
 /// requests with `fields` and the rest with a summary.
 fn summary_and_fields(fields: impl Fn(&Request) -> String + Send + Sync + 'static) -> FakeOllama {
@@ -159,27 +181,7 @@ fn fields_run_then_cached() {
         fs::read_to_string(job.join("summary.md")).unwrap(),
         "the summary\n"
     );
-    assert_eq!(
-        read_json(job.join("youtube.json")),
-        serde_json::json!({
-            "version": 1,
-            "template": "youtube",
-            "output_lang": "es",
-            "fields": {
-                "title": "Rust ownership",
-                "body": "A class about ownership.",
-                "chapters": [
-                    {"start": 0, "title": "Introducción"},
-                    {"start": 32, "title": "La propiedad"},
-                    {"start": 107, "title": "Movimientos y copias"},
-                    {"start": 205, "title": "Préstamos"},
-                    {"start": 280, "title": "Ejercicios"},
-                ],
-                "tags": ["rust", "ownership"],
-                "thumbnail_text": "Ownership",
-            },
-        })
-    );
+    assert_eq!(read_json(job.join("youtube.json")), valid_youtube_json());
     assert_eq!(
         fs::read_to_string(job.join("youtube.md")).unwrap(),
         VALID_YOUTUBE_MD
@@ -246,9 +248,10 @@ fn fields_repair_request() {
     );
     assert!(message(youtube[1], 0).starts_with("You correct a JSON object."));
     let job = env.job_dir("a");
+    assert_eq!(read_json(job.join("youtube.json")), valid_youtube_json());
     assert_eq!(
-        read_json(job.join("youtube.json"))["fields"]["body"],
-        "A class about ownership."
+        fs::read_to_string(job.join("youtube.md")).unwrap(),
+        VALID_YOUTUBE_MD
     );
 }
 
@@ -318,9 +321,11 @@ fn fields_invalid_json_repaired() {
         message(youtube[1], 1)
     );
     assert!(message(youtube[1], 1).contains("Sure! Here is your copy."));
+    let job = env.job_dir("a");
+    assert_eq!(read_json(job.join("youtube.json")), valid_youtube_json());
     assert_eq!(
-        read_json(env.job_dir("a").join("youtube.json"))["fields"]["title"],
-        "Rust ownership"
+        fs::read_to_string(job.join("youtube.md")).unwrap(),
+        VALID_YOUTUBE_MD
     );
 }
 
@@ -469,6 +474,7 @@ fn fields_chained_reads_md() {
     let job = env.job_dir("a");
     let youtube_md = fs::read_to_string(job.join("youtube.md")).unwrap();
     assert_eq!(youtube_md, VALID_YOUTUBE_MD);
+    assert_eq!(read_json(job.join("youtube.json")), valid_youtube_json());
     let sent = chats(&fake);
     let post: Vec<_> = sent
         .iter()
