@@ -774,12 +774,16 @@ mod tests {
                 let _ = tx.send((began.elapsed(), pieces));
             });
             let left = LIMIT.saturating_sub(started.elapsed());
-            rx.recv_timeout(left).unwrap_or_else(|_| {
-                panic!(
+            rx.recv_timeout(left).unwrap_or_else(|e| match e {
+                mpsc::RecvTimeoutError::Timeout => panic!(
                     "pack did not finish within {LIMIT:?} on a {}-byte line; \
                      split_at_whitespace is likely not linear",
                     line.len()
-                )
+                ),
+                mpsc::RecvTimeoutError::Disconnected => panic!(
+                    "pack panicked on a {}-byte line; see the worker's panic above",
+                    line.len()
+                ),
             })
         };
         // Best of three runs for the small line, floored at 1 ms so a tiny timing does not make
