@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use minuta::chapters::prompt as chapters_prompt;
+use minuta::chapters::{ChaptersSpec, CHAPTERS_VERSION};
 use minuta::error::Error;
 use minuta::fields::prompt::{fields_block, repair_system, repair_user, schema};
 use minuta::fields::{FieldsSpec, Violation, FIELDS_VERSION};
@@ -14,7 +16,7 @@ use minuta::llm::fake::ScriptedBackend;
 use minuta::llm::{Backend, BackendId};
 use minuta::steps::transcribe::TRANSCRIPT_FILE;
 use minuta::template::{Layer, Output, Template};
-use minuta::transcript::{Segment, Transcript};
+use minuta::transcript::{from_whisper_json, Segment, Transcript};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
@@ -907,4 +909,527 @@ fn fields_markdown_write_failure_removes_json() {
         !dir.path().join("social.json").try_exists().unwrap(),
         "social.json left behind"
     );
+}
+
+// ---- chapters template ----
+
+const CHAPTERS: &str = "---\noutput: chapters\nlimits:\n  chapters: { max: 20, max_chars: 1500 }\n---\nSplit {{job_name}} into chapters.\n";
+
+/// Six chapters on `class.json`; the starts after the first snap to 32, 83, 138 and 205.
+const CHAPTERS_VALID: &str = r#"{"chapters": [
+  {"start": "00:00:00", "title": "Introducción"},
+  {"start": "00:00:32", "title": "La propiedad"},
+  {"start": "00:01:23", "title": "Movimientos"},
+  {"start": "00:02:18", "title": "Referencias y préstamo"},
+  {"start": "00:03:25", "title": "El borrow checker"},
+  {"start": "00:04:40", "title": "Ejercicios"}
+]}"#;
+const CHAPTERS_VALID_JSON: &str = r#"{
+  "version": 1,
+  "output_lang": "es",
+  "chapters": [
+    {
+      "start": 0,
+      "title": "Introducción"
+    },
+    {
+      "start": 32,
+      "title": "La propiedad"
+    },
+    {
+      "start": 83,
+      "title": "Movimientos"
+    },
+    {
+      "start": 138,
+      "title": "Referencias y préstamo"
+    },
+    {
+      "start": 205,
+      "title": "El borrow checker"
+    },
+    {
+      "start": 280,
+      "title": "Ejercicios"
+    }
+  ]
+}
+"#;
+const CHAPTERS_VALID_MD: &str = "0:00 Introducción\n0:32 La propiedad\n1:23 Movimientos\n2:18 Referencias y préstamo\n3:25 El borrow checker\n4:40 Ejercicios\n";
+/// The first chapter lasts 4 s: one broken rule.
+const CHAPTERS_SHORT_FIRST: &str = r#"{"chapters": [
+  {"start": "00:00:00", "title": "Introducción"},
+  {"start": "00:00:04", "title": "Presentación"},
+  {"start": "00:00:32", "title": "La propiedad"}
+]}"#;
+const SHORT_FIRST_VIOLATION: &str = "chapter 1 (\"Introducción\") lasts 4 s (0:00 to 0:04); each chapter must last at least 10 s. Merge it with a neighboring chapter or move a start.";
+
+fn chapters_spec(t: &Template) -> &ChaptersSpec {
+    match &t.output {
+        Output::Chapters(spec) => spec,
+        Output::Markdown | Output::Fields(_) => panic!("{} is not the chapters template", t.name),
+    }
+}
+
+/// A job folder holding the `class.json` transcript (5:35, 25 segments).
+fn class_job() -> (TempDir, Transcript) {
+    let dir = TempDir::new().unwrap();
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/whisper/class.json");
+    let t = from_whisper_json(&fs::read_to_string(path).unwrap()).unwrap();
+    write_transcript(dir.path(), &t);
+    (dir, t)
+}
+
+fn assert_no_chapters_artifacts(dir: &Path) {
+    for file in ["chapters.json", "chapters.md"] {
+        assert!(!dir.join(file).try_exists().unwrap(), "{file} was written");
+    }
+}
+
+#[test]
+fn chapters_artifacts() {
+    let t = tpl("chapters", CHAPTERS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
+    assert_eq!(
+        run(&t, &b, "es").artifacts(),
+        vec![PathBuf::from("chapters.json"), PathBuf::from("chapters.md")]
+    );
+}
+
+#[test]
+fn chapters_fingerprint_parts() {
+    let (dir, _) = job();
+    let t = tpl("chapters", CHAPTERS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
+    let input = fs::read(dir.path().join(TRANSCRIPT_FILE)).unwrap();
+    let with_version = |version: u32| {
+        fingerprint(&[
+            b"template",
+            b"chapters",
+            CHAPTERS.as_bytes(),
+            PROMPT_VERSION.to_string().as_bytes(),
+            ID.as_bytes(),
+            CONTEXT.to_string().as_bytes(),
+            b"es",
+            &Sha256::digest(&input),
+            b"Spanish",
+            b"es",
+            b"Spanish",
+            b"reunion",
+            b"0:00:40",
+            version.to_string().as_bytes(),
+        ])
+    };
+    let got = run(&t, &b, "es")
+        .fingerprint(&ctx(dir.path()), "reunion")
+        .unwrap();
+    assert_eq!(got, with_version(CHAPTERS_VERSION));
+    assert_ne!(
+        got,
+        with_version(CHAPTERS_VERSION + 1),
+        "a new CHAPTERS_VERSION reruns"
+    );
+}
+
+#[test]
+fn chapters_first_answer_valid() {
+    let (dir, transcript) = class_job();
+    let t = tpl("chapters", CHAPTERS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(CHAPTERS_VALID.into())]);
+    let (result, events) = execute_events(&run(&t, &b, "es"), dir.path());
+    assert_eq!(result.unwrap().calls, 1);
+    assert!(events.is_empty(), "{events:?}");
+    assert_eq!(b.schemas(), vec![Some(chapters_prompt::schema())]);
+
+    let calls = b.calls();
+    assert_eq!(calls.len(), 1);
+    let block = chapters_prompt::chapters_block(chapters_spec(&t));
+    assert_eq!(
+        calls[0].0,
+        format!(
+            "Split reunion into chapters.\n\n\n{block}\n\n{}",
+            language_instruction("Spanish")
+        )
+    );
+    assert_eq!(calls[0].1, transcript_text(&transcript));
+
+    let json = fs::read_to_string(dir.path().join("chapters.json")).unwrap();
+    assert_eq!(json, CHAPTERS_VALID_JSON);
+    let md = fs::read_to_string(dir.path().join("chapters.md")).unwrap();
+    assert_eq!(md, CHAPTERS_VALID_MD);
+}
+
+#[test]
+fn chapters_repair_then_valid() {
+    let (dir, _) = class_job();
+    let t = tpl("chapters", CHAPTERS);
+    let b = ScriptedBackend::new(
+        ID,
+        CONTEXT,
+        vec![Ok(CHAPTERS_SHORT_FIRST.into()), Ok(CHAPTERS_VALID.into())],
+    );
+    let (result, events) = execute_events(&run(&t, &b, "es"), dir.path());
+    assert_eq!(result.unwrap().calls, 2);
+    assert_eq!(
+        events,
+        vec![Event::Repair {
+            attempt: 1,
+            total: 2
+        }]
+    );
+
+    let calls = b.calls();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(
+        calls[1].0,
+        chapters_prompt::repair_system(chapters_spec(&t), "Spanish")
+    );
+    assert_eq!(
+        calls[1].1,
+        repair_user(
+            CHAPTERS_SHORT_FIRST,
+            &[Violation(SHORT_FIRST_VIOLATION.into())]
+        )
+    );
+    assert_eq!(
+        b.schemas(),
+        vec![
+            Some(chapters_prompt::schema()),
+            Some(chapters_prompt::schema())
+        ]
+    );
+    let json = fs::read_to_string(dir.path().join("chapters.json")).unwrap();
+    assert_eq!(json, CHAPTERS_VALID_JSON);
+    let md = fs::read_to_string(dir.path().join("chapters.md")).unwrap();
+    assert_eq!(md, CHAPTERS_VALID_MD);
+}
+
+#[test]
+fn chapters_repairs_exhausted_writes_nothing() {
+    let (dir, _) = class_job();
+    let t = tpl("chapters", CHAPTERS);
+    let b = ScriptedBackend::new(
+        ID,
+        CONTEXT,
+        vec![
+            Ok(CHAPTERS_SHORT_FIRST.into()),
+            Ok(CHAPTERS_SHORT_FIRST.into()),
+            Ok(CHAPTERS_SHORT_FIRST.into()),
+        ],
+    );
+    let (result, events) = execute_events(&run(&t, &b, "es"), dir.path());
+    let err = result.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "template chapters: the answer still breaks 1 rule after 2 repairs: chapter 1 \
+         (\"Introducción\") lasts 4 s (0:00 to 0:04); each chapter must last at least 10 s. \
+         Merge it with a neighboring chapter or move a start; raise llm.repairs, relax the \
+         limit in a project template, or use a stronger backend with --llm"
+    );
+    assert_eq!(b.calls().len(), 3);
+    assert_eq!(
+        events,
+        vec![
+            Event::Repair {
+                attempt: 1,
+                total: 2
+            },
+            Event::Repair {
+                attempt: 2,
+                total: 2
+            },
+        ]
+    );
+    assert_no_chapters_artifacts(dir.path());
+}
+
+#[test]
+fn chapters_zero_repairs_counts_rules() {
+    let (dir, _) = class_job();
+    let t = tpl("chapters", CHAPTERS);
+    let two = r#"{"chapters": [
+  {"start": "00:00:00", "title": "Introducción"},
+  {"start": "00:00:04", "title": "Presentación"}
+]}"#;
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(two.into())]);
+    let mut r = run(&t, &b, "es");
+    r.repairs = 0;
+    let (result, events) = execute_events(&r, dir.path());
+    let err = result.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "template chapters: the answer still breaks 2 rules after 0 repairs: there are 2 \
+         chapters; YouTube needs at least 3; chapter 1 (\"Introducción\") lasts 4 s (0:00 to \
+         0:04); each chapter must last at least 10 s. Merge it with a neighboring chapter or \
+         move a start; raise llm.repairs, relax the limit in a project template, or use a \
+         stronger backend with --llm"
+    );
+    assert_eq!(b.calls().len(), 1);
+    assert!(events.is_empty(), "{events:?}");
+    assert_no_chapters_artifacts(dir.path());
+}
+
+#[test]
+fn chapters_short_transcript_no_call() {
+    let dir = TempDir::new().unwrap();
+    write_transcript(
+        dir.path(),
+        &transcript("es", &[(0.0, 12.0, "Hola."), (12.0, 25.9, "Adiós.")]),
+    );
+    let t = tpl("chapters", CHAPTERS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(CHAPTERS_VALID.into())]);
+    let err = execute(&run(&t, &b, "es"), dir.path()).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "template chapters: the transcript ends at 0:25; YouTube chapters need at least 30 s \
+         (3 chapters of at least 10 s). To run a template that declares the chapters field on \
+         it, override it in ./templates without that field."
+    );
+    assert!(b.calls().is_empty(), "{:?}", b.calls());
+    assert_no_chapters_artifacts(dir.path());
+}
+
+#[test]
+fn chapters_empty_transcript() {
+    let dir = TempDir::new().unwrap();
+    write_transcript(dir.path(), &transcript("es", &[]));
+    let t = tpl("chapters", CHAPTERS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(CHAPTERS_VALID.into())]);
+    let err = execute(&run(&t, &b, "es"), dir.path()).unwrap_err();
+    assert_eq!(err.to_string(), "template chapters: transcript is empty");
+    assert!(b.calls().is_empty(), "{:?}", b.calls());
+    assert_no_chapters_artifacts(dir.path());
+}
+
+#[test]
+fn chapters_forced_refreshes() {
+    let (dir, _) = class_job();
+    let t = tpl("chapters", CHAPTERS);
+    let forced_run = |b: &ScriptedBackend| {
+        let mut r = run(&t, b, "es");
+        r.forced = true;
+        execute(&r, dir.path()).unwrap()
+    };
+    // The final call's answer is cached.
+    let first = ScriptedBackend::new(ID, CONTEXT, vec![Ok(CHAPTERS_VALID.into())]);
+    execute(&run(&t, &first, "es"), dir.path()).unwrap();
+
+    // Forced: the cached final answer is not read. The repair answer is cached.
+    let second = ScriptedBackend::new(
+        ID,
+        CONTEXT,
+        vec![Ok(CHAPTERS_SHORT_FIRST.into()), Ok(CHAPTERS_VALID.into())],
+    );
+    assert_eq!(forced_run(&second).calls, 2);
+    assert_eq!(second.calls().len(), 2, "final call refreshed");
+
+    // Forced again: the cached repair answer is not read either.
+    let newer = CHAPTERS_VALID.replace("Ejercicios", "Tarea");
+    let third = ScriptedBackend::new(
+        ID,
+        CONTEXT,
+        vec![Ok(CHAPTERS_SHORT_FIRST.into()), Ok(newer)],
+    );
+    assert_eq!(forced_run(&third).calls, 2);
+    assert_eq!(third.calls().len(), 2, "repair call refreshed");
+    let md = fs::read_to_string(dir.path().join("chapters.md")).unwrap();
+    assert_eq!(md, CHAPTERS_VALID_MD.replace("Ejercicios", "Tarea"));
+}
+
+// ---- fields templates with the chapters field ----
+
+const YOUTUBE: &str = "---\noutput: fields\nfields: [title, chapters, body]\nlimits:\n  body: { max_chars: 10 }\n---\nWrite about {{job_name}}.\n";
+const CHAPTERS_ARTIFACT: &str = "{\n  \"version\": 1,\n  \"output_lang\": \"es\",\n  \"chapters\": [\n    {\n      \"start\": 0,\n      \"title\": \"Introducción\"\n    },\n    {\n      \"start\": 12,\n      \"title\": \"Empezamos\"\n    }\n  ]\n}\n";
+
+/// The short job folder plus `chapters.json` holding `text`.
+fn youtube_job(text: &str) -> (TempDir, Transcript) {
+    let (dir, t) = job();
+    fs::write(dir.path().join("chapters.json"), text).unwrap();
+    (dir, t)
+}
+
+fn assert_no_youtube_artifacts(dir: &Path) {
+    for file in ["youtube.json", "youtube.md"] {
+        assert!(!dir.join(file).try_exists().unwrap(), "{file} was written");
+    }
+}
+
+#[test]
+fn fields_with_chapters_fingerprint_parts() {
+    let (dir, _) = youtube_job(CHAPTERS_ARTIFACT);
+    let t = tpl("youtube", YOUTUBE);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
+    let input = fs::read(dir.path().join(TRANSCRIPT_FILE)).unwrap();
+    let with = |chapters_json: &[u8], version: u32| {
+        fingerprint(&[
+            b"template",
+            b"youtube",
+            YOUTUBE.as_bytes(),
+            PROMPT_VERSION.to_string().as_bytes(),
+            ID.as_bytes(),
+            CONTEXT.to_string().as_bytes(),
+            b"es",
+            &Sha256::digest(&input),
+            b"Spanish",
+            b"es",
+            b"Spanish",
+            b"reunion",
+            b"0:00:40",
+            FIELDS_VERSION.to_string().as_bytes(),
+            &Sha256::digest(chapters_json),
+            version.to_string().as_bytes(),
+        ])
+    };
+    let r = run(&t, &b, "es");
+    let got = r.fingerprint(&ctx(dir.path()), "reunion").unwrap();
+    assert_eq!(got, with(CHAPTERS_ARTIFACT.as_bytes(), CHAPTERS_VERSION));
+    assert_ne!(
+        got,
+        with(CHAPTERS_ARTIFACT.as_bytes(), CHAPTERS_VERSION + 1),
+        "a new CHAPTERS_VERSION reruns"
+    );
+
+    let other = CHAPTERS_ARTIFACT.replace("Empezamos", "Comenzamos");
+    fs::write(dir.path().join("chapters.json"), &other).unwrap();
+    let changed = r.fingerprint(&ctx(dir.path()), "reunion").unwrap();
+    assert_eq!(changed, with(other.as_bytes(), CHAPTERS_VERSION));
+    assert_ne!(changed, got, "new chapters.json content reruns");
+}
+
+#[test]
+fn fields_chapters_fingerprint_json_missing() {
+    let (dir, _) = job();
+    let t = tpl("youtube", YOUTUBE);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
+    let err = run(&t, &b, "es")
+        .fingerprint(&ctx(dir.path()), "reunion")
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "template youtube: input chapters.json is missing"
+    );
+}
+
+#[test]
+fn fields_filled_from_chapters_json() {
+    let (dir, transcript) = youtube_job(CHAPTERS_ARTIFACT);
+    let t = tpl("youtube", YOUTUBE);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    let (result, events) = execute_events(&run(&t, &b, "es"), dir.path());
+    assert_eq!(result.unwrap().calls, 1);
+    assert!(events.is_empty(), "{events:?}");
+
+    // The request is the one for `[title, body]` with the same limits: no trace of chapters.
+    let plain = tpl("social", FIELDS);
+    assert_eq!(b.schemas(), vec![Some(schema(fields_spec(&plain)))]);
+    let calls = b.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(
+        calls[0].0,
+        format!(
+            "Write about reunion.\n\n\n{}\n\n{}",
+            fields_block(fields_spec(&plain)),
+            language_instruction("Spanish")
+        )
+    );
+    assert_eq!(calls[0].1, transcript_text(&transcript));
+
+    let json = fs::read_to_string(dir.path().join("youtube.json")).unwrap();
+    assert_eq!(
+        json,
+        "{\n  \"version\": 1,\n  \"template\": \"youtube\",\n  \"output_lang\": \"es\",\n  \
+         \"fields\": {\n    \"title\": \"Hola\",\n    \"chapters\": [\n      {\n        \
+         \"start\": 0,\n        \"title\": \"Introducción\"\n      },\n      {\n        \
+         \"start\": 12,\n        \"title\": \"Empezamos\"\n      }\n    ],\n    \
+         \"body\": \"Corto.\"\n  }\n}\n"
+    );
+    let md = fs::read_to_string(dir.path().join("youtube.md")).unwrap();
+    assert_eq!(md, "Hola\n\n0:00 Introducción\n0:12 Empezamos\n\nCorto.\n");
+}
+
+#[test]
+fn fields_chapters_language_mismatch() {
+    let (dir, _) = youtube_job(CHAPTERS_ARTIFACT);
+    let t = tpl("youtube", YOUTUBE);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    let err = execute(&run(&t, &b, "en"), dir.path()).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "template youtube: chapters.json is in es but youtube writes en; give both templates \
+         the same lang, or use --output-lang"
+    );
+    assert!(b.calls().is_empty(), "{:?}", b.calls());
+    assert_no_youtube_artifacts(dir.path());
+}
+
+#[test]
+fn fields_chapters_json_missing() {
+    let (dir, _) = job();
+    let t = tpl("youtube", YOUTUBE);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    let err = execute(&run(&t, &b, "es"), dir.path()).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "template youtube: input chapters.json is missing"
+    );
+    assert!(b.calls().is_empty(), "{:?}", b.calls());
+    assert_no_youtube_artifacts(dir.path());
+}
+
+#[test]
+fn fields_chapters_json_version() {
+    let (dir, _) = youtube_job(r#"{"version": 2, "output_lang": "es", "chapters": []}"#);
+    let t = tpl("youtube", YOUTUBE);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    let err = execute(&run(&t, &b, "es"), dir.path()).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "template youtube: chapters.json has version 2, which this version of minuta cannot read"
+    );
+    assert!(b.calls().is_empty(), "{:?}", b.calls());
+    assert_no_youtube_artifacts(dir.path());
+}
+
+#[test]
+fn fields_chapters_json_damaged() {
+    let (dir, _) = youtube_job(r#"{"version": 1, "output_lang": "es"}"#);
+    let t = tpl("youtube", YOUTUBE);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    let err = execute(&run(&t, &b, "es"), dir.path()).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "template youtube: chapters.json: missing field `chapters`"
+    );
+    assert!(b.calls().is_empty(), "{:?}", b.calls());
+    assert_no_youtube_artifacts(dir.path());
+}
+
+#[test]
+fn fields_chapters_json_not_utf8() {
+    let (dir, _) = job();
+    fs::write(dir.path().join("chapters.json"), [0xff, 0xfe]).unwrap();
+    let t = tpl("youtube", YOUTUBE);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    let err = execute(&run(&t, &b, "es"), dir.path()).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "template youtube: chapters.json: invalid utf-8 sequence of 1 bytes from index 0"
+    );
+    assert!(b.calls().is_empty(), "{:?}", b.calls());
+    assert_no_youtube_artifacts(dir.path());
+}
+
+#[test]
+fn fields_chapters_json_unreadable_is_io_error() {
+    let (dir, _) = job();
+    fs::create_dir(dir.path().join("chapters.json")).unwrap();
+    let t = tpl("youtube", YOUTUBE);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    let err = execute(&run(&t, &b, "es"), dir.path()).unwrap_err();
+    let path = dir.path().join("chapters.json");
+    assert!(
+        matches!(err, Error::Io(ref e) if e.to_string().starts_with(&format!("{}: ", path.display()))),
+        "{err}"
+    );
+    assert!(b.calls().is_empty(), "{:?}", b.calls());
 }

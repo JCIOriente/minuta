@@ -11,11 +11,15 @@ use std::sync::atomic::AtomicBool;
 
 use sha2::{Digest, Sha256};
 
+use crate::chapters::render::Artifact;
+use crate::chapters::{
+    self, CHAPTERS_VERSION, JSON_FILE, MIN_CHAPTERS, MIN_SECONDS, MIN_TRANSCRIPT_SECONDS,
+};
 use crate::error::{Error, Result};
 use crate::fields::prompt::{fields_block, repair_system, repair_user, schema};
 use crate::fields::render::{artifact_json, render};
 use crate::fields::validate::parse_answer;
-use crate::fields::{FieldsSpec, Values, Violation, FIELDS_VERSION};
+use crate::fields::{Violation, FIELDS_VERSION};
 use crate::job::{fingerprint, write_atomic, Ctx};
 use crate::lang;
 use crate::llm::call::{call, call_json, Answer, CallCache, Policy};
@@ -25,13 +29,32 @@ use crate::steps::transcribe::TRANSCRIPT_FILE;
 use crate::template::{Input, Output, Template, Vars};
 use crate::transcript::Transcript;
 
-/// What to try when a fields answer still breaks its limits after every repair call.
+/// What to try when a JSON answer still breaks its limits or rules after every repair call.
 const REPAIRS_HINT: &str = "raise llm.repairs, relax the limit in a project template, \
                             or use a stronger backend with --llm";
 
-/// One `call_json` with the fields schema: the accepted values and the answer text, or the
-/// rejected answer and its violations.
-type Ask<'a> = &'a dyn Fn(&str, &str) -> Result<Answer<(Values, String)>>;
+/// A plain-text call through the call cache, as `chunk::generate_with` takes it.
+type Complete<'a> = &'a (dyn Fn(&str, &str) -> Result<String> + Sync);
+
+/// What the shared repair loop needs from a JSON output (fields or chapters).
+struct JsonOutput<'a, T> {
+    /// Goes before the language instruction in the final system prompt.
+    block: String,
+    /// The system prompt of every repair call.
+    repair_system: String,
+    schema: serde_json::Value,
+    /// Parses and checks a cleaned answer.
+    accept: &'a dyn Fn(&str) -> std::result::Result<T, Vec<Violation>>,
+    /// What a violation breaks, as the exhausted message words it: "limit" or "rule".
+    broken: &'static str,
+}
+
+/// What every LLM call of one `execute` shares.
+struct Calls<'a> {
+    cache: CallCache,
+    policy: &'a Policy,
+    interrupt: &'a AtomicBool,
+}
 
 /// The output language code for template `name`: `flag` > `template` > `config` > `detected`
 /// (the speech language in `transcript.json`). A chosen flag, template or config code that is
@@ -77,13 +100,15 @@ pub struct TemplateRun<'a> {
     pub output_lang: String,
     /// The template's stale reason is `forced`: its calls skip the cache read.
     pub forced: bool,
-    /// Repair calls after a rejected fields answer (`llm.repairs`); unused for Markdown.
+    /// Repair calls after a rejected fields or chapters answer (`llm.repairs`); unused for
+    /// Markdown.
     pub repairs: u32,
 }
 
 impl TemplateRun<'_> {
     /// The artifacts the template writes, relative to the job folder, in write order:
-    /// `<name>.md`, or `<name>.json` then `<name>.md` for a fields template (ADR-0007).
+    /// `<name>.md`, or `<name>.json` then `<name>.md` for a fields template (ADR-0007), or
+    /// `chapters.json` then `chapters.md` for the chapters template (ADR-0009).
     pub fn artifacts(&self) -> Vec<PathBuf> {
         let file = |ext: &str| PathBuf::from(format!("{}.{ext}", self.template.name));
         match self.template.output {
@@ -96,15 +121,24 @@ impl TemplateRun<'_> {
     /// The template's fingerprint. It hashes the content of the input artifact and the
     /// rendered variable values (which come from `transcript.json` even for a template input),
     /// so call it only once the input exists, never ahead of time for a chain of templates.
-    /// A fields template adds `FIELDS_VERSION`; Markdown templates keep their parts.
+    /// A fields template adds `FIELDS_VERSION`, then, when it declares `chapters`, the content
+    /// hash of `chapters.json` and `CHAPTERS_VERSION`. The chapters template adds
+    /// `CHAPTERS_VERSION`. Markdown templates keep their parts.
     pub fn fingerprint(&self, ctx: &Ctx, job_name: &str) -> Result<String> {
         let input = self.read_input(ctx)?;
         let vars = self.vars(&read_transcript(&ctx.dir)?, job_name)?;
         let t = self.template;
+        let chapters_digest = match &t.output {
+            Output::Fields(spec) if spec.declares_chapters() => {
+                Some(Sha256::digest(self.read_chapters_json(ctx)?))
+            }
+            _ => None,
+        };
         let input_digest = Sha256::digest(&input);
         let prompt_version = PROMPT_VERSION.to_string();
         let context_tokens = self.backend.context_tokens().to_string();
         let fields_version = FIELDS_VERSION.to_string();
+        let chapters_version = CHAPTERS_VERSION.to_string();
         let mut parts: Vec<&[u8]> = vec![
             b"template",
             t.name.as_bytes(),
@@ -120,8 +154,16 @@ impl TemplateRun<'_> {
             vars.job_name.as_bytes(),
             vars.duration.as_bytes(),
         ];
-        if let Output::Fields(_) = t.output {
-            parts.push(fields_version.as_bytes());
+        match &t.output {
+            Output::Markdown => {}
+            Output::Fields(_) => {
+                parts.push(fields_version.as_bytes());
+                if let Some(digest) = &chapters_digest {
+                    parts.push(digest);
+                    parts.push(chapters_version.as_bytes());
+                }
+            }
+            Output::Chapters(_) => parts.push(chapters_version.as_bytes()),
         }
         Ok(fingerprint(&parts))
     }
@@ -158,6 +200,12 @@ impl TemplateRun<'_> {
             }
         };
 
+        // The chapters a fields template fills in, read once and checked before any call.
+        let filled = match &self.template.output {
+            Output::Fields(spec) if spec.declares_chapters() => Some(self.read_chapters(ctx)?),
+            _ => None,
+        };
+
         let vars = self.vars(&transcript, job_name)?;
         let body = self.template.render(&vars);
         let request = Request {
@@ -167,16 +215,20 @@ impl TemplateRun<'_> {
             context_tokens: self.backend.context_tokens(),
             concurrency,
         };
-        let cache = CallCache::new(&ctx.dir);
+        let calls = Calls {
+            cache: CallCache::new(&ctx.dir),
+            policy,
+            interrupt,
+        };
         let complete = |system: &str, user: &str| {
             call(
                 self.backend,
-                &cache,
-                policy,
+                &calls.cache,
+                calls.policy,
                 system,
                 user,
                 self.forced,
-                interrupt,
+                calls.interrupt,
             )
         };
         let named = |e| match e {
@@ -194,30 +246,50 @@ impl TemplateRun<'_> {
                 (generated, vec![text])
             }
             Output::Fields(spec) => {
-                let schema = schema(spec);
-                let accept =
-                    |text: &str| parse_answer(text, spec).map(|values| (values, text.to_owned()));
-                let ask = |system: &str, user: &str| {
-                    call_json(
-                        self.backend,
-                        &cache,
-                        policy,
-                        system,
-                        user,
-                        &schema,
-                        self.forced,
-                        interrupt,
-                        &accept,
-                    )
+                let accept = |text: &str| parse_answer(text, spec);
+                let output = JsonOutput {
+                    block: fields_block(spec),
+                    repair_system: repair_system(spec, request.output_lang),
+                    schema: schema(spec),
+                    accept: &accept,
+                    broken: "limit",
                 };
                 let (generated, values) = self
-                    .generate_fields(spec, &request, &complete, &ask, on_event)
+                    .generate_json(&request, &complete, &calls, &output, on_event)
                     .map_err(named)?;
+                let values = match filled {
+                    Some(artifact) => values.fill_chapters(spec, artifact.chapters),
+                    None => values,
+                };
                 let json = artifact_json(&self.template.name, &self.output_lang, &values);
                 (generated, vec![json, render(&values, spec.format)])
             }
-            Output::Chapters(_) => {
-                return Err(self.error("output chapters is not supported yet".into()));
+            Output::Chapters(spec) => {
+                let end = end_seconds(&transcript);
+                if end < MIN_TRANSCRIPT_SECONDS {
+                    return Err(self.error(format!(
+                        "the transcript ends at {}; YouTube chapters need at least \
+                         {MIN_TRANSCRIPT_SECONDS} s ({MIN_CHAPTERS} chapters of at least \
+                         {MIN_SECONDS} s). To run a template that declares the chapters field \
+                         on it, override it in ./templates without that field.",
+                        chapters::stamp(end)
+                    )));
+                }
+                let accept = |text: &str| {
+                    chapters::validate::parse_answer(text, &transcript.segments, end, spec)
+                };
+                let output = JsonOutput {
+                    block: chapters::prompt::chapters_block(spec),
+                    repair_system: chapters::prompt::repair_system(spec, request.output_lang),
+                    schema: chapters::prompt::schema(),
+                    accept: &accept,
+                    broken: "rule",
+                };
+                let (generated, list) = self
+                    .generate_json(&request, &complete, &calls, &output, on_event)
+                    .map_err(named)?;
+                let json = chapters::render::artifact_json(&self.output_lang, &list);
+                (generated, vec![json, chapters::render::markdown(&list)])
             }
         };
 
@@ -236,55 +308,76 @@ impl TemplateRun<'_> {
         Ok(generated)
     }
 
-    /// Generates a fields template: the final call asks for JSON, and a rejected answer gets
-    /// up to `repairs` repair calls, each built from the previous answer and its violations
-    /// (ADR-0006). Map calls use `complete` as for Markdown.
-    fn generate_fields(
+    /// Generates a JSON output (fields or chapters): the final call asks for JSON with
+    /// `output.schema`, and a rejected answer gets up to `repairs` repair calls, each built from
+    /// the previous answer and its violations (ADR-0006). Map calls use `complete` as for
+    /// Markdown.
+    fn generate_json<T>(
         &self,
-        spec: &FieldsSpec,
         request: &Request,
-        complete: &(dyn Fn(&str, &str) -> Result<String> + Sync),
-        ask: Ask,
+        complete: Complete,
+        calls: &Calls,
+        output: &JsonOutput<T>,
         on_event: &mut dyn FnMut(Event),
-    ) -> Result<(Generated, Values)> {
+    ) -> Result<(Generated, T)> {
+        let accept = |text: &str| (output.accept)(text).map(|value| (value, text.to_owned()));
+        let ask = |system: &str, user: &str| {
+            call_json(
+                self.backend,
+                &calls.cache,
+                calls.policy,
+                system,
+                user,
+                &output.schema,
+                self.forced,
+                calls.interrupt,
+                &accept,
+            )
+        };
         let mut accepted = None;
         let mut repair_calls = 0;
         let mut finish = |system: &str, user: &str, on_event: &mut dyn FnMut(Event)| {
             let mut answer = ask(system, user)?;
             loop {
                 let (text, violations) = match answer {
-                    Answer::Accepted((values, text)) => {
-                        accepted = Some(values);
+                    Answer::Accepted((value, text)) => {
+                        accepted = Some(value);
                         return Ok(text);
                     }
                     Answer::Rejected { text, violations } => (text, violations),
                 };
                 if repair_calls == self.repairs {
-                    return Err(self.repairs_exhausted(&violations));
+                    return Err(self.repairs_exhausted(&violations, output.broken));
                 }
                 repair_calls += 1;
                 on_event(Event::Repair {
                     attempt: repair_calls as usize,
                     total: self.repairs as usize,
                 });
-                answer = ask(
-                    &repair_system(spec, request.output_lang),
-                    &repair_user(&text, &violations),
-                )?;
+                answer = ask(&output.repair_system, &repair_user(&text, &violations))?;
             }
         };
-        let block = fields_block(spec);
-        let mut generated =
-            chunk::generate_with(request, Some(&block), complete, &mut finish, on_event)?;
+        let mut generated = chunk::generate_with(
+            request,
+            Some(&output.block),
+            complete,
+            &mut finish,
+            on_event,
+        )?;
         // `generate_with` counts the final call once; add the repair calls.
         generated.calls += repair_calls as usize;
-        let values = accepted.expect("finish returned Ok only after accepting an answer");
-        Ok((generated, values))
+        let value = accepted.expect("finish returned Ok only after accepting an answer");
+        Ok((generated, value))
     }
 
-    fn repairs_exhausted(&self, violations: &[Violation]) -> Error {
+    /// `broken` is what one violation breaks: "limit" or "rule".
+    fn repairs_exhausted(&self, violations: &[Violation], broken: &str) -> Error {
         let count = violations.len();
-        let limits = if count == 1 { "limit" } else { "limits" };
+        let broken = if count == 1 {
+            broken.to_owned()
+        } else {
+            format!("{broken}s")
+        };
         let repairs = if self.repairs == 1 {
             "repair"
         } else {
@@ -295,7 +388,7 @@ impl TemplateRun<'_> {
             .map(|v| v.0.trim_end_matches('.'))
             .collect();
         self.error(format!(
-            "the answer still breaks {count} {limits} after {} {repairs}: {}; {REPAIRS_HINT}",
+            "the answer still breaks {count} {broken} after {} {repairs}: {}; {REPAIRS_HINT}",
             self.repairs,
             list.join("; ")
         ))
@@ -329,12 +422,45 @@ impl TemplateRun<'_> {
     }
 
     fn read_input(&self, ctx: &Ctx) -> Result<Vec<u8>> {
-        let file = self.input_file();
-        let path = ctx.dir.join(&file);
+        self.read_job_file(ctx, &self.input_file())
+    }
+
+    /// `file` in the job folder; a missing file is a template error, any other I/O error
+    /// names the path.
+    fn read_job_file(&self, ctx: &Ctx, file: &str) -> Result<Vec<u8>> {
+        let path = ctx.dir.join(file);
         fs::read(&path).map_err(|e| match e.kind() {
             io::ErrorKind::NotFound => self.error(format!("input {file} is missing")),
             _ => io_error(&path, e),
         })
+    }
+
+    fn read_chapters_json(&self, ctx: &Ctx) -> Result<Vec<u8>> {
+        self.read_job_file(ctx, JSON_FILE)
+    }
+
+    /// The chapters a fields template fills in: `chapters.json`, read and checked against the
+    /// output language (ADR-0009).
+    fn read_chapters(&self, ctx: &Ctx) -> Result<Artifact> {
+        let bytes = self.read_chapters_json(ctx)?;
+        let damaged = |message: String| self.error(format!("{JSON_FILE}: {message}"));
+        let text = std::str::from_utf8(&bytes).map_err(|e| damaged(e.to_string()))?;
+        let artifact = chapters::render::read_artifact(text).map_err(|message| {
+            // `read_artifact` words an unknown version as a sentence after the file name.
+            if message.starts_with("has version ") {
+                self.error(format!("{JSON_FILE} {message}"))
+            } else {
+                damaged(message)
+            }
+        })?;
+        if artifact.output_lang != self.output_lang {
+            return Err(self.error(format!(
+                "{JSON_FILE} is in {} but {} writes {}; give both templates the same lang, \
+                 or use --output-lang",
+                artifact.output_lang, self.template.name, self.output_lang
+            )));
+        }
+        Ok(artifact)
     }
 }
 
@@ -373,10 +499,15 @@ fn io_error(path: &Path, e: io::Error) -> Error {
     Error::Io(io::Error::new(e.kind(), format!("{}: {e}", path.display())))
 }
 
-/// `h:mm:ss` at the end of the last segment, truncated to whole seconds.
-fn duration(t: &Transcript) -> String {
+/// The end of the last segment in whole seconds: the transcript end the chapter rules use.
+fn end_seconds(t: &Transcript) -> u64 {
     let end = t.segments.last().map_or(0.0, |s| s.end);
     // Truncation to whole seconds is intended; negative ends clamp to zero.
-    let secs = end.max(0.0) as u64;
+    end.max(0.0) as u64
+}
+
+/// `h:mm:ss` at the end of the last segment, truncated to whole seconds.
+fn duration(t: &Transcript) -> String {
+    let secs = end_seconds(t);
     format!("{}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60)
 }
