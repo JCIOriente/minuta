@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::chapters;
 use crate::config::{Config, Setting, Source};
 use crate::error::{Error, Missing, Result};
 use crate::generate::{self, TemplateRun};
@@ -27,7 +28,7 @@ use crate::steps::transcribe::TRANSCRIPT_FILE;
 use crate::steps::{plan_join, Audio, Join, Mode, Outputs, Probe, Transcribe};
 use crate::template::discover::{discover, Catalog, Dirs};
 use crate::template::graph;
-use crate::template::Input;
+use crate::template::{Input, Output};
 use crate::tools::{self, Report, RunOpts, ToolPaths, Toolchain};
 use crate::transcript::Transcript;
 
@@ -241,7 +242,7 @@ fn resolve(options: &Options, config: &Config) -> Result<Resolved> {
         for name in &options.templates {
             catalog.get(name)?;
         }
-        resolved.order = graph::order(&options.templates, &|name| input_of(catalog, name))?;
+        resolved.order = graph::order(&options.templates, &|name| deps_of(catalog, name))?;
         let default: BackendId = config.llm_default.value.parse()?;
         for name in &resolved.order {
             // Reports an invalid input template with its own error.
@@ -263,19 +264,28 @@ fn resolve(options: &Options, config: &Config) -> Result<Resolved> {
     Ok(resolved)
 }
 
-/// What template `name` reads, for [`graph`]. A template that failed to load counts as
-/// reading the transcript, so it lands in the order and is reported with its own error.
-fn input_of(catalog: &Catalog, name: &str) -> Option<Option<String>> {
+/// What template `name` reads, for [`graph`]: its `input` template, then `chapters` when its
+/// fields declare it. A template that failed to load counts as reading the transcript, so it
+/// lands in the order and is reported with its own error.
+fn deps_of(catalog: &Catalog, name: &str) -> Option<Vec<String>> {
     match catalog.templates.get(name) {
-        Some(template) => Some(match &template.input {
-            Input::Transcript => None,
-            Input::Template(dep) => Some(dep.clone()),
-        }),
+        Some(template) => {
+            let mut deps = Vec::new();
+            if let Input::Template(dep) = &template.input {
+                deps.push(dep.clone());
+            }
+            if let Output::Fields(spec) = &template.output {
+                if spec.declares_chapters() && !deps.iter().any(|d| d == chapters::NAME) {
+                    deps.push(chapters::NAME.to_string());
+                }
+            }
+            Some(deps)
+        }
         None => catalog
             .invalid
             .iter()
             .any(|i| i.path.file_stem().is_some_and(|stem| stem == name))
-            .then_some(None),
+            .then(Vec::new),
     }
 }
 
@@ -292,8 +302,8 @@ fn resolve_force(
             Ok(step) => Ok((Some(Force::From(step)), order.clone())),
             Err(e) if order.is_empty() => Err(e),
             Err(_) if order.contains(name) => {
-                let input_of = |n: &str| input_of(&resolved.catalog, n);
-                Ok((None, graph::dependents(order, name, &input_of)))
+                let deps_of = |n: &str| deps_of(&resolved.catalog, n);
+                Ok((None, graph::dependents(order, name, &deps_of)))
             }
             Err(_) => Err(Error::Usage(format!(
                 "unknown step `{name}`; expected one of probe, join, audio, transcribe, \
@@ -921,6 +931,87 @@ mod tests {
         assert_eq!(force(name("a"), &r), (None, vec!["a".into(), "b".into()]));
         assert_eq!(force(name("b"), &r), (None, vec!["b".into()]));
         assert_eq!(force(name("c"), &r), (None, vec!["c".into()]));
+    }
+
+    /// A catalog of `(name, template text)` pairs. The texts are parsed under a placeholder
+    /// name, so `chapters` (reserved for the parser) can still be a catalog key.
+    fn catalog_of(templates: &[(&str, &str)]) -> Catalog {
+        let mut catalog = Catalog::default();
+        for (name, text) in templates {
+            let template = crate::template::Template::parse(
+                "placeholder",
+                crate::template::Layer::Project,
+                None,
+                text,
+            )
+            .unwrap();
+            catalog.templates.insert(name.to_string(), template);
+        }
+        catalog
+    }
+
+    /// Points `name` at `dep` as its input, as `input: chapters` will once the parser allows it.
+    fn read_input_from(catalog: &mut Catalog, name: &str, dep: &str) {
+        catalog.templates.get_mut(name).unwrap().input = Input::Template(dep.to_string());
+    }
+
+    const YOUTUBE_LIKE: &str =
+        "---\ninput: summary\noutput: fields\nfields: [body, chapters]\n---\nY.";
+
+    #[test]
+    fn deps_of_input_then_chapters() {
+        let catalog = catalog_of(&[("summary", "S."), ("youtube", YOUTUBE_LIKE)]);
+        assert_eq!(
+            deps_of(&catalog, "youtube"),
+            Some(vec!["summary".to_string(), "chapters".to_string()])
+        );
+    }
+
+    #[test]
+    fn deps_of_no_duplicate() {
+        let mut catalog = catalog_of(&[("toc", YOUTUBE_LIKE)]);
+        read_input_from(&mut catalog, "toc", "chapters");
+        assert_eq!(deps_of(&catalog, "toc"), Some(vec!["chapters".to_string()]));
+    }
+
+    #[test]
+    fn deps_of_without_the_field_is_the_input_only() {
+        let catalog = catalog_of(&[
+            ("summary", "S."),
+            (
+                "post",
+                "---\ninput: summary\noutput: fields\nfields: [body, tags]\n---\nP.",
+            ),
+        ]);
+        assert_eq!(deps_of(&catalog, "post"), Some(vec!["summary".to_string()]));
+        assert_eq!(deps_of(&catalog, "summary"), Some(vec![]));
+        assert_eq!(deps_of(&catalog, "zzz"), None);
+    }
+
+    #[test]
+    fn force_chapters_covers_dependents() {
+        let mut catalog = catalog_of(&[
+            ("summary", "S."),
+            ("chapters", "C."),
+            ("youtube", YOUTUBE_LIKE),
+            ("toc", "T."),
+            ("linkedin", "---\ninput: summary\n---\nL."),
+        ]);
+        read_input_from(&mut catalog, "toc", "chapters");
+        let resolved = Resolved {
+            catalog,
+            order: ["summary", "chapters", "youtube", "toc", "linkedin"]
+                .map(String::from)
+                .to_vec(),
+            ..Resolved::default()
+        };
+        assert_eq!(
+            force(name("chapters"), &resolved),
+            (
+                None,
+                vec!["chapters".to_string(), "youtube".into(), "toc".into()]
+            )
+        );
     }
 
     #[test]
