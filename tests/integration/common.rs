@@ -159,6 +159,40 @@ pub fn env_with_clip() -> Env {
     env
 }
 
+/// A transcript of `n` segments, 40 s apart, so each is its own line of the prompt input.
+pub fn long_transcript(env: &Env, n: usize) -> PathBuf {
+    let sample = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/whisper/sample.json"
+    );
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(sample).unwrap()).unwrap();
+    let segments: Vec<_> = (0..n)
+        .map(|i| {
+            serde_json::json!({
+                "offsets": {"from": i * 40_000, "to": (i + 1) * 40_000},
+                "text": format!(" Segment number {i} of the long recording."),
+            })
+        })
+        .collect();
+    json["transcription"] = segments.into();
+    let path = env.path("long.json");
+    fs::write(&path, json.to_string()).unwrap();
+    path
+}
+
+/// `minuta args` on the transcript of `class.json`, pointed at `url`, with zero retry
+/// backoff and the fake `claude`.
+pub fn class_command(env: &Env, args: &[&str], url: &str) -> Command {
+    let mut cmd = env.llm_command(args, url);
+    cmd.env("FAKE_WHISPER_FIXTURE", CLASS_FIXTURE);
+    cmd
+}
+
+pub fn run_class(env: &Env, args: &[&str], fake: &FakeOllama) -> Output {
+    class_command(env, args, &fake.url()).output().unwrap()
+}
+
 pub fn ollama_with(responder: fake_ollama::Responder) -> FakeOllama {
     FakeOllama::start(
         &["gemma4:26b"],

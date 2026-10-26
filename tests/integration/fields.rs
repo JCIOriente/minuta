@@ -3,7 +3,6 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::process::Output;
 use std::sync::Arc;
 
 use fake_ollama::{FakeOllama, Reply, Request};
@@ -15,14 +14,6 @@ const BLOCK_INTRO: &str = "Return only a JSON object with exactly these keys";
 /// Whether the request is a structured call of the built-in `youtube` template.
 fn is_youtube(req: &Request) -> bool {
     has_format(req) && !is_chapters(req)
-}
-
-/// Like `run_llm` with the transcript of `class.json`, which is long enough for chapters.
-fn run_youtube(env: &Env, args: &[&str], fake: &FakeOllama) -> Output {
-    env.llm_command(args, &fake.url())
-        .env("FAKE_WHISPER_FIXTURE", CLASS_FIXTURE)
-        .output()
-        .unwrap()
 }
 
 /// A valid answer for the built-in `youtube` template.
@@ -81,7 +72,7 @@ fn fields_run_then_cached() {
     require_ffmpeg!();
     let env = env_with_clip();
     let fake = summary_and_fields(|_| valid_youtube());
-    let out = run_youtube(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
+    let out = run_class(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     let job = env.job_dir("a");
     assert_eq!(
@@ -101,7 +92,7 @@ fn fields_run_then_cached() {
     );
     assert_eq!(fake.chat_count(), 3, "summary, chapters and youtube");
 
-    let out = run_youtube(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
+    let out = run_class(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(fake.chat_count(), 3, "the second run makes no chat request");
     let cached = cached_steps(&stderr(&out));
@@ -135,7 +126,7 @@ fn fields_repair_request() {
             over.clone()
         }
     });
-    let out = run_youtube(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
+    let out = run_class(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     let sent = chats(&fake);
     let youtube: Vec<_> = sent.iter().filter(|r| is_youtube(r)).collect();
@@ -169,7 +160,7 @@ fn fields_repairs_exhausted() {
     let over = youtube_answer("Rust ownership", &"x".repeat(3451));
     let fake = summary_and_fields(move |_| over.clone());
     let args = ["run", "a.mp4", "-t", "youtube"];
-    let out = run_youtube(&env, &args, &fake);
+    let out = run_class(&env, &args, &fake);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     let err = stderr(&out);
     assert_eq!(
@@ -186,7 +177,7 @@ fn fields_repairs_exhausted() {
         "summary, chapters, the final request, two repairs"
     );
 
-    let out = run_youtube(&env, &args, &fake);
+    let out = run_class(&env, &args, &fake);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     let sent = chats(&fake);
     assert_eq!(
@@ -212,7 +203,7 @@ fn fields_invalid_json_repaired() {
             "Sure! Here is your copy.".to_string()
         }
     });
-    let out = run_youtube(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
+    let out = run_class(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     let sent = chats(&fake);
     let youtube: Vec<_> = sent.iter().filter(|r| is_youtube(r)).collect();
@@ -234,28 +225,6 @@ fn fields_invalid_json_repaired() {
         fs::read_to_string(job.join("youtube.md")).unwrap(),
         VALID_YOUTUBE_MD
     );
-}
-
-/// A transcript of `n` segments, 40 s apart, so each is its own line of the prompt input.
-fn long_transcript(env: &Env, n: usize) -> PathBuf {
-    let sample = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/whisper/sample.json"
-    );
-    let mut json: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(sample).unwrap()).unwrap();
-    let segments: Vec<_> = (0..n)
-        .map(|i| {
-            serde_json::json!({
-                "offsets": {"from": i * 40_000, "to": (i + 1) * 40_000},
-                "text": format!(" Segment number {i} of the long recording."),
-            })
-        })
-        .collect();
-    json["transcription"] = segments.into();
-    let path = env.path("long.json");
-    fs::write(&path, json.to_string()).unwrap();
-    path
 }
 
 #[test]
@@ -372,7 +341,7 @@ fn fields_chained_reads_md() {
             Reply::chat("the summary")
         }
     }));
-    let out = run_youtube(&env, &["run", "a.mp4", "-t", "post"], &fake);
+    let out = run_class(&env, &["run", "a.mp4", "-t", "post"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     let job = env.job_dir("a");
     let youtube_md = fs::read_to_string(job.join("youtube.md")).unwrap();

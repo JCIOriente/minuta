@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 use std::sync::Arc;
 
 use fake_ollama::{FakeOllama, Reply, Request};
@@ -78,18 +78,6 @@ fn roles(fake: &FakeOllama, from: usize) -> Vec<&'static str> {
 /// How many of `roles` are `role`.
 fn count(roles: &[&str], role: &str) -> usize {
     roles.iter().filter(|r| **r == role).count()
-}
-
-/// `minuta args` on the transcript of `class.json`, pointed at `url`, with zero retry
-/// backoff and the fake `claude`.
-fn class_command(env: &Env, args: &[&str], url: &str) -> Command {
-    let mut cmd = env.llm_command(args, url);
-    cmd.env("FAKE_WHISPER_FIXTURE", CLASS_FIXTURE);
-    cmd
-}
-
-fn run_class(env: &Env, args: &[&str], fake: &FakeOllama) -> Output {
-    class_command(env, args, &fake.url()).output().unwrap()
 }
 
 /// Like `run_class`, with a context so small that the transcript is split into chunks.

@@ -146,28 +146,6 @@ fn templates_force_makes_new_chat_requests() {
     assert!(!cached_steps(&stderr(&out)).contains(&"summary".to_string()));
 }
 
-/// A transcript of `n` segments, 40 s apart, so each is its own line of the prompt input.
-fn long_transcript(env: &Env, n: usize) -> std::path::PathBuf {
-    let sample = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/whisper/sample.json"
-    );
-    let mut json: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(sample).unwrap()).unwrap();
-    let segments: Vec<_> = (0..n)
-        .map(|i| {
-            serde_json::json!({
-                "offsets": {"from": i * 40_000, "to": (i + 1) * 40_000},
-                "text": format!(" Segment number {i} of the long recording."),
-            })
-        })
-        .collect();
-    json["transcription"] = segments.into();
-    let path = env.path("long.json");
-    fs::write(&path, json.to_string()).unwrap();
-    path
-}
-
 #[test]
 fn templates_failed_chunk_resumes_with_unfinished_calls_only() {
     require_ffmpeg!();
