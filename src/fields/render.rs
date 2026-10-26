@@ -4,6 +4,7 @@ use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
 
 use super::{Field, Format, Value, Values};
+use crate::chapters;
 
 /// The `<name>.md` text: declared fields separated by a blank line, one trailing newline.
 pub fn render(values: &Values, format: Format) -> String {
@@ -12,6 +13,11 @@ pub fn render(values: &Values, format: Format) -> String {
         .iter()
         .map(|(field, value)| match (format, field, value) {
             (Format::Markdown, Field::Title, Value::Text(title)) => format!("# {title}"),
+            (Format::Markdown, _, Value::Chapters(chapters)) => chapters
+                .iter()
+                .map(|c| format!("- {}", chapters::lines(std::slice::from_ref(c))))
+                .collect::<Vec<_>>()
+                .join("\n"),
             _ => value.rendered(*field),
         })
         .collect();
@@ -46,9 +52,11 @@ impl Serialize for FieldsJson<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(Some(self.0 .0.len()))?;
         for (field, value) in &self.0 .0 {
+            debug_assert!(value.fits(*field), "{value:?} does not fit field {field:?}");
             match value {
                 Value::Text(text) => map.serialize_entry(field.name(), text)?,
                 Value::List(items) => map.serialize_entry(field.name(), items)?,
+                Value::Chapters(chapters) => map.serialize_entry(field.name(), chapters)?,
             }
         }
         map.end()
@@ -58,6 +66,7 @@ impl Serialize for FieldsJson<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chapters::Chapter;
     use crate::fields::{Field, Value};
 
     fn list(items: &[&str]) -> Value {
@@ -162,5 +171,48 @@ mod tests {
             parsed["fields"],
             serde_json::json!({"hashtags": ["a"], "body": "quote \" and \n newline"})
         );
+    }
+
+    fn chapters() -> Vec<Chapter> {
+        vec![
+            Chapter {
+                start: 0,
+                title: "Intro".into(),
+            },
+            Chapter {
+                start: 252,
+                title: "Ownership".into(),
+            },
+        ]
+    }
+
+    fn with_chapters() -> Values {
+        Values(vec![
+            (Field::Body, text("Body")),
+            (Field::Chapters, Value::Chapters(chapters())),
+            (Field::Tags, list(&["tags"])),
+        ])
+    }
+
+    #[test]
+    fn render_plain_chapters() {
+        assert_eq!(
+            render(&with_chapters(), Format::Plain),
+            "Body\n\n0:00 Intro\n4:12 Ownership\n\ntags\n"
+        );
+    }
+
+    #[test]
+    fn render_markdown_chapters() {
+        assert_eq!(
+            render(&with_chapters(), Format::Markdown),
+            "Body\n\n- 0:00 Intro\n- 4:12 Ownership\n\ntags\n"
+        );
+    }
+
+    #[test]
+    fn artifact_json_with_chapters_golden() {
+        let expected = "{\n  \"version\": 1,\n  \"template\": \"youtube\",\n  \"output_lang\": \"es\",\n  \"fields\": {\n    \"body\": \"Body\",\n    \"chapters\": [\n      {\n        \"start\": 0,\n        \"title\": \"Intro\"\n      },\n      {\n        \"start\": 252,\n        \"title\": \"Ownership\"\n      }\n    ],\n    \"tags\": [\n      \"tags\"\n    ]\n  }\n}\n";
+        assert_eq!(artifact_json("youtube", "es", &with_chapters()), expected);
     }
 }

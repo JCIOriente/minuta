@@ -210,9 +210,6 @@ fn fields_spec(
     for name in &names {
         let field = match Field::from_name(name) {
             Some(f) => f,
-            None if name == "chapters" => {
-                return Err("field 'chapters' arrives in a later version".into())
-            }
             None => {
                 let known: Vec<&str> = Field::ALL.iter().map(|f| f.name()).collect();
                 return Err(format!(
@@ -225,6 +222,9 @@ fn fields_spec(
             return Err(format!("duplicate field {name:?}"));
         }
         declared.push(field);
+    }
+    if declared == [Field::Chapters] {
+        return Err("'fields' needs at least one field besides 'chapters'".into());
     }
     let mut specs: Vec<FieldSpec> = declared
         .iter()
@@ -239,6 +239,9 @@ fn fields_spec(
             return Err(format!("duplicate limit for {key:?}"));
         }
         seen.push(key.clone());
+        if key == Field::Chapters.name() {
+            return Err("the chapters field is limited in the chapters template".into());
+        }
         let Some(spec) =
             Field::from_name(&key).and_then(|f| specs.iter_mut().find(|s| s.field == f))
         else {

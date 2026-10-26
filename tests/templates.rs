@@ -236,18 +236,41 @@ fn fields_error_empty_list() {
 fn fields_error_unknown_field() {
     let m = fields_error("fields: [headline]\n");
     assert_names_template(&m);
-    assert!(m.contains("unknown field \"headline\""), "{m}");
-    assert!(
-        m.contains("title, body, tags, hashtags, thumbnail_text"),
-        "{m}"
+    assert_eq!(
+        m,
+        "template a: unknown field \"headline\" (known: title, body, tags, hashtags, thumbnail_text, chapters)"
     );
 }
 
 #[test]
-fn fields_error_chapters_later() {
+fn fields_chapters_parses() {
+    let t = parse("a", &fields_tpl("fields: [body, chapters]\n")).unwrap();
+    let got: Vec<(Field, Limit)> = spec(&t).fields.iter().map(|f| (f.field, f.limit)).collect();
+    assert_eq!(
+        got,
+        [
+            (Field::Body, Limit::default()),
+            (Field::Chapters, Limit::default())
+        ]
+    );
+}
+
+#[test]
+fn fields_error_only_chapters() {
     let m = fields_error("fields: [chapters]\n");
-    assert_names_template(&m);
-    assert!(m.contains("'chapters' arrives in a later version"), "{m}");
+    assert_eq!(
+        m,
+        "template a: 'fields' needs at least one field besides 'chapters'"
+    );
+}
+
+#[test]
+fn fields_error_chapters_limit() {
+    let m = fields_error("fields: [body, chapters]\nlimits:\n  chapters: { max: 3 }\n");
+    assert_eq!(
+        m,
+        "template a: the chapters field is limited in the chapters template"
+    );
 }
 
 #[test]

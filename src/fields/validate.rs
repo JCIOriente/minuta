@@ -5,6 +5,7 @@ use serde_json::{Map, Value as Json};
 use super::{Field, FieldSpec, FieldsSpec, Kind, Value, Values, Violation};
 
 /// `answer` is already cleaned by `call::clean`. All violations in one pass, in field order.
+/// Filled fields are not part of the answer: a missing key is fine, a present one is ignored.
 pub fn parse_answer(answer: &str, spec: &FieldsSpec) -> Result<Values, Vec<Violation>> {
     let object = parse_object(answer).map_err(|message| {
         vec![Violation(format!(
@@ -13,7 +14,7 @@ pub fn parse_answer(answer: &str, spec: &FieldsSpec) -> Result<Values, Vec<Viola
     })?;
     let mut values = Vec::new();
     let mut violations = Vec::new();
-    for field_spec in &spec.fields {
+    for field_spec in spec.fields.iter().filter(|f| !f.field.is_filled()) {
         match check_field(&object, field_spec) {
             Ok(value) => values.push((field_spec.field, value)),
             Err(found) => violations.extend(found),
@@ -82,11 +83,13 @@ fn check_field(
             Some(items) => Value::List(list_items(field, items)),
             None => return violation(format!("\"{name}\" must be a list of strings")),
         },
+        Kind::Chapters => return violation(format!("\"{name}\" is filled by minuta")),
     };
     let mut found = Vec::new();
     let empty = match &value {
         Value::Text(text) => text.is_empty(),
         Value::List(items) => items.is_empty(),
+        Value::Chapters(chapters) => chapters.is_empty(),
     };
     if empty {
         return violation(format!("\"{name}\" is empty"));
@@ -113,7 +116,7 @@ fn check_field(
                 Value::Text(_) => format!(
                     "\"{name}\" has {count} characters; the limit is {max_chars}. Shorten it to at most {max_chars} characters."
                 ),
-                Value::List(_) => format!(
+                Value::List(_) | Value::Chapters(_) => format!(
                     "\"{name}\" is {count} characters as rendered; the limit is {max_chars}. Use fewer or shorter {name}."
                 ),
             });
@@ -538,5 +541,30 @@ mod tests {
             v,
             Values(vec![(Field::Tags, list(&["a"])), (Field::Title, text("T"))])
         );
+    }
+
+    #[test]
+    fn parse_answer_ignores_chapters_key() {
+        let s = spec(&[
+            (Field::Body, no_limit()),
+            (Field::Chapters, no_limit()),
+            (Field::Tags, no_limit()),
+        ]);
+        let v = parse_answer(
+            r#"{"body": "B", "chapters": ["0:00 x"], "tags": ["a"]}"#,
+            &s,
+        )
+        .unwrap();
+        assert_eq!(
+            v,
+            Values(vec![(Field::Body, text("B")), (Field::Tags, list(&["a"]))])
+        );
+    }
+
+    #[test]
+    fn parse_answer_accepts_answer_without_chapters_key() {
+        let s = spec(&[(Field::Body, no_limit()), (Field::Chapters, no_limit())]);
+        let v = parse_answer(r#"{"body": "B"}"#, &s).unwrap();
+        assert_eq!(v, Values(vec![(Field::Body, text("B"))]));
     }
 }
