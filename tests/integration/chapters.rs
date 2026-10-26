@@ -1,26 +1,15 @@
 //! The `chapters` template end to end: the real binary, real ffmpeg on a generated clip, the
 //! fake whisper on `class.json` (or `sample.json`), the fake Ollama and the fake `claude`.
 
-// templates.rs and fields.rs load the same file; it is private there, so this module loads
-// its own copy.
-#[allow(clippy::duplicate_mod)]
-#[path = "../support/fake_ollama.rs"]
-mod fake_ollama;
-
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 use std::sync::Arc;
 
 use fake_ollama::{FakeOllama, Reply, Request};
 
 use crate::common::*;
 
-const FAKE_CLAUDE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/claude");
-const CLASS_FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/whisper/class.json"
-);
 const ARGS_CHAPTERS: [&str; 4] = ["run", "a.mp4", "-t", "chapters"];
 const ARGS_YOUTUBE: [&str; 4] = ["run", "a.mp4", "-t", "youtube"];
 
@@ -60,47 +49,8 @@ const VALID_CHAPTERS_JSON: &str = r#"{
 const VALID_CHAPTERS_MD: &str =
     "0:00 Introducción\n0:32 La propiedad\n1:47 Movimientos y copias\n3:25 Préstamos\n4:40 Ejercicios\n";
 
-/// The `youtube.md` of a run that answered `valid_youtube` and `valid_chapters`.
-const VALID_YOUTUBE_MD: &str = "Rust ownership\n\nA class about ownership.\n\n0:00 Introducción\n0:32 La propiedad\n1:47 Movimientos y copias\n3:25 Préstamos\n4:40 Ejercicios\n\nrust, ownership\n\nOwnership\n";
-
 /// The rule a `short_first_chapter` answer breaks, as a violation line.
 const SHORT_FIRST: &str = "chapter 1 (\"Introducción\") lasts 4 s (0:00 to 0:04); each chapter must last at least 10 s. Merge it with a neighboring chapter or move a start.";
-
-fn ollama_with(responder: fake_ollama::Responder) -> FakeOllama {
-    FakeOllama::start(
-        &["gemma4:26b"],
-        serde_json::json!({
-            "model_info": {"gemma4.context_length": 32768},
-            "capabilities": ["completion"]
-        }),
-        responder,
-    )
-}
-
-fn message(req: &Request, index: usize) -> &str {
-    req.body["messages"][index]["content"].as_str().unwrap()
-}
-
-fn chats(fake: &FakeOllama) -> Vec<Request> {
-    fake.requests()
-        .into_iter()
-        .filter(|r| r.path == "/api/chat")
-        .collect()
-}
-
-/// Whether the request asks for structured output (final and repair calls only).
-fn has_format(req: &Request) -> bool {
-    !req.body["format"].is_null()
-}
-
-/// Whether the request is a call of the `chapters` template (its schema asks for `chapters`).
-fn is_chapters(req: &Request) -> bool {
-    !req.body["format"]["properties"]["chapters"].is_null()
-}
-
-fn is_repair(req: &Request) -> bool {
-    message(req, 1).starts_with("Previous answer:")
-}
 
 /// What a request is, from its schema and system prompt.
 fn role(req: &Request) -> &'static str {
@@ -130,28 +80,6 @@ fn count(roles: &[&str], role: &str) -> usize {
     roles.iter().filter(|r| **r == role).count()
 }
 
-/// Writes `<dir>/<name>.md`, where `dir` is relative to the temp dir.
-fn write_template(env: &Env, dir: &str, name: &str, text: &str) {
-    let dir = env.path(dir);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join(format!("{name}.md")), text).unwrap();
-}
-
-/// `minuta args` on the transcript of `class.json`, pointed at `url`, with zero retry
-/// backoff and the fake `claude`.
-fn class_command(env: &Env, args: &[&str], url: &str) -> Command {
-    let mut cmd = env.command(args);
-    cmd.env("MINUTA_OLLAMA_URL", url)
-        .env("MINUTA_LLM_BACKOFF_MS", "0")
-        .env("MINUTA_CLAUDE_BIN", FAKE_CLAUDE)
-        .env("FAKE_WHISPER_FIXTURE", CLASS_FIXTURE);
-    cmd
-}
-
-fn run_class(env: &Env, args: &[&str], fake: &FakeOllama) -> Output {
-    class_command(env, args, &fake.url()).output().unwrap()
-}
-
 /// Like `run_class`, with a context so small that the transcript is split into chunks.
 fn run_chunked(env: &Env, args: &[&str], fake: &FakeOllama) -> Output {
     class_command(env, args, &fake.url())
@@ -159,31 +87,6 @@ fn run_chunked(env: &Env, args: &[&str], fake: &FakeOllama) -> Output {
         .env("MINUTA_LLM_CONCURRENCY", "1")
         .output()
         .unwrap()
-}
-
-fn env_with_clip() -> Env {
-    let env = Env::new();
-    env.clip("a.mp4", 440);
-    env
-}
-
-fn chapters_answer(chapters: &[(&str, &str)]) -> String {
-    let list: Vec<_> = chapters
-        .iter()
-        .map(|(start, title)| serde_json::json!({"start": start, "title": title}))
-        .collect();
-    serde_json::json!({ "chapters": list }).to_string()
-}
-
-/// A valid chapters answer for `class.json`: every start is a segment start of the transcript.
-fn valid_chapters() -> String {
-    chapters_answer(&[
-        ("00:00:00", "Introducción"),
-        ("00:00:32", "La propiedad"),
-        ("00:01:47", "Movimientos y copias"),
-        ("00:03:25", "Préstamos"),
-        ("00:04:40", "Ejercicios"),
-    ])
 }
 
 /// A chapters answer whose first chapter lasts 4 s (`SHORT_FIRST`).
@@ -194,17 +97,6 @@ fn short_first_chapter() -> String {
         ("00:01:47", "Movimientos y copias"),
         ("00:03:25", "Préstamos"),
     ])
-}
-
-/// A valid answer for the built-in `youtube` template.
-fn valid_youtube() -> String {
-    serde_json::json!({
-        "title": "Rust ownership",
-        "body": "A class about ownership.",
-        "tags": ["rust", "ownership"],
-        "thumbnail_text": "Ownership",
-    })
-    .to_string()
 }
 
 /// Fake Ollama that answers chapters requests with `chapters(req)`, the other structured
@@ -570,7 +462,7 @@ fn chapters_regenerated_identical_keeps_youtube_cached() {
     );
     let mut runs = Vec::new();
     for edit in ["Edit 1.", "Edit 2.", "Edit 3."] {
-        write_template(&env, "templates", "chapters", &chapters_override(edit));
+        env.template("templates", "chapters", &chapters_override(edit));
         let before = fake.chat_count();
         let out = run_class(&env, &ARGS_YOUTUBE, &fake);
         assert!(out.status.success(), "{}", stderr(&out));
@@ -610,9 +502,7 @@ fn chapters_regenerated_identical_keeps_youtube_cached() {
 fn chapters_language_mismatch_fails_youtube() {
     require_ffmpeg!();
     let env = env_with_clip();
-    write_template(
-        &env,
-        "templates",
+    env.template("templates",
         "youtube",
         "---\nlang: en\ninput: summary\noutput: fields\nfields: [title, body, chapters]\n---\nWrite the YouTube copy.",
     );
@@ -632,8 +522,7 @@ fn chapters_language_mismatch_fails_youtube() {
 fn chapters_input_chapters_receives_chapters_md() {
     require_ffmpeg!();
     let env = env_with_clip();
-    write_template(
-        &env,
+    env.template(
         "templates",
         "toc",
         "---\ninput: chapters\n---\nWrite the table of contents.",

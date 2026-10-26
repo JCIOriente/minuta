@@ -1,68 +1,20 @@
 //! Templates end to end: the real binary, real ffmpeg on a generated clip, the fake whisper,
 //! the fake Ollama and the fake `claude`. Every test owns its temp HOME, config and server.
 
-#[path = "../support/fake_ollama.rs"]
-mod fake_ollama;
-
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use fake_ollama::{FakeOllama, Reply, Request};
+use fake_ollama::{FakeOllama, Reply};
 
 use crate::common::*;
 
-const FAKE_CLAUDE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/claude");
 const NO_OLLAMA: &str = "http://127.0.0.1:9";
-
-fn ollama_with(responder: fake_ollama::Responder) -> FakeOllama {
-    FakeOllama::start(
-        &["gemma4:26b"],
-        serde_json::json!({
-            "model_info": {"gemma4.context_length": 32768},
-            "capabilities": ["completion"]
-        }),
-        responder,
-    )
-}
 
 fn ollama(reply: &'static str) -> FakeOllama {
     ollama_with(Arc::new(move |_| Reply::chat(reply)))
-}
-
-fn message(req: &Request, index: usize) -> &str {
-    req.body["messages"][index]["content"].as_str().unwrap()
-}
-
-fn chats(fake: &FakeOllama) -> Vec<Request> {
-    fake.requests()
-        .into_iter()
-        .filter(|r| r.path == "/api/chat")
-        .collect()
-}
-
-impl Env {
-    /// Writes `<dir>/<name>.md`, where `dir` is relative to the temp dir.
-    fn template(&self, dir: &str, name: &str, text: &str) {
-        let dir = self.path(dir);
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(format!("{name}.md")), text).unwrap();
-    }
-
-    /// `command` pointed at `url`, with zero retry backoff and the fake `claude`.
-    fn llm_command(&self, args: &[&str], url: &str) -> Command {
-        let mut cmd = self.command(args);
-        cmd.env("MINUTA_OLLAMA_URL", url)
-            .env("MINUTA_LLM_BACKOFF_MS", "0")
-            .env("MINUTA_CLAUDE_BIN", FAKE_CLAUDE);
-        cmd
-    }
-
-    fn run_llm(&self, args: &[&str], fake: &FakeOllama) -> Output {
-        self.llm_command(args, &fake.url()).output().unwrap()
-    }
 }
 
 fn template_status(job: &Path, name: &str) -> serde_json::Value {
@@ -76,12 +28,6 @@ fn wait_until(what: &str, cond: impl Fn() -> bool) {
         assert!(Instant::now() < deadline, "{what} never happened");
         std::thread::sleep(Duration::from_millis(20));
     }
-}
-
-fn env_with_clip() -> Env {
-    let env = Env::new();
-    env.clip("a.mp4", 440);
-    env
 }
 
 #[test]
@@ -198,28 +144,6 @@ fn templates_force_makes_new_chat_requests() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(fake.chat_count(), 2);
     assert!(!cached_steps(&stderr(&out)).contains(&"summary".to_string()));
-}
-
-/// A transcript of `n` segments, 40 s apart, so each is its own line of the prompt input.
-fn long_transcript(env: &Env, n: usize) -> std::path::PathBuf {
-    let sample = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/whisper/sample.json"
-    );
-    let mut json: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(sample).unwrap()).unwrap();
-    let segments: Vec<_> = (0..n)
-        .map(|i| {
-            serde_json::json!({
-                "offsets": {"from": i * 40_000, "to": (i + 1) * 40_000},
-                "text": format!(" Segment number {i} of the long recording."),
-            })
-        })
-        .collect();
-    json["transcription"] = segments.into();
-    let path = env.path("long.json");
-    fs::write(&path, json.to_string()).unwrap();
-    path
 }
 
 #[test]
