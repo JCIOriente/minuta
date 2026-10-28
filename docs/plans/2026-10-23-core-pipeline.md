@@ -42,7 +42,7 @@ pub fn from_whisper_json(&str) -> Result<Transcript>; pub fn to_txt(&Transcript)
 
 // job/ (T4)
 pub struct Job { dir, state }              // load/create, name derivation, job.json read/write
-pub fn derive_name(first: &Path) -> String;
+pub fn derive_name(first: &Path) -> Result<String>;
 pub fn fingerprint(parts: &[&[u8]]) -> String;
 pub fn write_atomic(path: &Path, f: impl FnOnce(&Path) -> Result<()>) -> Result<()>;
 pub trait Step { const NAME: StepName; fn params(&self, ctx:&Ctx)->Vec<u8>; fn outputs(&self, ctx:&Ctx)->Vec<PathBuf>; fn run(&self, ctx:&Ctx)->Result<()>; }

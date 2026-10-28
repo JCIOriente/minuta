@@ -72,8 +72,12 @@ fn contained_segment_clamped_not_inverted() {
         assert!(s.start >= prev_end, "overlap: {s:?}");
         prev_end = s.end;
     }
-    let c = t.segments.last().unwrap();
-    assert_eq!((c.start, c.end), (5.0, 6.0));
+    let spans: Vec<(&str, f64, f64)> = t
+        .segments
+        .iter()
+        .map(|s| (s.text.as_str(), s.start, s.end))
+        .collect();
+    assert_eq!(spans, [("a", 0.0, 4.0), ("b", 4.0, 4.0), ("c", 5.0, 6.0)]);
 }
 
 #[test]
