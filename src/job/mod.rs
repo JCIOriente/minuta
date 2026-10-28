@@ -274,7 +274,7 @@ pub fn derive_name(first: &Path) -> Result<String> {
         if stem.is_empty() {
             return Err(Error::Usage(format!(
                 "cannot derive a job name from `{}`: \
-                 the file name is only a media extension; choose one with --name",
+                 the file name is only a media extension",
                 first.display()
             )));
         }

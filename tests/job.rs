@@ -792,7 +792,7 @@ fn derive_name_rejects_bare_mp4() {
     assert_eq!(
         err.to_string(),
         "usage error: cannot derive a job name from `.mp4`: \
-         the file name is only a media extension; choose one with --name"
+         the file name is only a media extension"
     );
 }
 
@@ -802,7 +802,7 @@ fn derive_name_rejects_bare_mkv() {
     assert_eq!(
         err.to_string(),
         "usage error: cannot derive a job name from `/videos/.mkv`: \
-         the file name is only a media extension; choose one with --name"
+         the file name is only a media extension"
     );
 }
 
@@ -812,7 +812,7 @@ fn derive_name_rejects_stacked_bare_extensions() {
     assert_eq!(
         err.to_string(),
         "usage error: cannot derive a job name from `.mp4.wav`: \
-         the file name is only a media extension; choose one with --name"
+         the file name is only a media extension"
     );
 }
 
@@ -986,73 +986,104 @@ fn reopen_after_edit(edit: impl FnOnce(&mut serde_json::Value)) -> (String, Path
     (err.to_string(), out.join("clase-4").join("job.json"))
 }
 
-#[test]
-fn step_done_without_fingerprint_rejected() {
-    let (err, file) = reopen_after_edit(|json| {
-        json["steps"]["audio"]["fingerprint"] = serde_json::Value::Null;
-    });
+/// Asserts that reopening after `edit` fails with exactly `invalid <job.json>: <problem>; move
+/// or delete it`.
+fn assert_state_rejected(edit: impl FnOnce(&mut serde_json::Value), problem: &str) {
+    let (err, file) = reopen_after_edit(edit);
     assert_eq!(
         err,
         format!(
-            "job error: invalid {}: step audio is done without a fingerprint",
+            "job error: invalid {}: {problem}; move or delete it",
             file.display()
         )
+    );
+}
+
+#[test]
+fn step_done_without_fingerprint_rejected() {
+    assert_state_rejected(
+        |json| json["steps"]["audio"]["fingerprint"] = serde_json::Value::Null,
+        "step audio is done without a fingerprint",
     );
 }
 
 #[test]
 fn step_done_without_seconds_rejected() {
-    let (err, file) = reopen_after_edit(|json| {
-        json["steps"]["audio"]["seconds"] = serde_json::Value::Null;
-    });
-    assert_eq!(
-        err,
-        format!(
-            "job error: invalid {}: step audio is done without seconds",
-            file.display()
-        )
+    assert_state_rejected(
+        |json| json["steps"]["audio"]["seconds"] = serde_json::Value::Null,
+        "step audio is done without seconds",
     );
 }
 
 #[test]
 fn step_done_with_reason_rejected() {
-    let (err, file) = reopen_after_edit(|json| {
-        json["steps"]["audio"]["reason"] = "forced".into();
-    });
-    assert_eq!(
-        err,
-        format!(
-            "job error: invalid {}: step audio is done but has a stale reason",
-            file.display()
-        )
+    assert_state_rejected(
+        |json| json["steps"]["audio"]["reason"] = "forced".into(),
+        "step audio is done but has a stale reason",
     );
 }
 
 #[test]
 fn step_stale_without_reason_rejected() {
-    let (err, file) = reopen_after_edit(|json| {
-        json["steps"]["audio"]["status"] = "stale".into();
-    });
-    assert_eq!(
-        err,
-        format!(
-            "job error: invalid {}: step audio is stale without a reason",
-            file.display()
-        )
+    assert_state_rejected(
+        |json| json["steps"]["audio"]["status"] = "stale".into(),
+        "step audio is stale without a reason",
     );
 }
 
 #[test]
 fn template_done_without_fingerprint_rejected() {
-    let (err, file) = reopen_after_edit(|json| {
-        json["templates"]["summary"]["fingerprint"] = serde_json::Value::Null;
-    });
-    assert_eq!(
-        err,
-        format!(
-            "job error: invalid {}: template summary is done without a fingerprint",
-            file.display()
-        )
+    assert_state_rejected(
+        |json| json["templates"]["summary"]["fingerprint"] = serde_json::Value::Null,
+        "template summary is done without a fingerprint",
+    );
+}
+
+#[test]
+fn template_done_without_seconds_rejected() {
+    assert_state_rejected(
+        |json| json["templates"]["summary"]["seconds"] = serde_json::Value::Null,
+        "template summary is done without seconds",
+    );
+}
+
+#[test]
+fn template_done_with_reason_rejected() {
+    assert_state_rejected(
+        |json| json["templates"]["summary"]["reason"] = "forced".into(),
+        "template summary is done but has a stale reason",
+    );
+}
+
+#[test]
+fn template_stale_without_reason_rejected() {
+    assert_state_rejected(
+        |json| json["templates"]["summary"]["status"] = "stale".into(),
+        "template summary is stale without a reason",
+    );
+}
+
+#[test]
+fn step_absolute_artifact_rejected() {
+    assert_state_rejected(
+        |json| json["steps"]["audio"]["artifacts"] = serde_json::json!(["/elsewhere/audio.wav"]),
+        "step audio has artifact /elsewhere/audio.wav outside the job folder",
+    );
+}
+
+#[test]
+fn step_climbing_artifact_rejected() {
+    assert_state_rejected(
+        |json| json["steps"]["audio"]["artifacts"] = serde_json::json!(["parts/../../x.wav"]),
+        "step audio has artifact parts/../../x.wav outside the job folder",
+    );
+}
+
+#[test]
+fn template_absolute_artifact_rejected() {
+    assert_state_rejected(
+        |json| json["templates"]["summary"]["artifacts"] = serde_json::json!(["/tmp/summary.md"]),
+        "template summary has artifact /tmp/summary.md outside the job folder",
     );
 }
 
