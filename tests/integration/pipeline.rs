@@ -240,7 +240,14 @@ fn name_conflict_errors() {
 }
 
 /// Kills the given pids on drop, so a failing signal test leaves no orphan behind.
+/// Call `disarm` once the pids are known dead: a later kill could hit a recycled pid.
 struct KillOnDrop(Vec<String>);
+
+impl KillOnDrop {
+    fn disarm(mut self) {
+        self.0.clear();
+    }
+}
 
 impl Drop for KillOnDrop {
     fn drop(&mut self) {
@@ -279,7 +286,7 @@ fn signal_stops_tool_and_grandchild(sig: &str) {
         .split_whitespace()
         .map(str::to_string)
         .collect();
-    let _cleanup = KillOnDrop(pids.clone());
+    let cleanup = KillOnDrop(pids.clone());
     let (tool, grandchild) = (&pids[0], &pids[1]);
 
     signal(sig, &child);
@@ -298,6 +305,7 @@ fn signal_stops_tool_and_grandchild(sig: &str) {
     poll_until(&format!("{sig} left the grandchild running"), || {
         !pid_alive(grandchild)
     });
+    cleanup.disarm();
     let job = env.job_dir("a");
     assert_eq!(tmp_files(&job), Vec::<String>::new(), "{sig}");
     assert_eq!(job_json(&job)["steps"]["transcribe"]["status"], "stale");
