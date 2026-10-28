@@ -25,6 +25,14 @@ pub enum Error {
     Parse(String),
     #[error("config error: {0}")]
     Config(String),
+    /// A config file that exists but could not be read. Keeps the `io::Error` so callers
+    /// can tell a permission problem from a parse error.
+    #[error("config error: {}: {source}", path.display())]
+    ConfigIo {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("job error: {0}")]
     Job(String),
     #[error("{backend}: {message}")]
