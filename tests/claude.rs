@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use minuta::error::Error;
+use minuta::llm::call::{call, CallCache, Policy};
 use minuta::llm::claude::{check, Claude};
 use minuta::llm::Backend;
 use minuta::tools::{run_capture, RunOpts};
@@ -332,6 +333,106 @@ fn claude_scratch_dir_removed_after_interrupt() {
     let err = claude(None).complete("s", "u", &flag).unwrap_err();
     assert!(matches!(err, Error::Interrupted), "{err:?}");
     assert!(!PathBuf::from(&lines(&cwd)[0]).try_exists().unwrap());
+}
+
+/// Two attempts and no backoff: a transient failure is retried at once.
+const RETRY_ONCE: Policy = Policy {
+    retries: 2,
+    backoff: Duration::ZERO,
+};
+
+const POLL: Duration = Duration::from_millis(1);
+
+/// Polls `path` until it holds a complete first line, and returns that line; panics after
+/// a generous deadline.
+fn wait_for_first_line(path: &Path) -> String {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match fs::read_to_string(path) {
+            Ok(text) => {
+                if let Some((first, _)) = text.split_once('\n') {
+                    return first.to_string();
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => panic!("{}: {e}", path.display()),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{} never got a line",
+            path.display()
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+/// Polls until the directory named on the first line of `cwd_file` (written by the fake)
+/// is gone; panics after a generous deadline.
+fn wait_for_removed_scratch(cwd_file: &Path) {
+    let scratch = PathBuf::from(wait_for_first_line(cwd_file));
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while scratch.try_exists().unwrap() {
+        assert!(Instant::now() < deadline, "{scratch:?} was never removed");
+        std::thread::sleep(POLL);
+    }
+}
+
+// The terminal's Ctrl-C reaches `claude` (same process group) before the handler sets the
+// flag: the fake dies from a signal (KILL: unlike INT, a parent cannot make it ignored),
+// and the flag is set only after `complete` has seen the death (it removes its scratch
+// directory right after the process is reaped).
+#[test]
+fn claude_signal_death_then_interrupt_does_not_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let calls = dir.path().join("calls");
+    let cwd = dir.path().join("cwd");
+    let mut env = Env::new();
+    env.set("FAKE_CLAUDE_CALLS", &calls);
+    env.set("FAKE_CLAUDE_CWD", &cwd);
+    env.set("FAKE_CLAUDE_SIGNAL", "KILL");
+    let flag = Arc::new(AtomicBool::new(false));
+    let setter = Arc::clone(&flag);
+    let watched = cwd.clone();
+    let handler = std::thread::spawn(move || {
+        wait_for_removed_scratch(&watched);
+        // A late handler. This delay never orders anything the test relies on: with the
+        // grace below, any delay under 30 s passes. It only gives a regression time to
+        // start the retry, so that it shows as a second call.
+        std::thread::sleep(Duration::from_millis(200));
+        setter.store(true, Ordering::SeqCst);
+    });
+    let cache = CallCache::new(dir.path());
+    let backend = claude(None).with_signal_grace(Duration::from_secs(30));
+    let err = call(&backend, &cache, &RETRY_ONCE, "s", "u", true, &flag).unwrap_err();
+    handler.join().unwrap();
+    assert!(matches!(err, Error::Interrupted), "{err:?}");
+    assert_eq!(lines(&calls), ["call"]);
+}
+
+#[test]
+fn claude_signal_death_without_interrupt_is_transient() {
+    let dir = tempfile::tempdir().unwrap();
+    let calls = dir.path().join("calls");
+    let mut env = Env::new();
+    env.set("FAKE_CLAUDE_CALLS", &calls);
+    env.set("FAKE_CLAUDE_SIGNAL", "KILL");
+    let cache = CallCache::new(dir.path());
+    let err = call(
+        &claude(None),
+        &cache,
+        &RETRY_ONCE,
+        "s",
+        "u",
+        true,
+        &AtomicBool::new(false),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&err, Error::Llm { backend, message, transient: true }
+            if backend == "claude" && message == "exited with status none"),
+        "{err:?}"
+    );
+    assert_eq!(lines(&calls), ["call", "call"]);
 }
 
 #[test]
