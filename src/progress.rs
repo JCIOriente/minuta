@@ -191,6 +191,9 @@ fn event_text(event: Event) -> String {
     match event {
         Event::Chunk { done, total } => format!("chunk {done}/{total}"),
         Event::Consolidating => "consolidating".to_string(),
+        Event::Merge { round, done, total } => {
+            format!("consolidating (round {round}: {done}/{total})")
+        }
         Event::Repair { attempt, total } => format!("repair {attempt}/{total}"),
     }
 }
@@ -268,6 +271,18 @@ mod tests {
     fn template_events() {
         assert_eq!(event_text(Event::Chunk { done: 2, total: 5 }), "chunk 2/5");
         assert_eq!(event_text(Event::Consolidating), "consolidating");
+    }
+
+    #[test]
+    fn event_text_merge() {
+        assert_eq!(
+            event_text(Event::Merge {
+                round: 1,
+                done: 2,
+                total: 3
+            }),
+            "consolidating (round 1: 2/3)"
+        );
     }
 
     #[test]
