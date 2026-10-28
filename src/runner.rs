@@ -697,13 +697,10 @@ impl Pipeline<'_> {
                 return Err(Error::Interrupted);
             }
             progress.start(index, name.as_str());
-            match step.media_seconds(self.ctx) {
-                Ok(seconds) => progress.set_media_seconds(seconds),
-                Err(e) => {
-                    progress.failed(index, name.as_str(), false);
-                    return Err(e);
-                }
-            }
+            // The total only turns ffmpeg's stats into a percent. If it can't be read, show
+            // the raw stats instead of failing a step that may not need probe.json at all
+            // (audio doesn't); a step that does need it reports the error itself.
+            progress.set_media_seconds(step.media_seconds(self.ctx).unwrap_or(None));
             let started = Instant::now();
             let opts = RunOpts {
                 cwd: None,
@@ -1396,20 +1393,23 @@ mod tests {
     }
 
     #[test]
-    fn media_seconds_error_fails_the_step_before_it_runs() {
+    fn media_seconds_error_runs_the_step_with_raw_progress() {
         let step = FakeStep {
+            lines: &["frame=  662 fps=0.0 q=28.0 size=  256KiB time=00:00:27.40 speed=33.7x"],
             media: Err("probe.json unreadable"),
             ..FakeStep::default()
         };
         let interrupt = Arc::new(AtomicBool::new(false));
         let (result, job, progress) = run_one_shown(&step, &interrupt, ProgressMode::Live);
-        match result {
-            Err(Error::Io(e)) => assert_eq!(e.to_string(), "probe.json unreadable"),
-            other => panic!("expected the media seconds error, got {other:?}"),
-        }
-        assert!(!step.ran.get());
-        assert!(!job.state.steps.contains_key(&StepName::Probe));
-        assert_eq!(progress.shown, ["[1/5] probe       failed"]);
+        assert_eq!(result.unwrap(), 1);
+        assert!(step.ran.get());
+        assert!(job.state.steps.contains_key(&StepName::Probe));
+        // No percent without a total: the spinner shows ffmpeg's own line, then the done line.
+        assert_eq!(progress.shown.len(), 2, "{:?}", progress.shown);
+        assert_eq!(
+            progress.shown[0],
+            "frame=  662 fps=0.0 q=28.0 size=  256KiB time=00:00:27.40 speed=33.7x"
+        );
     }
 
     #[test]
