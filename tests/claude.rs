@@ -341,34 +341,39 @@ const RETRY_ONCE: Policy = Policy {
     backoff: Duration::ZERO,
 };
 
-/// Polls `path` until it holds `n` lines; panics after a generous deadline.
-fn wait_for_lines(path: &Path, n: usize) {
+const POLL: Duration = Duration::from_millis(1);
+
+/// Polls `path` until it holds a complete first line, and returns that line; panics after
+/// a generous deadline.
+fn wait_for_first_line(path: &Path) -> String {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         match fs::read_to_string(path) {
-            Ok(text) if text.lines().count() >= n => return,
-            Ok(_) => {}
+            Ok(text) => {
+                if let Some((first, _)) = text.split_once('\n') {
+                    return first.to_string();
+                }
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => panic!("{}: {e}", path.display()),
         }
         assert!(
             Instant::now() < deadline,
-            "{} never reached {n} lines",
+            "{} never got a line",
             path.display()
         );
-        std::thread::yield_now();
+        std::thread::sleep(POLL);
     }
 }
 
 /// Polls until the directory named on the first line of `cwd_file` (written by the fake)
 /// is gone; panics after a generous deadline.
 fn wait_for_removed_scratch(cwd_file: &Path) {
-    wait_for_lines(cwd_file, 1);
-    let scratch = PathBuf::from(&lines(cwd_file)[0]);
+    let scratch = PathBuf::from(wait_for_first_line(cwd_file));
     let deadline = Instant::now() + Duration::from_secs(30);
     while scratch.try_exists().unwrap() {
         assert!(Instant::now() < deadline, "{scratch:?} was never removed");
-        std::thread::yield_now();
+        std::thread::sleep(POLL);
     }
 }
 
