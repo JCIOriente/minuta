@@ -554,6 +554,12 @@ trait Execute {
         opts: RunOpts,
         on_line: &mut dyn FnMut(&str),
     ) -> Result<Vec<String>>;
+
+    /// Seconds of media the step's ffmpeg run processes, so its stats can show a percent;
+    /// `None` when the step runs no ffmpeg.
+    fn media_seconds(&self, _ctx: &Ctx) -> Result<Option<f64>> {
+        Ok(None)
+    }
 }
 
 impl Execute for Probe {
@@ -576,6 +582,10 @@ impl Execute for Join {
     ) -> Result<Vec<String>> {
         self.run_with(ctx, opts, on_line).map(|()| Vec::new())
     }
+
+    fn media_seconds(&self, ctx: &Ctx) -> Result<Option<f64>> {
+        probed_seconds(ctx)
+    }
 }
 
 impl Execute for Audio {
@@ -587,6 +597,18 @@ impl Execute for Audio {
     ) -> Result<Vec<String>> {
         self.run_with(ctx, opts, on_line).map(|()| Vec::new())
     }
+
+    /// The joined file is as long as the sources together.
+    fn media_seconds(&self, ctx: &Ctx) -> Result<Option<f64>> {
+        probed_seconds(ctx)
+    }
+}
+
+/// The total length of the sources in `probe.json`; `None` when it is not a positive
+/// number of seconds.
+fn probed_seconds(ctx: &Ctx) -> Result<Option<f64>> {
+    let total: f64 = read_probe(&ctx.dir)?.iter().map(|p| p.duration).sum();
+    Ok(Some(total).filter(|t| t.is_finite() && *t > 0.0))
 }
 
 impl Execute for Transcribe {
@@ -619,6 +641,7 @@ trait Runnable {
         opts: RunOpts,
         on_line: &mut dyn FnMut(&str),
     ) -> Result<Vec<String>>;
+    fn media_seconds(&self, ctx: &Ctx) -> Result<Option<f64>>;
 }
 
 impl<S: Step + Execute> Runnable for S {
@@ -641,6 +664,10 @@ impl<S: Step + Execute> Runnable for S {
         on_line: &mut dyn FnMut(&str),
     ) -> Result<Vec<String>> {
         Execute::execute(self, ctx, opts, on_line)
+    }
+
+    fn media_seconds(&self, ctx: &Ctx) -> Result<Option<f64>> {
+        Execute::media_seconds(self, ctx)
     }
 }
 
@@ -670,6 +697,13 @@ impl Pipeline<'_> {
                 return Err(Error::Interrupted);
             }
             progress.start(index, name.as_str());
+            match step.media_seconds(self.ctx) {
+                Ok(seconds) => progress.set_media_seconds(seconds),
+                Err(e) => {
+                    progress.failed(index, name.as_str(), false);
+                    return Err(e);
+                }
+            }
             let started = Instant::now();
             let opts = RunOpts {
                 cwd: None,
@@ -885,6 +919,88 @@ mod tests {
                 .map(|(_, v)| v.to_string())
         };
         Config::resolve(Overrides::default(), &lookup, None).unwrap()
+    }
+
+    /// A job folder whose `probe.json` lists audio-only sources of `durations` seconds.
+    fn probed_job(dir: &Path, durations: &[f64]) -> Ctx {
+        let sources: Vec<crate::steps::SourceProbe> = durations
+            .iter()
+            .enumerate()
+            .map(|(i, &duration)| crate::steps::SourceProbe {
+                path: dir.join(format!("{i}.m4a")),
+                duration,
+                video: None,
+                audio: crate::steps::probe::AudioStream {
+                    codec: "aac".into(),
+                    sample_rate: 48000,
+                    channels: 2,
+                },
+            })
+            .collect();
+        fs::write(
+            dir.join(crate::steps::probe::PROBE_FILE),
+            serde_json::to_string(&sources).unwrap(),
+        )
+        .unwrap();
+        Ctx {
+            dir: dir.to_path_buf(),
+            sources: sources.into_iter().map(|s| s.path).collect(),
+            source_digest: "d".into(),
+        }
+    }
+
+    #[test]
+    fn probed_seconds_sums_the_sources() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = probed_job(tmp.path(), &[30.5, 29.25]);
+        assert_eq!(probed_seconds(&ctx).unwrap(), Some(59.75));
+    }
+
+    #[test]
+    fn probed_seconds_of_zero_length_is_unknown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = probed_job(tmp.path(), &[0.0]);
+        assert_eq!(probed_seconds(&ctx).unwrap(), None);
+    }
+
+    #[test]
+    fn probed_seconds_without_probe_file_is_an_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = Ctx {
+            dir: tmp.path().to_path_buf(),
+            sources: vec![],
+            source_digest: "d".into(),
+        };
+        match probed_seconds(&ctx).unwrap_err() {
+            Error::Io(e) => assert_eq!(e.kind(), io::ErrorKind::NotFound),
+            other => panic!("expected Io error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn join_and_audio_report_probed_seconds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = probed_job(tmp.path(), &[30.0, 30.0]);
+        let ffmpeg = tools::ToolInfo {
+            path: PathBuf::from("/no/ffmpeg"),
+            version: "ffmpeg 0".into(),
+        };
+        let join = Join::new(ffmpeg.clone(), crate::steps::Encoder::X264);
+        assert_eq!(Runnable::media_seconds(&join, &ctx).unwrap(), Some(60.0));
+        let audio = Audio::new(ffmpeg);
+        assert_eq!(Runnable::media_seconds(&audio, &ctx).unwrap(), Some(60.0));
+    }
+
+    #[test]
+    fn transcribe_reports_no_media_seconds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = probed_job(tmp.path(), &[30.0]);
+        let whisper = tools::ToolInfo {
+            path: PathBuf::from("/no/whisper-cli"),
+            version: "whisper 0".into(),
+        };
+        let step = Transcribe::new(whisper, PathBuf::from("/no/model.bin"), "en", None);
+        assert_eq!(Runnable::media_seconds(&step, &ctx).unwrap(), None);
     }
 
     #[test]

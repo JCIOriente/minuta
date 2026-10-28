@@ -1,0 +1,16 @@
+#!/bin/sh
+# Fake whisper-cli that fails late, for tests/tools.rs and manual end-to-end checks.
+#   --version  prints a version line.
+#   otherwise  prints two load messages, 50 progress lines in whisper-cli's real `-pp`
+#              format (tests/fixtures/whisper/pp.stderr), then an error, all on stderr,
+#              and exits 1.
+if [ "$1" = "--version" ]; then echo "whisper-cli 0.0-fake"; exit 0; fi
+echo "whisper_init_from_file_with_params_no_state: loading model" >&2
+echo "whisper_model_load: model size    =   77.11 MB" >&2
+i=1
+while [ $i -le 50 ]; do
+  printf 'whisper_print_progress_callback: progress = %3d%%\n' $((i * 2)) >&2
+  i=$((i + 1))
+done
+echo "whisper_full_with_state: failed to decode" >&2
+exit 1
