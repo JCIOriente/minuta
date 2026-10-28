@@ -79,7 +79,10 @@ pub enum Status {
     Stale,
 }
 
-/// `steps.<name>` in `job.json`.
+/// `steps.<name>` in `job.json`. A done state has a fingerprint and seconds and no reason; a
+/// stale state has a reason and may keep the fingerprint, seconds and artifacts of its last
+/// run. [`JobState::load`] rejects any other combination. (The fields stay public and
+/// independent rather than an enum because the runner and staleness checks read them directly.)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StepState {
     pub status: Status,
@@ -89,6 +92,19 @@ pub struct StepState {
     /// Artifact paths, relative to the job folder.
     #[serde(default)]
     pub artifacts: Vec<PathBuf>,
+}
+
+impl StepState {
+    /// Why this combination of fields cannot have been written by a `Job`, if it cannot.
+    fn impossible(&self) -> Option<&'static str> {
+        match self.status {
+            Status::Done if self.fingerprint.is_none() => Some("is done without a fingerprint"),
+            Status::Done if self.seconds.is_none() => Some("is done without seconds"),
+            Status::Done if self.reason.is_some() => Some("is done but has a stale reason"),
+            Status::Stale if self.reason.is_none() => Some("is stale without a reason"),
+            Status::Done | Status::Stale => None,
+        }
+    }
 }
 
 /// One source file as last seen: `mtime` is nanoseconds since the Unix epoch and `hash` is
@@ -103,6 +119,7 @@ pub struct Source {
 
 /// The contents of `job.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct JobState {
     pub version: u32,
     pub name: String,
@@ -124,7 +141,8 @@ impl JobState {
         }
     }
 
-    /// Reads `job.json`, rejecting any version other than [`VERSION`].
+    /// Reads `job.json`, rejecting any version other than [`VERSION`], unknown top-level fields
+    /// and step or template states no `Job` writes (see [`StepState`]).
     pub fn load(path: &Path) -> Result<Self> {
         let invalid = |e: serde_json::Error| Error::Job(format!("invalid {}: {e}", path.display()));
         let value: Value = serde_json::from_slice(&fs::read(path)?).map_err(invalid)?;
@@ -136,7 +154,21 @@ impl JobState {
                 path.display()
             )));
         }
-        serde_json::from_value(value).map_err(invalid)
+        let state: JobState = serde_json::from_value(value).map_err(invalid)?;
+        let steps = state.steps.iter().map(|(n, s)| (format!("step {n}"), s));
+        let templates = state
+            .templates
+            .iter()
+            .map(|(n, s)| (format!("template {n}"), s));
+        for (what, step) in steps.chain(templates) {
+            if let Some(problem) = step.impossible() {
+                return Err(Error::Job(format!(
+                    "invalid {}: {what} {problem}",
+                    path.display()
+                )));
+            }
+        }
+        Ok(state)
     }
 
     /// Writes `job.json` atomically.

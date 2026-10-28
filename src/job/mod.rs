@@ -4,6 +4,7 @@ pub mod fingerprint;
 pub mod stale;
 pub mod state;
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf, MAIN_SEPARATOR};
@@ -66,11 +67,16 @@ impl Job {
             .collect::<std::io::Result<Vec<_>>>()?;
         let dir = out.join(name);
         let file = dir.join(JOB_FILE);
-        let mut state = if file.exists() {
+        let has_state = file
+            .try_exists()
+            .map_err(|e| Error::Job(format!("cannot check {}: {e}", file.display())))?;
+        let mut state = if has_state {
             JobState::load(&file)?
         } else {
             JobState::new(name)
         };
+        // The folder may have been renamed since `job.json` was written.
+        name.clone_into(&mut state.name);
         if !state.sources.iter().map(|s| &s.path).eq(paths.iter()) {
             if !state.sources.is_empty() && !allow_replace {
                 return Err(Error::Job(format!(
@@ -110,8 +116,10 @@ impl Job {
         }
     }
 
-    /// Records `step` as done with `fingerprint`, then saves `job.json`. Fails with
-    /// `Error::Job`, recording nothing, if any of `artifacts` does not exist.
+    /// Records `step` as done with `fingerprint`, then saves `job.json`. `artifacts` are
+    /// absolute or relative to the job folder and are stored relative to it. Fails with
+    /// `Error::Job`, recording nothing, if any artifact does not exist, cannot be checked, or
+    /// lies outside the job folder.
     pub fn mark_done(
         &mut self,
         step: StepName,
@@ -119,23 +127,7 @@ impl Job {
         seconds: f64,
         artifacts: &[PathBuf],
     ) -> Result<()> {
-        if let Some(missing) = artifacts.iter().find(|a| !self.dir.join(a).exists()) {
-            return Err(Error::Job(format!(
-                "step {step} finished without writing {}",
-                missing.display()
-            )));
-        }
-        let artifacts = artifacts
-            .iter()
-            .map(|a| a.strip_prefix(&self.dir).unwrap_or(a).to_path_buf())
-            .collect();
-        let done = StepState {
-            status: Status::Done,
-            fingerprint: Some(fingerprint.to_owned()),
-            seconds: Some(seconds),
-            reason: None,
-            artifacts,
-        };
+        let done = self.done_state(&format!("step {step}"), fingerprint, seconds, artifacts)?;
         self.state.steps.insert(step, done);
         self.save()
     }
@@ -143,21 +135,13 @@ impl Job {
     /// Marks each planned step stale with its reason, then saves `job.json`.
     pub fn mark_stale(&mut self, plan: &[(StepName, Reason)]) -> Result<()> {
         for (step, reason) in plan {
-            let state = self.state.steps.entry(*step).or_insert_with(|| StepState {
-                status: Status::Stale,
-                fingerprint: None,
-                seconds: None,
-                reason: None,
-                artifacts: Vec::new(),
-            });
-            state.status = Status::Stale;
-            state.reason = Some(reason.to_string());
+            set_stale(&mut self.state.steps, *step, reason);
         }
         self.save()
     }
 
-    /// Records template `name` as done with `fingerprint`, then saves `job.json`. Fails with
-    /// `Error::Job`, recording nothing, if any of `artifacts` does not exist.
+    /// Records template `name` as done with `fingerprint`, then saves `job.json`. `artifacts`
+    /// are handled and checked as in [`Job::mark_done`].
     pub fn mark_template_done(
         &mut self,
         name: &str,
@@ -165,55 +149,90 @@ impl Job {
         seconds: f64,
         artifacts: &[PathBuf],
     ) -> Result<()> {
-        for artifact in artifacts {
-            let path = self.dir.join(artifact);
-            let exists = path
-                .try_exists()
-                .map_err(|e| Error::Job(format!("cannot check {}: {e}", path.display())))?;
-            if !exists {
-                return Err(Error::Job(format!(
-                    "template {name} finished without writing {}",
-                    artifact.display()
-                )));
-            }
-        }
-        let artifacts = artifacts
-            .iter()
-            .map(|a| a.strip_prefix(&self.dir).unwrap_or(a).to_path_buf())
-            .collect();
-        let done = StepState {
-            status: Status::Done,
-            fingerprint: Some(fingerprint.to_owned()),
-            seconds: Some(seconds),
-            reason: None,
-            artifacts,
-        };
+        let done = self.done_state(&format!("template {name}"), fingerprint, seconds, artifacts)?;
         self.state.templates.insert(name.to_owned(), done);
         self.save()
     }
 
     /// Marks template `name` stale with `reason`, then saves `job.json`.
     pub fn mark_template_stale(&mut self, name: &str, reason: &Reason) -> Result<()> {
-        let state = self
-            .state
-            .templates
-            .entry(name.to_owned())
-            .or_insert_with(|| StepState {
-                status: Status::Stale,
-                fingerprint: None,
-                seconds: None,
-                reason: None,
-                artifacts: Vec::new(),
-            });
-        state.status = Status::Stale;
-        state.reason = Some(reason.to_string());
+        set_stale(&mut self.state.templates, name.to_owned(), reason);
         self.save()
+    }
+
+    /// The done state of `what` (`step <name>` or `template <name>`), with every artifact
+    /// checked to exist and made relative to the job folder.
+    fn done_state(
+        &self,
+        what: &str,
+        fingerprint: &str,
+        seconds: f64,
+        artifacts: &[PathBuf],
+    ) -> Result<StepState> {
+        let artifacts = artifacts
+            .iter()
+            .map(|artifact| self.relative_artifact(what, artifact))
+            .collect::<Result<_>>()?;
+        Ok(StepState {
+            status: Status::Done,
+            fingerprint: Some(fingerprint.to_owned()),
+            seconds: Some(seconds),
+            reason: None,
+            artifacts,
+        })
+    }
+
+    /// `artifact` (absolute, or relative to the job folder) relative to the canonical job folder.
+    /// Its parent is canonicalized so that any spelling of a path inside the folder (through a
+    /// symlinked prefix or a `..` detour) is recognized, while the artifact itself may be a
+    /// symlink.
+    fn relative_artifact(&self, what: &str, artifact: &Path) -> Result<PathBuf> {
+        let path = self.dir.join(artifact);
+        let exists = path
+            .try_exists()
+            .map_err(|e| Error::Job(format!("cannot check {}: {e}", path.display())))?;
+        if !exists {
+            return Err(Error::Job(format!(
+                "{what} finished without writing {}",
+                artifact.display()
+            )));
+        }
+        let outside = || {
+            Error::Job(format!(
+                "{what} wrote {} outside the job folder {}",
+                artifact.display(),
+                self.dir.display()
+            ))
+        };
+        let (Some(parent), Some(file_name)) = (path.parent(), path.file_name()) else {
+            return Err(outside());
+        };
+        let canonical = fs::canonicalize(parent)
+            .map_err(|e| Error::Job(format!("cannot resolve {}: {e}", parent.display())))?
+            .join(file_name);
+        match canonical.strip_prefix(&self.dir) {
+            Ok(relative) if !relative.as_os_str().is_empty() => Ok(relative.to_path_buf()),
+            _ => Err(outside()),
+        }
     }
 
     /// Removes leftover `*.tmp` files from the job folder (after an interrupt, for example).
     pub fn clean_tmp(&self) -> Result<()> {
         remove_tmp_files(&self.dir)
     }
+}
+
+/// Marks `key` stale with `reason`, keeping whatever else it recorded.
+fn set_stale<K: Ord>(states: &mut BTreeMap<K, StepState>, key: K, reason: &Reason) {
+    let state = states.entry(key).or_insert_with(|| StepState {
+        status: Status::Stale,
+        fingerprint: None,
+        seconds: None,
+        reason: None,
+        artifacts: Vec::new(),
+    });
+    state.status = Status::Stale;
+    state.reason = Some(reason.to_string());
 }
 
 fn remove_tmp_files(dir: &Path) -> Result<()> {
@@ -234,7 +253,9 @@ const MEDIA_EXTENSIONS: [&str; 9] = [
 
 /// Derives a job name from a path (the first source, or the value of `--name`):
 /// its file name with trailing media extensions removed, so the name never ends in one.
-/// A path without a file name is an `Error::Usage`.
+/// A path without a file name is an `Error::Usage`, and so is a file name that is only media
+/// extensions (`.mp4`, `.mp4.wav`): stripping would leave nothing, and keeping `.mp4` as the name
+/// would hide the job folder and still end in a media extension.
 pub fn derive_name(first: &Path) -> Result<String> {
     let mut name = first
         .file_name()
@@ -247,13 +268,23 @@ pub fn derive_name(first: &Path) -> Result<String> {
         )));
     }
     while let Some((stem, ext)) = name.rsplit_once('.') {
-        let is_media = MEDIA_EXTENSIONS.iter().any(|m| ext.eq_ignore_ascii_case(m));
-        if stem.is_empty() || !is_media {
+        if !is_media_extension(ext) {
             break;
+        }
+        if stem.is_empty() {
+            return Err(Error::Usage(format!(
+                "cannot derive a job name from `{}`: \
+                 the file name is only a media extension; choose one with --name",
+                first.display()
+            )));
         }
         name.truncate(stem.len());
     }
     Ok(name)
+}
+
+fn is_media_extension(ext: &str) -> bool {
+    MEDIA_EXTENSIONS.iter().any(|m| ext.eq_ignore_ascii_case(m))
 }
 
 /// Writes an artifact atomically: `f` writes to `<path>.tmp`, which is synced to disk and

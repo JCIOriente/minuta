@@ -289,11 +289,27 @@ fn failed_open_touches_nothing() {
     assert!(leftover.exists());
 }
 
+/// `path` relative to `base`, climbing with `..` where needed. Both must be absolute and
+/// `base` must hold no symlinks, so `..` from it climbs the spelled-out components.
+fn relative_to(path: &Path, base: &Path) -> PathBuf {
+    let path: Vec<_> = path.components().collect();
+    let base: Vec<_> = base.components().collect();
+    let common = path.iter().zip(&base).take_while(|(a, b)| a == b).count();
+    let mut relative = PathBuf::new();
+    for _ in common..base.len() {
+        relative.push("..");
+    }
+    for component in &path[common..] {
+        relative.push(component);
+    }
+    relative
+}
+
 #[test]
 fn relative_out_dir_records_artifacts() {
     let tmp = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-    let cwd = std::env::current_dir().unwrap();
-    let out = tmp.path().strip_prefix(&cwd).unwrap().join("minuta-out");
+    let cwd = fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
+    let out = relative_to(&fs::canonicalize(tmp.path()).unwrap(), &cwd).join("minuta-out");
     assert!(out.is_relative());
     let source = tmp.path().join("clase-4.mp4");
     fs::write(&source, b"source bytes").unwrap();
@@ -768,4 +784,311 @@ fn mark_template_done_surfaces_io_error() {
         .unwrap_err();
     assert!(err.to_string().contains("summary.md/child"), "{err}");
     assert!(!job.state.templates.contains_key("other"));
+}
+
+#[test]
+fn derive_name_rejects_bare_mp4() {
+    let err = derive_name(Path::new(".mp4")).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "usage error: cannot derive a job name from `.mp4`: \
+         the file name is only a media extension; choose one with --name"
+    );
+}
+
+#[test]
+fn derive_name_rejects_bare_mkv() {
+    let err = derive_name(Path::new("/videos/.mkv")).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "usage error: cannot derive a job name from `/videos/.mkv`: \
+         the file name is only a media extension; choose one with --name"
+    );
+}
+
+#[test]
+fn derive_name_rejects_stacked_bare_extensions() {
+    let err = derive_name(Path::new(".mp4.wav")).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "usage error: cannot derive a job name from `.mp4.wav`: \
+         the file name is only a media extension; choose one with --name"
+    );
+}
+
+#[test]
+fn derive_name_keeps_other_dotfiles() {
+    assert_eq!(derive_name(Path::new(".notes")).unwrap(), ".notes");
+}
+
+#[test]
+fn mark_done_surfaces_io_error() {
+    let (_root, out, source) = setup();
+    let mut job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    fs::write(job.dir.join("audio.wav"), b"wav").unwrap();
+    // `audio.wav` is a regular file, so checking `audio.wav/child` fails with NotADirectory.
+    let err = job
+        .mark_done(
+            StepName::Audio,
+            "fp",
+            0.1,
+            &[PathBuf::from("audio.wav/child")],
+        )
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "job error: cannot check {}: Not a directory (os error 20)",
+            job.dir.join("audio.wav/child").display()
+        )
+    );
+    assert!(!job.state.steps.contains_key(&StepName::Audio));
+}
+
+#[test]
+fn mark_done_missing_artifact_names_step() {
+    let (_root, out, source) = setup();
+    let mut job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    let err = job
+        .mark_done(StepName::Audio, "fp", 0.1, &[PathBuf::from("audio.wav")])
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "job error: step audio finished without writing audio.wav"
+    );
+}
+
+#[test]
+fn mark_template_done_missing_artifact_names_template() {
+    let (_root, out, source) = setup();
+    let mut job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    let err = job
+        .mark_template_done("summary", "fp", 1.0, &[PathBuf::from("summary.md")])
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "job error: template summary finished without writing summary.md"
+    );
+}
+
+#[test]
+fn mark_done_rejects_artifact_outside_job_dir() {
+    let (root, out, source) = setup();
+    let mut job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    let outside = root.path().join("outside.wav");
+    fs::write(&outside, b"wav").unwrap();
+    let err = job
+        .mark_done(StepName::Audio, "fp", 0.1, std::slice::from_ref(&outside))
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "job error: step audio wrote {} outside the job folder {}",
+            outside.display(),
+            job.dir.display()
+        )
+    );
+    assert!(!job.state.steps.contains_key(&StepName::Audio));
+    assert_eq!(
+        read_json(&job.dir.join("job.json"))["steps"],
+        serde_json::json!({})
+    );
+}
+
+#[test]
+fn mark_done_rejects_relative_artifact_escaping_job_dir() {
+    let (root, out, source) = setup();
+    let mut job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    fs::write(root.path().join("outside.wav"), b"wav").unwrap();
+    let escaping = PathBuf::from("../../outside.wav");
+    let err = job
+        .mark_done(StepName::Audio, "fp", 0.1, std::slice::from_ref(&escaping))
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "job error: step audio wrote ../../outside.wav outside the job folder {}",
+            job.dir.display()
+        )
+    );
+}
+
+#[test]
+fn mark_template_done_rejects_artifact_outside_job_dir() {
+    let (root, out, source) = setup();
+    let mut job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    let outside = root.path().join("summary.md");
+    fs::write(&outside, b"notes").unwrap();
+    let err = job
+        .mark_template_done("summary", "fp", 1.0, std::slice::from_ref(&outside))
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "job error: template summary wrote {} outside the job folder {}",
+            outside.display(),
+            job.dir.display()
+        )
+    );
+    assert!(job.state.templates.is_empty());
+}
+
+#[test]
+fn mark_done_relativizes_non_canonical_inside_path() {
+    let (_root, out, source) = setup();
+    let mut job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    fs::write(job.dir.join("audio.wav"), b"wav").unwrap();
+    // `out` is not canonical on every platform (macOS temp dirs sit behind `/var`), and the
+    // `..` detour makes this spelling differ from `job.dir` everywhere.
+    let spelled = out
+        .join("clase-4")
+        .join("..")
+        .join("clase-4")
+        .join("audio.wav");
+    job.mark_done(StepName::Audio, "fp", 0.1, &[spelled])
+        .unwrap();
+    assert_eq!(
+        job.state.steps[&StepName::Audio].artifacts,
+        vec![PathBuf::from("audio.wav")]
+    );
+}
+
+#[test]
+fn mark_done_relativizes_nested_relative_path() {
+    let (_root, out, source) = setup();
+    let mut job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    fs::create_dir(job.dir.join("parts")).unwrap();
+    fs::write(job.dir.join("parts").join("a.wav"), b"wav").unwrap();
+    job.mark_done(StepName::Audio, "fp", 0.1, &[PathBuf::from("parts/a.wav")])
+        .unwrap();
+    assert_eq!(
+        job.state.steps[&StepName::Audio].artifacts,
+        vec![PathBuf::from("parts/a.wav")]
+    );
+}
+
+/// Builds a job with step `audio` and template `summary` done, lets `edit` change its saved
+/// `job.json`, and returns the error of reopening it with the `job.json` path `Job::open` reads.
+fn reopen_after_edit(edit: impl FnOnce(&mut serde_json::Value)) -> (String, PathBuf) {
+    let (root, mut job) = done_template_job();
+    let artifact = job.dir.join("audio.wav");
+    fs::write(&artifact, b"wav").unwrap();
+    job.mark_done(StepName::Audio, "fp-audio", 0.1, &[artifact])
+        .unwrap();
+    let file = job.dir.join("job.json");
+    let mut json = read_json(&file);
+    edit(&mut json);
+    fs::write(&file, serde_json::to_vec(&json).unwrap()).unwrap();
+
+    let out = root.path().join("minuta-out");
+    let source = root.path().join("clase-4.mp4");
+    let err = Job::open(&out, "clase-4", &[source], false).unwrap_err();
+    (err.to_string(), out.join("clase-4").join("job.json"))
+}
+
+#[test]
+fn step_done_without_fingerprint_rejected() {
+    let (err, file) = reopen_after_edit(|json| {
+        json["steps"]["audio"]["fingerprint"] = serde_json::Value::Null;
+    });
+    assert_eq!(
+        err,
+        format!(
+            "job error: invalid {}: step audio is done without a fingerprint",
+            file.display()
+        )
+    );
+}
+
+#[test]
+fn step_done_without_seconds_rejected() {
+    let (err, file) = reopen_after_edit(|json| {
+        json["steps"]["audio"]["seconds"] = serde_json::Value::Null;
+    });
+    assert_eq!(
+        err,
+        format!(
+            "job error: invalid {}: step audio is done without seconds",
+            file.display()
+        )
+    );
+}
+
+#[test]
+fn step_done_with_reason_rejected() {
+    let (err, file) = reopen_after_edit(|json| {
+        json["steps"]["audio"]["reason"] = "forced".into();
+    });
+    assert_eq!(
+        err,
+        format!(
+            "job error: invalid {}: step audio is done but has a stale reason",
+            file.display()
+        )
+    );
+}
+
+#[test]
+fn step_stale_without_reason_rejected() {
+    let (err, file) = reopen_after_edit(|json| {
+        json["steps"]["audio"]["status"] = "stale".into();
+    });
+    assert_eq!(
+        err,
+        format!(
+            "job error: invalid {}: step audio is stale without a reason",
+            file.display()
+        )
+    );
+}
+
+#[test]
+fn template_done_without_fingerprint_rejected() {
+    let (err, file) = reopen_after_edit(|json| {
+        json["templates"]["summary"]["fingerprint"] = serde_json::Value::Null;
+    });
+    assert_eq!(
+        err,
+        format!(
+            "job error: invalid {}: template summary is done without a fingerprint",
+            file.display()
+        )
+    );
+}
+
+#[test]
+fn stale_step_keeping_old_fingerprint_loads() {
+    let (root, mut job) = done_job();
+    job.mark_stale(&stale_from(StepName::Audio, Reason::Forced))
+        .unwrap();
+    let out = root.path().join("minuta-out");
+    let source = root.path().join("clase-4.mp4");
+    let reopened = Job::open(&out, "clase-4", &[source], false).unwrap();
+    assert_eq!(reopened.state, job.state);
+}
+
+#[test]
+fn unknown_job_state_field_rejected() {
+    let (err, file) = reopen_after_edit(|json| {
+        json["extra"] = 1.into();
+    });
+    assert_eq!(
+        err,
+        format!(
+            "job error: invalid {}: unknown field `extra`, \
+             expected one of `version`, `name`, `sources`, `steps`, `templates`",
+            file.display()
+        )
+    );
+}
+
+#[test]
+fn stale_name_refreshed_on_reopen() {
+    let (_root, out, source) = setup();
+    let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
+    fs::rename(&job.dir, out.join("clase-5")).unwrap();
+
+    let job = Job::open(&out, "clase-5", &[source], false).unwrap();
+    assert_eq!(job.state.name, "clase-5");
+    assert_eq!(read_json(&job.dir.join("job.json"))["name"], "clase-5");
 }
