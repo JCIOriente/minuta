@@ -33,10 +33,33 @@ pub struct Output {
     pub status: ExitStatus,
 }
 
-type Line = (bool, std::io::Result<String>);
+/// One line of a tool's output.
+struct Piece {
+    text: String,
+    /// It ended in a bare `\r`: a progress update (ffmpeg's stats) that the next one
+    /// overwrites on a terminal.
+    update: bool,
+}
 
-/// Forward lines until EOF. Bytes are decoded lossily so non-UTF-8 output never stops the
-/// reader; a real I/O error is forwarded to the caller and ends it.
+/// What a reader thread sends.
+enum Out {
+    Piece(Piece),
+    /// The last piece was sent as an update, but its `\r` turned out to be the first half
+    /// of a `\r\n` split across two reads: it is a full line after all.
+    LastWasLine,
+}
+
+type Line = (bool, std::io::Result<Out>);
+
+fn piece(bytes: &mut Vec<u8>, update: bool) -> Piece {
+    let text = String::from_utf8_lossy(bytes).into_owned();
+    bytes.clear();
+    Piece { text, update }
+}
+
+/// Forward lines until EOF. A line ends at `\n`, `\r\n` or a bare `\r`, so `\r`-separated
+/// progress updates arrive as they are written. Bytes are decoded lossily so non-UTF-8
+/// output never stops the reader; a real I/O error is forwarded to the caller and ends it.
 fn pump<R: Read + Send + 'static>(
     stream: R,
     is_stderr: bool,
@@ -44,23 +67,51 @@ fn pump<R: Read + Send + 'static>(
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut reader = BufReader::new(stream);
-        let mut buf = Vec::new();
+        let mut line = Vec::new();
+        // The last chunk ended in `\r`, already sent as an update; a `\n` that starts the
+        // next chunk belongs to it.
+        let mut after_cr = false;
         loop {
-            buf.clear();
-            let item = match reader.read_until(b'\n', &mut buf) {
-                Ok(0) => break,
-                Ok(_) => {
-                    while matches!(buf.last(), Some(b'\n' | b'\r')) {
-                        buf.pop();
-                    }
-                    Ok(String::from_utf8_lossy(&buf).into_owned())
+            let chunk = match reader.fill_buf() {
+                Ok([]) => break,
+                Ok(chunk) => chunk,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => {
+                    // The receiver may be gone already; there is nobody left to tell.
+                    let _ = tx.send((is_stderr, Err(e)));
+                    return;
                 }
-                Err(e) => Err(e),
             };
-            let failed = item.is_err();
-            if tx.send((is_stderr, item)).is_err() || failed {
-                break;
+            let send = |p: Piece| tx.send((is_stderr, Ok(Out::Piece(p)))).is_ok();
+            for (i, &byte) in chunk.iter().enumerate() {
+                let continues_cr = std::mem::take(&mut after_cr);
+                let sent = match byte {
+                    b'\n' if continues_cr => tx.send((is_stderr, Ok(Out::LastWasLine))).is_ok(),
+                    b'\n' => send(piece(&mut line, false)),
+                    b'\r' => match chunk.get(i + 1) {
+                        // The `\n` ends this line.
+                        Some(b'\n') => true,
+                        Some(_) => send(piece(&mut line, true)),
+                        None => {
+                            after_cr = true;
+                            send(piece(&mut line, true))
+                        }
+                    },
+                    _ => {
+                        line.push(byte);
+                        true
+                    }
+                };
+                if !sent {
+                    return;
+                }
             }
+            let len = chunk.len();
+            reader.consume(len);
+        }
+        if !line.is_empty() {
+            // As above: a send fails only when the receiver is gone.
+            let _ = tx.send((is_stderr, Ok(Out::Piece(piece(&mut line, false)))));
         }
     })
 }
@@ -77,6 +128,9 @@ fn spawn(program: &OsStr, cmd: &mut Command, opts: &RunOpts) -> Result<std::proc
     if let Some(cwd) = &opts.cwd {
         cmd.current_dir(cwd);
     }
+    // Its own process group, so a kill reaches whatever the tool starts in turn.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(cmd, 0);
     cmd.spawn().map_err(|e| {
         Error::Io(std::io::Error::new(
             e.kind(),
@@ -91,20 +145,38 @@ fn interrupted(opts: &RunOpts) -> bool {
         .is_some_and(|f| f.load(Ordering::SeqCst))
 }
 
+/// Kills the child's whole process group, then reaps the child. Must run before the child
+/// is reaped: until then its pid, which is also the group id, cannot be reused.
 fn kill_and_reap(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    kill_group(child);
+    // Best effort: the child may have exited already, and a failed wait leaves nothing
+    // more to do. On unix this only matters when the group kill could not be sent.
     let _ = child.kill();
     let _ = child.wait();
 }
 
+/// SIGKILL to the group that [`spawn`] made for `child`.
+#[cfg(unix)]
+fn kill_group(child: &std::process::Child) {
+    let Ok(group) = libc::pid_t::try_from(child.id()) else {
+        return;
+    };
+    // SAFETY: kill(2) only takes integers and touches no memory of this process. `-group`
+    // names the child's own group (process_group(0) in `spawn`), never ours. The result is
+    // ignored on purpose: ESRCH means the group is already gone, which is the goal.
+    let _ = unsafe { libc::kill(-group, libc::SIGKILL) };
+}
+
 /// Forward every line from `rx` to `on_line` until all senders are gone, keeping the last
-/// stderr lines. Kills the child on interrupt or on a read error.
+/// stderr lines in a [`Tail`]. Kills the child on interrupt or on a read error.
 fn drain(
     child: &mut std::process::Child,
     rx: &mpsc::Receiver<Line>,
     opts: &RunOpts,
     on_line: &mut dyn FnMut(bool, &str),
 ) -> Result<Vec<String>> {
-    let mut tail: Vec<String> = Vec::new();
+    let mut tail = Tail::default();
     loop {
         if interrupted(opts) {
             // Readers are not joined: a grandchild may still hold the pipes open.
@@ -116,26 +188,67 @@ fn drain(
                 kill_and_reap(child);
                 return Err(Error::Io(e));
             }
-            Ok((is_stderr, Ok(line))) => {
-                on_line(is_stderr, &line);
+            Ok((is_stderr, Ok(Out::Piece(Piece { text, update })))) => {
+                on_line(is_stderr, &text);
                 if is_stderr {
-                    if tail.len() == STDERR_TAIL_LINES {
-                        tail.remove(0);
-                    }
-                    tail.push(line);
+                    tail.push(text, update);
+                }
+            }
+            Ok((is_stderr, Ok(Out::LastWasLine))) => {
+                if is_stderr {
+                    tail.settle();
                 }
             }
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return Ok(tail),
+            Err(RecvTimeoutError::Disconnected) => return Ok(tail.lines),
         }
+    }
+}
+
+/// The last [`STDERR_TAIL_LINES`] stderr lines. Of a run of `\r` updates only the latest
+/// is kept, so progress does not push the messages out.
+#[derive(Debug, Default)]
+struct Tail {
+    lines: Vec<String>,
+    ends_in_update: bool,
+}
+
+impl Tail {
+    fn push(&mut self, text: String, update: bool) {
+        if update && self.ends_in_update {
+            self.lines.pop();
+        } else if self.lines.len() == STDERR_TAIL_LINES {
+            self.lines.remove(0);
+        }
+        self.lines.push(text);
+        self.ends_in_update = update;
+    }
+
+    /// The last line was a full line, not an update: the next update must not replace it.
+    fn settle(&mut self) {
+        self.ends_in_update = false;
     }
 }
 
 /// The child may outlive its pipes, so keep honouring the interrupt flag while waiting.
 fn wait_status(child: &mut std::process::Child, opts: &RunOpts) -> Result<ExitStatus> {
+    wait_status_with(child, opts, std::process::Child::try_wait)
+}
+
+/// [`wait_status`] with the `try_wait` call injectable, so a test can make it fail.
+fn wait_status_with(
+    child: &mut std::process::Child,
+    opts: &RunOpts,
+    mut try_wait: impl FnMut(&mut std::process::Child) -> std::io::Result<Option<ExitStatus>>,
+) -> Result<ExitStatus> {
     loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(status);
+        match try_wait(child) {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            Err(e) => {
+                kill_and_reap(child);
+                return Err(Error::Io(e));
+            }
         }
         if interrupted(opts) {
             kill_and_reap(child);
@@ -463,11 +576,15 @@ pub fn inspect(paths: &ToolPaths, need_model: bool) -> Report {
         &mut missing,
     );
     let model = paths.model.clone().filter(|p| p.is_file());
-    if need_model && model.is_none() {
-        let hint = match &paths.model {
-            Some(p) => format!("configured path {} is not a file", p.display()),
-            None => "run `minuta models pull base` or set whisper.model".to_string(),
-        };
+    // A configured model that is not there is always reported: it is most likely a typo.
+    let hint = match (&paths.model, &model) {
+        (Some(p), None) => Some(format!("configured path {} is not a file", p.display())),
+        (None, _) if need_model => {
+            Some("run `minuta models pull base` or set whisper.model".to_string())
+        }
+        _ => None,
+    };
+    if let Some(hint) = hint {
         missing.push(Missing {
             name: "model".to_string(),
             hint,
@@ -513,5 +630,63 @@ mod tests {
         let err = probe_version(&path, "--version", Duration::from_millis(200)).unwrap_err();
         assert!(err.contains("timed out"), "err was {err:?}");
         assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    /// Hands out one chunk per `read`, like a pipe whose writer wrote them separately.
+    struct Chunks(std::collections::VecDeque<&'static [u8]>);
+
+    impl Read for Chunks {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let Some(chunk) = self.0.pop_front() else {
+                return Ok(0);
+            };
+            buf[..chunk.len()].copy_from_slice(chunk);
+            Ok(chunk.len())
+        }
+    }
+
+    /// The stderr tail that `drain` would keep for `chunks`.
+    fn tail_of(chunks: &[&'static [u8]]) -> Vec<String> {
+        let (tx, rx) = mpsc::channel();
+        pump(Chunks(chunks.iter().copied().collect()), true, tx)
+            .join()
+            .unwrap();
+        let mut tail = Tail::default();
+        for msg in rx {
+            match msg {
+                (_, Ok(Out::Piece(Piece { text, update }))) => tail.push(text, update),
+                (_, Ok(Out::LastWasLine)) => tail.settle(),
+                (_, Err(e)) => panic!("read error {e}"),
+            }
+        }
+        tail.lines
+    }
+
+    #[test]
+    fn crlf_split_across_reads_stays_in_tail() {
+        assert_eq!(
+            tail_of(&[b"Error opening output\r", b"\nframe=1\r", b"frame=2\r"]),
+            ["Error opening output", "frame=2"]
+        );
+    }
+
+    #[test]
+    fn try_wait_error_kills_child() {
+        use std::os::unix::process::ExitStatusExt;
+        let program = OsStr::new("/bin/sleep");
+        let mut cmd = Command::new(program);
+        cmd.arg("30");
+        let mut child = spawn(program, &mut cmd, &RunOpts::default()).unwrap();
+        let err = wait_status_with(&mut child, &RunOpts::default(), |_| {
+            Err(std::io::Error::other("injected"))
+        })
+        .unwrap_err();
+        match err {
+            Error::Io(e) => assert_eq!(e.to_string(), "injected"),
+            other => panic!("expected Io error, got {other:?}"),
+        }
+        // Reaped: the cached status says SIGKILL.
+        let status = child.try_wait().unwrap();
+        assert_eq!(status.and_then(|s| s.signal()), Some(9));
     }
 }

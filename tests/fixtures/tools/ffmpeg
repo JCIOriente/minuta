@@ -1,0 +1,10 @@
+#!/bin/sh
+# Fake ffmpeg for tests/media.rs and tests/tools.rs.
+#   -version   prints a version line.
+#   otherwise  prints two stats updates on stderr the way ffmpeg does (each ends in a
+#              carriage return, not a newline) and writes its arguments, one per line, to
+#              the last argument (the output file), so a test can read back the argv.
+if [ "$1" = "-version" ]; then echo "ffmpeg version 0.0-fake"; exit 0; fi
+for last in "$@"; do :; done
+printf 'frame=1 time=00:00:01.00 speed=1x\rframe=2 time=00:00:02.00 speed=1x\r' >&2
+printf '%s\n' "$@" > "$last"

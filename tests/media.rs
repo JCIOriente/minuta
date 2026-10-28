@@ -709,6 +709,213 @@ fn run_with_forwards_tool_output() {
     assert!(probe_lines > 0 && audio_lines > 0);
 }
 
+/// Committed fakes: `ffmpeg` writes its argv into its output file and prints two
+/// `\r`-terminated stats updates; `whisper-cli` writes its argv to `<prefix>.args`.
+#[cfg(unix)]
+const FIXTURE_TOOLS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tools");
+
+#[cfg(unix)]
+fn fake_tool(name: &str) -> ToolInfo {
+    ToolInfo {
+        path: Path::new(FIXTURE_TOOLS).join(name),
+        version: format!("{name} 0.0-fake"),
+    }
+}
+
+#[cfg(unix)]
+const FAKE_STATS: [&str; 2] = [
+    "frame=1 time=00:00:01.00 speed=1x",
+    "frame=2 time=00:00:02.00 speed=1x",
+];
+
+#[cfg(unix)]
+fn lines_of(path: &Path) -> Vec<String> {
+    fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(String::from)
+        .collect()
+}
+
+#[cfg(unix)]
+fn as_strings(items: &[&Path]) -> Vec<String> {
+    items
+        .iter()
+        .map(|p| p.to_str().unwrap().to_string())
+        .collect()
+}
+
+/// A job folder whose `probe.json` lists two audio-only sources at the given sample rates.
+#[cfg(unix)]
+fn audio_job(dir: &Path, rates: [u32; 2]) -> Ctx {
+    let sources: Vec<SourceProbe> = ["a.m4a", "b.m4a"]
+        .iter()
+        .zip(rates)
+        .map(|(name, rate)| SourceProbe {
+            path: dir.join(name),
+            duration: 1.0,
+            video: None,
+            audio: minuta::steps::probe::AudioStream {
+                codec: "aac".into(),
+                sample_rate: rate,
+                channels: 2,
+            },
+        })
+        .collect();
+    fs::write(
+        dir.join("probe.json"),
+        serde_json::to_string(&sources).unwrap(),
+    )
+    .unwrap();
+    Ctx {
+        dir: dir.to_path_buf(),
+        sources: sources.iter().map(|s| s.path.clone()).collect(),
+        source_digest: "d".into(),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn audio_ffmpeg_argv_asks_for_stats_and_forwards_updates() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ctx = Ctx {
+        dir: tmp.path().to_path_buf(),
+        sources: vec!["/rec/a.mp4".into()],
+        source_digest: "d".into(),
+    };
+    let mut lines = Vec::new();
+    Audio::new(fake_tool("ffmpeg"))
+        .run_with(&ctx, RunOpts::default(), &mut |l| lines.push(l.to_string()))
+        .unwrap();
+
+    let input = tmp.path().join("joined.mp4");
+    let tmp_out = tmp.path().join("audio.wav.tmp");
+    let mut expected: Vec<String> = ["-hide_banner", "-nostdin", "-y", "-stats", "-i"]
+        .map(String::from)
+        .to_vec();
+    expected.extend(as_strings(&[&input]));
+    expected.extend(
+        [
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            "-f",
+            "wav",
+        ]
+        .map(String::from),
+    );
+    expected.extend(as_strings(&[&tmp_out]));
+    assert_eq!(lines_of(&tmp.path().join("audio.wav")), expected);
+    assert_eq!(lines, FAKE_STATS);
+}
+
+#[cfg(unix)]
+#[test]
+fn join_stream_copy_argv_asks_for_stats_and_forwards_updates() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ctx = audio_job(tmp.path(), [48000, 48000]);
+    let mut lines = Vec::new();
+    Join::new(fake_tool("ffmpeg"), Encoder::X264)
+        .run_with(&ctx, RunOpts::default(), &mut |l| lines.push(l.to_string()))
+        .unwrap();
+
+    let list = tmp.path().join("concat.txt");
+    let tmp_out = tmp.path().join("joined.m4a.tmp");
+    let mut expected: Vec<String> = [
+        "-hide_banner",
+        "-nostdin",
+        "-y",
+        "-stats",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+    ]
+    .map(String::from)
+    .to_vec();
+    expected.extend(as_strings(&[&list]));
+    expected.extend(["-c", "copy", "-f", "ipod"].map(String::from));
+    expected.extend(as_strings(&[&tmp_out]));
+    assert_eq!(lines_of(&tmp.path().join("joined.m4a")), expected);
+    assert_eq!(lines, FAKE_STATS);
+}
+
+#[cfg(unix)]
+#[test]
+fn join_reencode_argv_asks_for_stats() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ctx = audio_job(tmp.path(), [48000, 44100]);
+    Join::new(fake_tool("ffmpeg"), Encoder::X264)
+        .run_with(&ctx, RunOpts::default(), &mut |_| {})
+        .unwrap();
+
+    let tmp_out = tmp.path().join("joined.m4a.tmp");
+    let mut expected: Vec<String> = ["-hide_banner", "-nostdin", "-y", "-stats", "-i"]
+        .map(String::from)
+        .to_vec();
+    expected.extend(as_strings(&[&ctx.sources[0]]));
+    expected.push("-i".into());
+    expected.extend(as_strings(&[&ctx.sources[1]]));
+    expected.extend(
+        [
+            "-filter_complex",
+            "[0:a]aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:\
+             channel_layouts=stereo[a0];\
+             [1:a]aresample=48000,aformat=sample_fmts=fltp:sample_rates=48000:\
+             channel_layouts=stereo[a1];\
+             [a0][a1]concat=n=2:v=0:a=1[a]",
+            "-map",
+            "[a]",
+            "-c:a",
+            "aac",
+            "-f",
+            "ipod",
+        ]
+        .map(String::from),
+    );
+    expected.extend(as_strings(&[&tmp_out]));
+    assert_eq!(lines_of(&tmp.path().join("joined.m4a")), expected);
+}
+
+#[cfg(unix)]
+#[test]
+fn whisper_argv_asks_for_progress_and_forwards_it() {
+    use minuta::steps::transcribe::Transcribe;
+    let tmp = tempfile::tempdir().unwrap();
+    let model = tmp.path().join("ggml-tiny.bin");
+    fs::write(&model, b"model").unwrap();
+    fs::write(tmp.path().join("audio.wav"), b"RIFF").unwrap();
+    let ctx = Ctx {
+        dir: tmp.path().to_path_buf(),
+        sources: vec![],
+        source_digest: "d".into(),
+    };
+    let mut lines = Vec::new();
+    Transcribe::new(fake_tool("whisper-cli"), model.clone(), "en", None)
+        .run_with(&ctx, RunOpts::default(), &mut |l| lines.push(l.to_string()))
+        .unwrap();
+
+    let prefix = tmp.path().join("whisper-raw");
+    let audio = tmp.path().join("audio.wav");
+    let mut expected = vec!["-m".to_string()];
+    expected.extend(as_strings(&[&model]));
+    expected.push("-f".into());
+    expected.extend(as_strings(&[&audio]));
+    expected.extend(["-l", "en", "-oj", "-of"].map(String::from));
+    expected.extend(as_strings(&[&prefix]));
+    expected.push("-pp".into());
+    assert_eq!(lines_of(&tmp.path().join("whisper-raw.args")), expected);
+    assert_eq!(
+        lines,
+        vec!["whisper_print_progress_callback: progress =  50%"]
+    );
+}
+
 #[test]
 fn probe_params_change_with_sources() {
     let tool = ToolInfo {

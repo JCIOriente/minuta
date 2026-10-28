@@ -9,7 +9,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use minuta::error::{Error, Result};
-use minuta::tools::{inspect, preflight, run, Output, Report, RunOpts, ToolPaths, Toolchain};
+use minuta::tools::{
+    inspect, locate_tool, preflight, run, run_capture, Output, Report, RunOpts, ToolInfo,
+    ToolPaths, Toolchain,
+};
 
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
@@ -352,4 +355,253 @@ fn configured_path_beats_path_lookup() {
     let tc = preflight_r(&paths, true).unwrap();
     assert_eq!(tc.ffmpeg.path, configured);
     assert_eq!(tc.ffmpeg.version, "ffmpeg version custom");
+}
+
+/// Committed, already-executable fakes (`ffmpeg`, `ffprobe`, `whisper-cli`,
+/// `spawn-grandchild`).
+const FIXTURE_TOOLS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tools");
+/// Set in the child process that [`run_child_test`] starts.
+const CHILD_ENV: &str = "MINUTA_TOOLS_TEST_CHILD";
+
+fn fixture_tool(name: &str) -> PathBuf {
+    Path::new(FIXTURE_TOOLS).join(name)
+}
+
+#[test]
+fn pump_splits_carriage_returns() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = script(dir.path(), "cr", r"printf 'one\rtwo\r\nthree\nfour\rfive'").into_os_string();
+    let mut lines = Vec::new();
+    run_r(&[bin], &RunOpts::default(), &mut |l| {
+        lines.push(l.to_string())
+    })
+    .unwrap();
+    assert_eq!(lines, vec!["one", "two", "three", "four", "five"]);
+}
+
+#[test]
+fn carriage_return_update_arrives_while_tool_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let go = dir.path().join("go");
+    // The tool only finishes once the test has seen its first update, so the update must
+    // reach `on_line` while the tool is still running.
+    let bin = script(
+        dir.path(),
+        "live",
+        r#"printf 'waiting\r'
+i=0
+while [ ! -e "$1" ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done
+if [ -e "$1" ]; then echo done; else echo 'timed out waiting for the test' >&2; exit 1; fi"#,
+    )
+    .into_os_string();
+    let mut lines = Vec::new();
+    run_r(
+        &[bin, go.clone().into_os_string()],
+        &RunOpts::default(),
+        &mut |l| {
+            if l == "waiting" {
+                fs::write(&go, b"").unwrap();
+            }
+            lines.push(l.to_string());
+        },
+    )
+    .unwrap();
+    assert_eq!(lines, vec!["waiting", "done"]);
+}
+
+#[test]
+fn stderr_tail_keeps_only_latest_carriage_return_update() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = script(
+        dir.path(),
+        "stats",
+        r"printf 'begin\r\n' >&2
+printf 'p1\rp2\rp3\r' >&2
+printf 'error: boom\n' >&2
+exit 1",
+    )
+    .into_os_string();
+    match run_r(&[bin], &RunOpts::default(), &mut |_| {}).unwrap_err() {
+        Error::Tool { stderr, .. } => assert_eq!(stderr, "begin\np3\nerror: boom"),
+        other => panic!("expected Tool error, got {other:?}"),
+    }
+}
+
+#[test]
+fn tool_error_names_the_tool() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = script(dir.path(), "my-tool", "exit 4").into_os_string();
+    match run_r(&[bin], &RunOpts::default(), &mut |_| {}).unwrap_err() {
+        Error::Tool { tool, code, stderr } => {
+            assert_eq!(tool, "my-tool");
+            assert_eq!(code, Some(4));
+            assert_eq!(stderr, "");
+        }
+        other => panic!("expected Tool error, got {other:?}"),
+    }
+}
+
+#[test]
+fn run_rejects_empty_argv() {
+    match run(&[], RunOpts::default(), &mut |_| {}).unwrap_err() {
+        Error::Usage(m) => assert_eq!(m, "empty command"),
+        other => panic!("expected Usage error, got {other:?}"),
+    }
+}
+
+#[test]
+fn run_capture_rejects_empty_argv() {
+    match run_capture(&[], b"", RunOpts::default(), &mut |_| {}).unwrap_err() {
+        Error::Usage(m) => assert_eq!(m, "empty command"),
+        other => panic!("expected Usage error, got {other:?}"),
+    }
+}
+
+#[test]
+fn configured_missing_model_reported_without_need_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut paths = fake_toolchain(dir.path());
+    let typo = dir.path().join("ggml-bsae.bin");
+    paths.model = Some(typo.clone());
+    let missing = missing_of(preflight_r(&paths, false).unwrap_err());
+    assert_eq!(
+        missing,
+        vec![(
+            "model".to_string(),
+            format!("configured path {} is not a file", typo.display())
+        )]
+    );
+}
+
+/// Runs the `#[ignore]`d test `name` of this binary in a child process whose `PATH` is
+/// only the fixture tools dir. Setting `PATH` in this process would race with the other
+/// test threads, which spawn tools.
+fn run_child_test(name: &str) {
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name, "--ignored", "--test-threads=1"])
+        .env_clear()
+        .env("PATH", FIXTURE_TOOLS)
+        .env(CHILD_ENV, "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.contains("test result: ok. 1 passed"),
+        "child test {name} failed:\n{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn fixture_info(name: &str, version: &str) -> ToolInfo {
+    ToolInfo {
+        path: fixture_tool(name),
+        version: version.into(),
+    }
+}
+
+#[test]
+fn inspect_falls_back_to_path_env() {
+    run_child_test("child_inspect_uses_path_env");
+}
+
+#[test]
+#[ignore = "run by inspect_falls_back_to_path_env in a child process"]
+fn child_inspect_uses_path_env() {
+    if std::env::var_os(CHILD_ENV).is_none() {
+        return;
+    }
+    let report = inspect(&ToolPaths::default(), false);
+    assert_eq!(report.missing, vec![]);
+    assert_eq!(
+        report.ffmpeg,
+        Some(fixture_info("ffmpeg", "ffmpeg version 0.0-fake"))
+    );
+    assert_eq!(
+        report.ffprobe,
+        Some(fixture_info("ffprobe", "ffprobe version 0.0-fake"))
+    );
+    assert_eq!(
+        report.whisper,
+        Some(fixture_info("whisper-cli", "whisper-cli 0.0-fake"))
+    );
+}
+
+#[test]
+fn locate_tool_falls_back_to_path_env() {
+    run_child_test("child_locate_tool_uses_path_env");
+}
+
+#[test]
+#[ignore = "run by locate_tool_falls_back_to_path_env in a child process"]
+fn child_locate_tool_uses_path_env() {
+    if std::env::var_os(CHILD_ENV).is_none() {
+        return;
+    }
+    let info = locate_tool("ffmpeg", "ffmpeg", "-version", "brew install ffmpeg").unwrap();
+    assert_eq!(info, fixture_info("ffmpeg", "ffmpeg version 0.0-fake"));
+}
+
+/// Whether `pid` is still a live (not zombie) process, asked of `ps`.
+fn alive(pid: &str) -> bool {
+    let argv = ["ps", "-o", "stat=", "-p", pid].map(OsString::from);
+    let mut stat = String::new();
+    match run(&argv, RunOpts::default(), &mut |l| stat.push_str(l.trim())) {
+        Ok(_) => !stat.starts_with('Z'),
+        // `ps` exits non-zero when no such process exists.
+        Err(Error::Tool { .. }) => false,
+        Err(e) => panic!("cannot run ps: {e}"),
+    }
+}
+
+#[test]
+fn kill_reaches_grandchild() {
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("grandchild.pid");
+    let flag = Arc::new(AtomicBool::new(false));
+    // Interrupts once the grandchild is running, which the fixture signals by renaming
+    // its pid file into place.
+    let watcher = {
+        let (flag, pid_file) = (Arc::clone(&flag), pid_file.clone());
+        std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            let pid = loop {
+                match fs::read_to_string(&pid_file) {
+                    Ok(pid) => break Some(pid.trim().to_string()),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => panic!("cannot read {}: {e}", pid_file.display()),
+                }
+                if Instant::now() >= deadline {
+                    break None;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            };
+            flag.store(true, Ordering::SeqCst);
+            pid
+        })
+    };
+    let argv = [
+        fixture_tool("spawn-grandchild").into_os_string(),
+        pid_file.into_os_string(),
+    ];
+    let opts = RunOpts {
+        interrupt: Some(flag),
+        ..RunOpts::default()
+    };
+    let err = run(&argv, opts, &mut |_| {}).unwrap_err();
+    let pid = watcher
+        .join()
+        .unwrap()
+        .expect("the fixture never wrote the grandchild's pid");
+    assert!(matches!(err, Error::Interrupted), "got {err:?}");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while alive(&pid) {
+        if Instant::now() >= deadline {
+            let kill = ["kill", "-KILL", pid.as_str()].map(OsString::from);
+            // Best effort: only stops the leaked sleep before failing.
+            let _ = run(&kill, RunOpts::default(), &mut |_| {});
+            panic!("grandchild {pid} survived the kill");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
 }

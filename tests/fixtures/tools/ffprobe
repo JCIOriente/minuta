@@ -1,0 +1,4 @@
+#!/bin/sh
+# Fake ffprobe for tests/tools.rs: only answers the version probe.
+if [ "$1" = "-version" ]; then echo "ffprobe version 0.0-fake"; exit 0; fi
+exit 2

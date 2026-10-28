@@ -1,0 +1,8 @@
+#!/bin/sh
+# Starts a long sleep as a grandchild of the test, writes its pid to "$1" (atomically,
+# through a rename), then waits for it. Used by tests/tools.rs to check that a kill reaches
+# the whole process group.
+/bin/sleep 300 &
+echo $! > "$1.part"
+/bin/mv "$1.part" "$1"
+wait
