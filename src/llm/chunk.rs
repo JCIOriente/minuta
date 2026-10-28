@@ -91,7 +91,8 @@ pub enum Event {
         total: usize,
     },
     Consolidating,
-    /// Group `done` of `total` finished in merge round `round` (1-based) of the consolidation.
+    /// `done` of the `total` groups of merge round `round` (1-based) have finished; reported
+    /// with `done: 0` when the round starts.
     Merge {
         round: usize,
         done: usize,
@@ -136,7 +137,7 @@ pub fn generate(
 /// Like `generate`, but `final_block` (if any) goes before the language instruction in the
 /// final system prompt (single call or consolidation), and the final call is made by
 /// `finish(system, user, on_event)` instead of `complete`. Map calls are unchanged. Events
-/// `finish` emits reach `on_event`, after `Consolidating` and its `Merge` events when chunked.
+/// `finish` emits reach `on_event`, after the last `Consolidating` when chunked.
 pub fn generate_with(
     req: &Request,
     final_block: Option<&str>,
@@ -185,6 +186,11 @@ pub fn generate_with(
         let groups = split_inputs(&units, "\n\n", context, &map_system)?;
         let total = groups.len();
         calls += total;
+        on_event(Event::Merge {
+            round,
+            done: 0,
+            total,
+        });
         notes = run_all(
             &groups,
             &map_system,
@@ -197,6 +203,10 @@ pub fn generate_with(
             return Err(template_error(NOT_SHRINKING.to_string()));
         }
         joined = merged;
+    }
+    if round > 0 {
+        // Back from the last round's count to the final consolidation call.
+        on_event(Event::Consolidating);
     }
     let text = finish(&reduce_system, &joined, on_event)?;
     Ok(Generated {
@@ -988,7 +998,8 @@ mod tests {
     fn merge_rounds_report_progress() {
         let input = numbered_lines(400);
         // 7 map notes need a first merge round of 4 groups, whose notes still do not fit, then
-        // a second round of 2 groups, whose short notes fit the consolidation call.
+        // a second round of 2 groups, whose short notes fit the consolidation call. Each round
+        // reports its start (0 done), then every finished group.
         let complete = |s: &str, u: &str| {
             if is_final(s) {
                 Ok("final".to_string())
@@ -1013,12 +1024,16 @@ mod tests {
             chunk(6),
             chunk(7),
             Event::Consolidating,
+            merge(1, 0, 4),
             merge(1, 1, 4),
             merge(1, 2, 4),
             merge(1, 3, 4),
             merge(1, 4, 4),
+            merge(2, 0, 2),
             merge(2, 1, 2),
             merge(2, 2, 2),
+            // The final consolidation call.
+            Event::Consolidating,
         ];
         assert_eq!(events, want);
         assert_eq!(
