@@ -163,6 +163,7 @@ fn read_template(
                 path.display()
             ));
         }
+        reject_hard_link(path)?;
     }
     let bytes = fs::read(path).map_err(|e| io_err(path, e).to_string())?;
     let text = String::from_utf8(bytes)
@@ -171,6 +172,29 @@ fn read_template(
         Error::Usage(m) => m,
         other => other.to_string(),
     })
+}
+
+/// A hard link to a file outside the untrusted directory canonicalizes to its
+/// in-directory path, so the symlink check cannot see it. Reject any file with
+/// more than one link. `fs::metadata` follows symlinks, so a symlink to a
+/// hard-linked file is rejected too.
+#[cfg(unix)]
+fn reject_hard_link(path: &Path) -> std::result::Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::metadata(path).map_err(|e| io_err(path, e).to_string())?;
+    if meta.nlink() > 1 {
+        return Err(format!(
+            "{}: file is hard-linked; hard links are not loaded from the project templates directory",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Not unix: std exposes no stable link count there, so the check is compiled out.
+#[cfg(not(unix))]
+fn reject_hard_link(_path: &Path) -> std::result::Result<(), String> {
+    Ok(())
 }
 
 impl Catalog {
