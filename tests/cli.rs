@@ -310,7 +310,7 @@ fn second_run_all_cached() {
 fn whisper_call(env: &Env, name: &str, vad: Option<&Path>) -> String {
     let job = env.job_dir(name);
     let mut call = format!(
-        "whisper-cli -m {} -f {} -l auto -oj -of {}",
+        "whisper-cli -m {} -f {} -l auto -oj -of {} -pp",
         env.path("ggml-test.bin").display(),
         job.join("audio.wav").display(),
         job.join("whisper-raw").display()
