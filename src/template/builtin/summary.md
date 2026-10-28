@@ -11,4 +11,6 @@ Write the summary in Markdown, using these sections. Include a section only when
 4. Action items: what has to be done, with the owner when the transcript says who. Use a bullet list.
 5. Open questions: points left unresolved.
 
+When the transcript has nothing for a section, omit that section entirely, heading included. Never write a placeholder such as "No decisions were made", "No se tomaron decisiones" or "None" in its place. A summary with only an overview and key points is complete.
+
 You may cite the transcript timestamps, such as [00:12:34], to show where something was said. Be concise and keep names, numbers and dates exactly as spoken.
