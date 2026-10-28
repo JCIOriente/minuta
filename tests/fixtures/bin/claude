@@ -7,6 +7,7 @@
 #   FAKE_CLAUDE_STDERR  text for stderr
 #   FAKE_CLAUDE_EXIT    exit status (default 0)
 #   FAKE_CLAUDE_HANG    when set, hang until killed
+#   FAKE_CLAUDE_PID     file that gets the fake's pid once it is running (kept by HANG)
 #   FAKE_CLAUDE_CALLS   file that gets one line appended per invocation
 #   FAKE_CLAUDE_SIGNAL  signal name (e.g. KILL): the fake kills itself with it
 if [ "$1" = "--version" ]; then echo "2.0.0-fake (Claude Code)"; exit 0; fi
@@ -18,8 +19,9 @@ fi
 if [ -n "$FAKE_CLAUDE_CWD" ]; then
   { pwd -P; ls -A; } > "$FAKE_CLAUDE_CWD"
 fi
+if [ -n "$FAKE_CLAUDE_PID" ]; then echo $$ > "$FAKE_CLAUDE_PID.tmp" && mv "$FAKE_CLAUDE_PID.tmp" "$FAKE_CLAUDE_PID"; fi
 if [ -n "$FAKE_CLAUDE_SIGNAL" ]; then kill -s "$FAKE_CLAUDE_SIGNAL" $$; exit 99; fi
-if [ -n "$FAKE_CLAUDE_HANG" ]; then exec /bin/sleep 30; fi
+if [ -n "$FAKE_CLAUDE_HANG" ]; then exec /bin/sleep 300; fi
 if [ -n "$FAKE_CLAUDE_STDIN" ]; then cat > "$FAKE_CLAUDE_STDIN"; else cat > /dev/null; fi
 if [ -n "$FAKE_CLAUDE_STDERR" ]; then printf '%s\n' "$FAKE_CLAUDE_STDERR" >&2; fi
 if [ "${FAKE_CLAUDE_REPLY+set}" = set ]; then

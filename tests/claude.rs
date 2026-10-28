@@ -62,6 +62,112 @@ fn lines(path: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Polls `cond` under a generous deadline; panics with `what` if it never holds.
+fn poll_until(what: &str, mut cond: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !cond() {
+        assert!(Instant::now() < deadline, "{what}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Whether `pid` exists; any `kill(pid, 0)` error other than "no such process" panics.
+fn pid_alive(pid: u32) -> bool {
+    let pid = libc::pid_t::try_from(pid).unwrap();
+    // SAFETY: signal 0 only checks that the process exists.
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return true;
+    }
+    let err = std::io::Error::last_os_error();
+    assert_eq!(
+        err.raw_os_error(),
+        Some(libc::ESRCH),
+        "kill -0 {pid}: {err}"
+    );
+    false
+}
+
+/// On drop, sets the interrupt flag and, while the child is not yet reaped, kills its
+/// process group, so a failing test does not leave it hanging after the binary exits.
+struct StopOnDrop {
+    flag: Arc<AtomicBool>,
+    pid: Option<u32>,
+}
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.flag.store(true, Ordering::SeqCst);
+        if let Some(pid) = self.pid.and_then(|p| libc::pid_t::try_from(p).ok()) {
+            // SAFETY: the child leads its own group and is not reaped, so neither id
+            // can name another process. Errors are ignored: it may already be dead.
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+                libc::kill(pid, libc::SIGKILL);
+            }
+        }
+    }
+}
+
+/// The pid in `path`, or `None` while the file does not exist yet. The writer renames
+/// it into place, so an existing file is complete.
+fn read_pid(path: &Path) -> Option<u32> {
+    match fs::read_to_string(path) {
+        Ok(t) => Some(
+            t.trim()
+                .parse()
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display())),
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => panic!("{}: {e}", path.display()),
+    }
+}
+
+/// Joins `worker`, re-raising its panic.
+fn join<T>(worker: std::thread::JoinHandle<T>) -> T {
+    worker
+        .join()
+        .unwrap_or_else(|e| std::panic::resume_unwind(e))
+}
+
+/// Runs `run` on a worker thread and sets its interrupt flag only once the child it
+/// starts has written its pid to `pid_file`. The child must hang far longer than the
+/// poll deadline, so `run` returning within it shows the child was killed, not that it
+/// finished. Returns `run`'s result after checking that the child is gone.
+fn interrupt_when_started<T: Send + std::fmt::Debug + 'static>(
+    pid_file: &Path,
+    run: impl FnOnce(Arc<AtomicBool>) -> Result<T, Error> + Send + 'static,
+) -> Result<T, Error> {
+    let flag = Arc::new(AtomicBool::new(false));
+    let mut guard = StopOnDrop {
+        flag: Arc::clone(&flag),
+        pid: None,
+    };
+    let worker = {
+        let flag = Arc::clone(&flag);
+        std::thread::spawn(move || run(flag))
+    };
+    let mut pid = None;
+    poll_until("the child never wrote its pid", || {
+        pid = read_pid(pid_file);
+        pid.is_some() || worker.is_finished()
+    });
+    let Some(pid) = pid else {
+        panic!("run ended before the child started: {:?}", join(worker));
+    };
+    guard.pid = Some(pid);
+    let alive = pid_alive(pid);
+    flag.store(true, Ordering::SeqCst);
+    poll_until("run did not return after the interrupt", || {
+        worker.is_finished()
+    });
+    let res = join(worker);
+    // `run` has reaped the child: its pid may be reused from here on.
+    guard.pid = None;
+    assert!(alive, "child {pid} exited before the interrupt: {res:?}");
+    poll_until(&format!("child {pid} is still alive"), || !pid_alive(pid));
+    res
+}
+
 #[test]
 fn run_capture_round_trips_stdin() {
     let out = run_capture(
@@ -133,20 +239,20 @@ fn run_capture_honors_cwd() {
 
 #[test]
 fn run_capture_interrupt_kills_child() {
-    let flag = Arc::new(AtomicBool::new(false));
-    let setter = Arc::clone(&flag);
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(150));
-        setter.store(true, Ordering::SeqCst);
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("pid");
+    let script = format!(
+        "echo $$ > '{0}.tmp' && mv '{0}.tmp' '{0}' && exec sleep 300",
+        pid_file.display()
+    );
+    let res = interrupt_when_started(&pid_file, move |flag| {
+        let opts = RunOpts {
+            interrupt: Some(flag),
+            ..RunOpts::default()
+        };
+        run_capture(&sh(&script), b"", opts, &mut |_| {})
     });
-    let opts = RunOpts {
-        interrupt: Some(flag),
-        ..RunOpts::default()
-    };
-    let start = Instant::now();
-    let err = run_capture(&sh("exec sleep 30"), b"", opts, &mut |_| {}).unwrap_err();
-    assert!(matches!(err, Error::Interrupted), "{err:?}");
-    assert!(start.elapsed() < Duration::from_secs(5));
+    assert!(matches!(res, Err(Error::Interrupted)), "{res:?}");
 }
 
 #[test]
@@ -264,18 +370,13 @@ fn claude_empty_output_is_transient() {
 
 #[test]
 fn claude_interrupt_returns_interrupted() {
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("pid");
     let mut env = Env::new();
     env.set("FAKE_CLAUDE_HANG", "1");
-    let flag = Arc::new(AtomicBool::new(false));
-    let setter = Arc::clone(&flag);
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(200));
-        setter.store(true, Ordering::SeqCst);
-    });
-    let start = Instant::now();
-    let err = claude(None).complete("s", "u", &flag).unwrap_err();
-    assert!(matches!(err, Error::Interrupted), "{err:?}");
-    assert!(start.elapsed() < Duration::from_secs(5));
+    env.set("FAKE_CLAUDE_PID", &pid_file);
+    let res = interrupt_when_started(&pid_file, |flag| claude(None).complete("s", "u", &flag));
+    assert!(matches!(res, Err(Error::Interrupted)), "{res:?}");
 }
 
 #[test]
@@ -313,25 +414,14 @@ fn claude_scratch_dir_removed_after_nonzero_exit() {
 fn claude_scratch_dir_removed_after_interrupt() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().join("cwd");
+    let pid_file = dir.path().join("pid");
     let mut env = Env::new();
     env.set("FAKE_CLAUDE_CWD", &cwd);
     env.set("FAKE_CLAUDE_HANG", "1");
-    let flag = Arc::new(AtomicBool::new(false));
-    let setter = Arc::clone(&flag);
-    let watched = cwd.clone();
-    std::thread::spawn(move || {
-        // Interrupt only once the fake is running and has recorded its directory.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
-            if fs::read_to_string(&watched).is_ok_and(|t| t.lines().next().is_some()) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        setter.store(true, Ordering::SeqCst);
-    });
-    let err = claude(None).complete("s", "u", &flag).unwrap_err();
-    assert!(matches!(err, Error::Interrupted), "{err:?}");
+    // The fake records its directory before its pid, so the interrupt comes after both.
+    env.set("FAKE_CLAUDE_PID", &pid_file);
+    let res = interrupt_when_started(&pid_file, |flag| claude(None).complete("s", "u", &flag));
+    assert!(matches!(res, Err(Error::Interrupted)), "{res:?}");
     assert!(!PathBuf::from(&lines(&cwd)[0]).try_exists().unwrap());
 }
 
