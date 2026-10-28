@@ -174,6 +174,11 @@ impl Join {
             "-hide_banner".into(),
             "-nostdin".into(),
             "-y".into(),
+            // Progress only, so not part of `params`: stats on stderr, one `\r` update
+            // every half second.
+            "-stats".into(),
+            "-stats_period".into(),
+            "0.5".into(),
         ];
         argv.extend(args);
         run(&argv, opts.clone(), on_line)?;

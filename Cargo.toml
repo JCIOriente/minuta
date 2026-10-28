@@ -18,6 +18,10 @@ ctrlc = "3"
 directories = "5"
 ureq = { version = "2", default-features = false, features = ["tls"] }
 
+[target.'cfg(unix)'.dependencies]
+# kill(2) on a process group, which std cannot do; already in the tree through ctrlc.
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = "3"
 assert_cmd = "2"

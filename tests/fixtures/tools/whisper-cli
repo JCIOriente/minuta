@@ -1,0 +1,22 @@
+#!/bin/sh
+# Fake whisper-cli for tests/media.rs and tests/tools.rs.
+#   --version  prints a version line.
+#   otherwise  writes its arguments, one per line, to "<prefix>.args" and copies
+#              ../whisper/sample.json to "<prefix>.json" (prefix from -of). With -pp it
+#              prints a progress line on stderr the way whisper-cli does.
+if [ "$1" = "--version" ]; then echo "whisper-cli 0.0-fake"; exit 0; fi
+here=$(cd "$(dirname "$0")" && pwd)
+prefix=
+progress=
+take=
+for arg in "$@"; do
+  if [ "$take" = 1 ]; then prefix=$arg; take=; fi
+  if [ "$arg" = "-of" ]; then take=1; fi
+  if [ "$arg" = "-pp" ]; then progress=1; fi
+done
+if [ -z "$prefix" ]; then echo "fake whisper-cli: missing -of" >&2; exit 2; fi
+printf '%s\n' "$@" > "$prefix.args"
+if [ -n "$progress" ]; then
+  echo "whisper_print_progress_callback: progress =  50%" >&2
+fi
+/bin/cp "$here/../whisper/sample.json" "$prefix.json"

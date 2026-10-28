@@ -649,6 +649,7 @@ dependencies = [
  "ctrlc",
  "directories",
  "indicatif",
+ "libc",
  "predicates",
  "serde",
  "serde_json",

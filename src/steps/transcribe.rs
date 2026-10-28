@@ -102,6 +102,8 @@ impl Transcribe {
             "-oj".into(),
             "-of".into(),
             prefix.into(),
+            // Progress lines on stderr; not part of `params`, it does not change the result.
+            "-pp".into(),
         ];
         if let Some(vad) = &self.vad_model {
             argv.extend(["--vad".into(), "-vm".into(), vad.clone().into()]);
