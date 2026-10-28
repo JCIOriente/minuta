@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
@@ -79,7 +79,10 @@ pub enum Status {
     Stale,
 }
 
-/// `steps.<name>` in `job.json`.
+/// `steps.<name>` in `job.json`. A done state has a fingerprint and seconds and no reason; a
+/// stale state has a reason and may keep the fingerprint, seconds and artifacts of its last
+/// run. [`JobState::load`] rejects any other combination. (The fields stay public and
+/// independent rather than an enum because the runner and staleness checks read them directly.)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StepState {
     pub status: Status,
@@ -89,6 +92,34 @@ pub struct StepState {
     /// Artifact paths, relative to the job folder.
     #[serde(default)]
     pub artifacts: Vec<PathBuf>,
+}
+
+impl StepState {
+    /// Why this state cannot have been written by a `Job`, if it cannot: an impossible
+    /// combination of fields, or an artifact path that is not a plain path inside the job folder.
+    fn impossible(&self) -> Option<String> {
+        let combination = match self.status {
+            Status::Done if self.fingerprint.is_none() => Some("is done without a fingerprint"),
+            Status::Done if self.seconds.is_none() => Some("is done without seconds"),
+            Status::Done if self.reason.is_some() => Some("is done but has a stale reason"),
+            Status::Stale if self.reason.is_none() => Some("is stale without a reason"),
+            Status::Done | Status::Stale => None,
+        };
+        if let Some(combination) = combination {
+            return Some(combination.to_owned());
+        }
+        let is_inside = |artifact: &PathBuf| {
+            artifact.components().next().is_some()
+                && artifact
+                    .components()
+                    .all(|c| matches!(c, Component::Normal(_)))
+        };
+        let outside = self.artifacts.iter().find(|a| !is_inside(a))?;
+        Some(format!(
+            "has artifact {} outside the job folder",
+            outside.display()
+        ))
+    }
 }
 
 /// One source file as last seen: `mtime` is nanoseconds since the Unix epoch and `hash` is
@@ -103,6 +134,7 @@ pub struct Source {
 
 /// The contents of `job.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct JobState {
     pub version: u32,
     pub name: String,
@@ -124,7 +156,9 @@ impl JobState {
         }
     }
 
-    /// Reads `job.json`, rejecting any version other than [`VERSION`].
+    /// Reads `job.json`, rejecting any version other than [`VERSION`], unknown top-level fields
+    /// and step or template states no `Job` writes (see [`StepState`]), including artifact
+    /// paths that are absolute or climb out of the job folder.
     pub fn load(path: &Path) -> Result<Self> {
         let invalid = |e: serde_json::Error| Error::Job(format!("invalid {}: {e}", path.display()));
         let value: Value = serde_json::from_slice(&fs::read(path)?).map_err(invalid)?;
@@ -136,7 +170,21 @@ impl JobState {
                 path.display()
             )));
         }
-        serde_json::from_value(value).map_err(invalid)
+        let state: JobState = serde_json::from_value(value).map_err(invalid)?;
+        let steps = state.steps.iter().map(|(n, s)| ("step", n.as_str(), s));
+        let templates = state
+            .templates
+            .iter()
+            .map(|(n, s)| ("template", n.as_str(), s));
+        for (kind, name, step) in steps.chain(templates) {
+            if let Some(problem) = step.impossible() {
+                return Err(Error::Job(format!(
+                    "invalid {}: {kind} {name} {problem}; move or delete it",
+                    path.display()
+                )));
+            }
+        }
+        Ok(state)
     }
 
     /// Writes `job.json` atomically.
