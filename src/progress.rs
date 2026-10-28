@@ -52,6 +52,9 @@ pub struct Progress {
     spinner: Option<ProgressBar>,
     /// Length in seconds of the media the running step processes, for ffmpeg's percent.
     media_seconds: Option<f64>,
+    /// Every printed line and spinner message, in order, so tests can see what was shown.
+    #[cfg(test)]
+    pub(crate) shown: Vec<String>,
 }
 
 impl Progress {
@@ -61,6 +64,8 @@ impl Progress {
             total: StepName::ALL.len(),
             spinner: None,
             media_seconds: None,
+            #[cfg(test)]
+            shown: Vec::new(),
         }
     }
 
@@ -75,9 +80,11 @@ impl Progress {
         self.total = total;
     }
 
-    fn print(&self, text: &str) {
+    fn print(&mut self, text: &str) {
         if self.mode != Mode::Quiet {
             eprintln!("{text}");
+            #[cfg(test)]
+            self.shown.push(text.to_string());
         }
     }
 
@@ -144,6 +151,8 @@ impl Progress {
     pub fn line(&mut self, line: &str) {
         if let (Some(spinner), Some(text)) = (&self.spinner, render_line(line, self.media_seconds))
         {
+            #[cfg(test)]
+            self.shown.push(text.clone());
             spinner.set_message(text);
         }
     }

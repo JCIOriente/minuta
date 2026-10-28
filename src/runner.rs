@@ -1296,10 +1296,24 @@ mod tests {
         assert!(missing.iter().all(|m| !m.name.starts_with("ollama")));
     }
 
-    /// A step that records whether it ran and can set the interrupt flag while running.
+    /// A step that records whether it ran, can set the interrupt flag while running, sends
+    /// `lines` to `on_line` and reports `media` as its media seconds (`Err` fails with it).
     struct FakeStep {
         ran: Cell<bool>,
         sets: Option<Arc<AtomicBool>>,
+        lines: &'static [&'static str],
+        media: std::result::Result<Option<f64>, &'static str>,
+    }
+
+    impl Default for FakeStep {
+        fn default() -> FakeStep {
+            FakeStep {
+                ran: Cell::new(false),
+                sets: None,
+                lines: &[],
+                media: Ok(None),
+            }
+        }
     }
 
     impl Step for FakeStep {
@@ -1320,13 +1334,35 @@ mod tests {
     }
 
     impl Execute for FakeStep {
-        fn execute(&self, ctx: &Ctx, _: RunOpts, _: &mut dyn FnMut(&str)) -> Result<Vec<String>> {
+        fn execute(
+            &self,
+            ctx: &Ctx,
+            _: RunOpts,
+            on_line: &mut dyn FnMut(&str),
+        ) -> Result<Vec<String>> {
+            for line in self.lines {
+                on_line(line);
+            }
             self.run(ctx).map(|()| Vec::new())
+        }
+
+        fn media_seconds(&self, _: &Ctx) -> Result<Option<f64>> {
+            self.media.map_err(|e| Error::Io(io::Error::other(e)))
         }
     }
 
     /// Runs `step` as the only stale step of a fresh job with `interrupt`.
     fn run_one(step: &FakeStep, interrupt: &Arc<AtomicBool>) -> (Result<usize>, Job) {
+        let (result, job, _) = run_one_shown(step, interrupt, ProgressMode::Quiet);
+        (result, job)
+    }
+
+    /// [`run_one`] with progress in `mode`, also returning the progress to see what it showed.
+    fn run_one_shown(
+        step: &FakeStep,
+        interrupt: &Arc<AtomicBool>,
+        mode: ProgressMode,
+    ) -> (Result<usize>, Job, Progress) {
         let tmp = tempfile::tempdir().unwrap();
         let source = tmp.path().join("a.mp4");
         fs::write(&source, "media").unwrap();
@@ -1339,17 +1375,46 @@ mod tests {
             plan: &plan,
             interrupt,
         };
-        let mut progress = Progress::new(ProgressMode::Quiet);
+        let mut progress = Progress::new(mode);
         let result = pipeline.run(&mut job, &[step], &current, &mut progress);
-        (result, job)
+        (result, job, progress)
+    }
+
+    #[test]
+    fn spinner_shows_percent_of_the_step_media_seconds() {
+        let step = FakeStep {
+            lines: &["frame=  662 fps=0.0 q=28.0 size=  256KiB time=00:00:27.40 speed=33.7x"],
+            media: Ok(Some(60.0)),
+            ..FakeStep::default()
+        };
+        let interrupt = Arc::new(AtomicBool::new(false));
+        let (result, _, progress) = run_one_shown(&step, &interrupt, ProgressMode::Live);
+        assert_eq!(result.unwrap(), 1);
+        // The spinner message, then the step's done line (its time varies).
+        assert_eq!(progress.shown.len(), 2, "{:?}", progress.shown);
+        assert_eq!(progress.shown[0], "45%  00:27/01:00");
+    }
+
+    #[test]
+    fn media_seconds_error_fails_the_step_before_it_runs() {
+        let step = FakeStep {
+            media: Err("probe.json unreadable"),
+            ..FakeStep::default()
+        };
+        let interrupt = Arc::new(AtomicBool::new(false));
+        let (result, job, progress) = run_one_shown(&step, &interrupt, ProgressMode::Live);
+        match result {
+            Err(Error::Io(e)) => assert_eq!(e.to_string(), "probe.json unreadable"),
+            other => panic!("expected the media seconds error, got {other:?}"),
+        }
+        assert!(!step.ran.get());
+        assert!(!job.state.steps.contains_key(&StepName::Probe));
+        assert_eq!(progress.shown, ["[1/5] probe       failed"]);
     }
 
     #[test]
     fn preset_interrupt_runs_no_step() {
-        let step = FakeStep {
-            ran: Cell::new(false),
-            sets: None,
-        };
+        let step = FakeStep::default();
         let (result, job) = run_one(&step, &Arc::new(AtomicBool::new(true)));
         assert!(matches!(result, Err(Error::Interrupted)), "{result:?}");
         assert!(!step.ran.get());
@@ -1360,8 +1425,8 @@ mod tests {
     fn interrupt_during_the_last_step_is_reported() {
         let interrupt = Arc::new(AtomicBool::new(false));
         let step = FakeStep {
-            ran: Cell::new(false),
             sets: Some(Arc::clone(&interrupt)),
+            ..FakeStep::default()
         };
         let (result, _) = run_one(&step, &interrupt);
         assert!(step.ran.get());
