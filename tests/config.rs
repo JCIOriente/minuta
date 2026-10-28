@@ -289,14 +289,6 @@ fn unknown_key_names_file_and_line() {
 }
 
 #[test]
-fn unreadable_path_is_config_error_naming_file() {
-    let dir = tempfile::tempdir().unwrap();
-    let env = env_with("MINUTA_CONFIG", dir.path().to_str().unwrap());
-    let msg = config_err(Config::resolve(Overrides::default(), &env, None));
-    assert!(msg.contains(dir.path().to_str().unwrap()), "no path: {msg}");
-}
-
-#[test]
 fn minuta_config_env_overrides_path() {
     let dir = tempfile::tempdir().unwrap();
     let file = write_config(&dir, "out_dir = \"from-env-path\"\n");
@@ -910,4 +902,105 @@ fn config_show_lists_repairs() {
         .find(|(k, _)| *k == "llm.repairs")
         .expect("llm.repairs is listed");
     assert_key(setting, Some(("2", Source::Default)), key);
+}
+
+/// The message, path, source kind and source message of an `Error::ConfigIo`, or a panic
+/// naming what came back instead.
+fn config_io_err(result: Result<Config>) -> (String, PathBuf, std::io::ErrorKind, String) {
+    let err = match result {
+        Err(err @ Error::ConfigIo { .. }) => err,
+        Err(other) => panic!("expected Error::ConfigIo, got {other:?}"),
+        Ok(cfg) => panic!("expected an error, got {cfg:?}"),
+    };
+    let message = err.to_string();
+    let source = std::error::Error::source(&err)
+        .and_then(|s| s.downcast_ref::<std::io::Error>())
+        .map(|s| (s.kind(), s.to_string()))
+        .expect("ConfigIo keeps its io::Error as the source");
+    let Error::ConfigIo { path, .. } = err else {
+        unreachable!("matched ConfigIo above")
+    };
+    (message, path, source.0, source.1)
+}
+
+/// A config file with mode 000, so reading it fails with `PermissionDenied` (unless root).
+fn unreadable_config(dir: &tempfile::TempDir) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = write_config(dir, "out_dir = \"x\"\n");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    path
+}
+
+#[test]
+fn config_unreadable_file_keeps_io_kind_for_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = env_with("MINUTA_CONFIG", dir.path().to_str().unwrap());
+    let (message, path, kind, source) =
+        config_io_err(Config::resolve(Overrides::default(), &env, None));
+    assert_eq!(kind, std::io::ErrorKind::IsADirectory);
+    assert_eq!(source, "Is a directory (os error 21)");
+    assert_eq!(path, dir.path());
+    assert_eq!(
+        message,
+        format!(
+            "config error: {}: Is a directory (os error 21)",
+            dir.path().display()
+        )
+    );
+}
+
+#[test]
+fn config_unreadable_file_keeps_io_kind_for_explicit_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = unreadable_config(&dir);
+    let env = env_with("MINUTA_CONFIG", file.to_str().unwrap());
+    let (message, path, kind, source) =
+        config_io_err(Config::resolve(Overrides::default(), &env, None));
+    assert_eq!(kind, std::io::ErrorKind::PermissionDenied);
+    assert_eq!(source, "Permission denied (os error 13)");
+    assert_eq!(path, file);
+    assert_eq!(
+        message,
+        format!(
+            "config error: {}: Permission denied (os error 13)",
+            file.display()
+        )
+    );
+}
+
+#[test]
+fn config_unreadable_file_keeps_io_kind_for_default_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = unreadable_config(&dir);
+    let (message, path, kind, source) = config_io_err(Config::resolve(
+        Overrides::default(),
+        &no_env,
+        Some(file.as_path()),
+    ));
+    assert_eq!(kind, std::io::ErrorKind::PermissionDenied);
+    assert_eq!(source, "Permission denied (os error 13)");
+    assert_eq!(path, file);
+    assert_eq!(
+        message,
+        format!(
+            "config error: {}: Permission denied (os error 13)",
+            file.display()
+        )
+    );
+}
+
+#[test]
+fn config_parse_error_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_config(&dir, "out_dir = \"ok\"\n\n[whisper\nbin = \"x\"\n");
+    let env = env_with("MINUTA_CONFIG", file.to_str().unwrap());
+    let err = Config::resolve(Overrides::default(), &env, None).unwrap_err();
+    assert!(matches!(err, Error::Config(_)), "{err:?}");
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "config error: {}: invalid TOML at line 3: invalid table header\nexpected `.`, `]`",
+            file.display()
+        )
+    );
 }

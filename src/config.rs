@@ -196,7 +196,8 @@ impl Config {
     ///
     /// `file` is the default config path. A `MINUTA_CONFIG` in `env` replaces it and
     /// must exist: a missing explicit file is `Error::Config`. A missing default file
-    /// yields defaults. A malformed or unreadable file is `Error::Config`.
+    /// yields defaults. A malformed file is `Error::Config`; an unreadable one is
+    /// `Error::ConfigIo`.
     /// Empty values count as unset.
     pub fn resolve(
         flags: Overrides,
@@ -425,7 +426,12 @@ fn read_file(path: &Path, explicit: bool) -> Result<FileConfig> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(Error::Config(format!("{}: not found", path.display())))
         }
-        Err(e) => return Err(Error::Config(format!("{}: {e}", path.display()))),
+        Err(source) => {
+            return Err(Error::ConfigIo {
+                path: path.to_path_buf(),
+                source,
+            })
+        }
     };
     toml::from_str(&text).map_err(|e| {
         let line = e
