@@ -7,7 +7,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::chapters;
 use crate::config::{Config, Setting, Source};
@@ -31,9 +31,6 @@ use crate::template::graph;
 use crate::template::{Input, Output};
 use crate::tools::{self, Report, RunOpts, ToolPaths, Toolchain};
 use crate::transcript::Transcript;
-
-/// How long to wait for the Ctrl-C handler after a tool died from a signal.
-const SIGNAL_GRACE: Duration = Duration::from_millis(100);
 
 /// What `run` and `transcribe` were asked to do, besides the settings in [`Config`]. The
 /// `--llm` and `--output-lang` flags travel in [`Config`] as settings with [`Source::Flag`].
@@ -711,19 +708,15 @@ impl Pipeline<'_> {
     }
 }
 
-/// Whether `err` is the result of Ctrl-C: the tool was killed for the interrupt, or died
-/// from a signal while the flag is set. The terminal signals the whole process group, so
-/// the tool can die before the handler has set the flag; give it a moment then. Any other
-/// error is reported as it is.
+/// Whether `err` is the result of an interrupt: the tool was killed for it, or died from a
+/// signal while the flag is set (the group kill raced the tool's own exit). Tools run in
+/// their own process group, so the terminal's Ctrl-C never reaches them: a signal death
+/// with the flag clear is a crash or an outside kill, and is reported as it is, like any
+/// other error.
 fn interrupted_by(err: &Error, interrupt: &AtomicBool) -> bool {
     match err {
         Error::Interrupted => true,
-        Error::Tool { code: None, .. } => {
-            if !interrupt.load(Ordering::SeqCst) {
-                std::thread::sleep(SIGNAL_GRACE);
-            }
-            interrupt.load(Ordering::SeqCst)
-        }
+        Error::Tool { code: None, .. } => interrupt.load(Ordering::SeqCst),
         _ => false,
     }
 }
@@ -1289,5 +1282,16 @@ mod tests {
             stderr: String::new(),
         };
         assert!(!pipeline.interrupted_by(&failed));
+    }
+
+    #[test]
+    fn signal_death_without_flag_is_reported_as_is() {
+        let interrupt = Arc::new(AtomicBool::new(false));
+        let killed = Error::Tool {
+            tool: "ffmpeg".into(),
+            code: None,
+            stderr: String::new(),
+        };
+        assert!(!interrupted_by(&killed, &interrupt));
     }
 }

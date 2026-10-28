@@ -14,7 +14,9 @@ toml = "0.8"
 sha2 = "0.10"
 thiserror = "1"
 indicatif = "0.17"
-ctrlc = "3"
+# `termination`: SIGTERM and SIGHUP too, so `kill`, `timeout` or a closed terminal also stop
+# the tool, which runs in its own process group and would outlive minuta otherwise.
+ctrlc = { version = "3", features = ["termination"] }
 directories = "5"
 ureq = { version = "2", default-features = false, features = ["tls"] }
 

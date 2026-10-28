@@ -3,6 +3,8 @@
 # fixture) and -l (recorded in the log).
 #   FAKE_WHISPER_LOG      file that gets one line per invocation (optional)
 #   FAKE_WHISPER_HANG     file; when set, write the pid there, then hang until killed
+#   FAKE_WHISPER_GRANDCHILD  file; when set, start a long sleep, write "<own pid> <sleep pid>"
+#                         there, then wait for the sleep (a tool with a grandchild)
 #   FAKE_WHISPER_FIXTURE  JSON to emit (default: ../whisper/sample.json next to this script)
 if [ "$1" = "--version" ]; then echo "whisper-cli 1.7.2-fake"; exit 0; fi
 here=$(cd "$(dirname "$0")" && pwd)
@@ -17,5 +19,12 @@ if [ -n "$FAKE_WHISPER_HANG" ]; then
   echo $$ > "$FAKE_WHISPER_HANG.part"
   /bin/mv "$FAKE_WHISPER_HANG.part" "$FAKE_WHISPER_HANG"
   exec /bin/sleep 30
+fi
+if [ -n "$FAKE_WHISPER_GRANDCHILD" ]; then
+  /bin/sleep 300 &
+  echo "$$ $!" > "$FAKE_WHISPER_GRANDCHILD.part"
+  /bin/mv "$FAKE_WHISPER_GRANDCHILD.part" "$FAKE_WHISPER_GRANDCHILD"
+  wait
+  exit 1
 fi
 /bin/cp "${FAKE_WHISPER_FIXTURE:-$here/../whisper/sample.json}" "$prefix.json"
