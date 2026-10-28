@@ -12,12 +12,13 @@ const DEFAULT_OUT_DIR: &str = "./minuta-out";
 const DEFAULT_LANG: &str = "auto";
 
 /// Every environment variable minuta reads.
-const ENV_NAMES: [&str; 16] = [
+const ENV_NAMES: [&str; 17] = [
     "MINUTA_CONFIG",
     "MINUTA_OUT_DIR",
     "MINUTA_WHISPER_BIN",
     "MINUTA_WHISPER_MODEL",
     "MINUTA_WHISPER_LANG",
+    "MINUTA_WHISPER_VAD_MODEL",
     "MINUTA_FFMPEG_BIN",
     "MINUTA_FFPROBE_BIN",
     "MINUTA_LLM",
@@ -69,6 +70,8 @@ pub struct Config {
     /// `None` when no layer sets a non-empty value.
     pub whisper_model: Option<Setting>,
     pub whisper_lang: Setting,
+    /// A path or a catalog name; `None` when unset: whisper runs without VAD.
+    pub whisper_vad_model: Option<Setting>,
     pub ffmpeg_bin: Setting,
     pub ffprobe_bin: Setting,
     pub llm_default: Setting,
@@ -144,6 +147,7 @@ struct ToolTable {
     bin: Option<String>,
     model: Option<String>,
     lang: Option<String>,
+    vad_model: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -242,6 +246,7 @@ impl Config {
                 whisper.lang,
                 DEFAULT_LANG,
             ),
+            whisper_vad_model: pick_opt(None, env("MINUTA_WHISPER_VAD_MODEL"), whisper.vad_model),
             ffmpeg_bin: pick(
                 flags.ffmpeg_bin,
                 env("MINUTA_FFMPEG_BIN"),
@@ -351,6 +356,7 @@ impl Config {
             ("whisper.bin", Some(&self.whisper_bin)),
             ("whisper.model", self.whisper_model.as_ref()),
             ("whisper.lang", Some(&self.whisper_lang)),
+            ("whisper.vad_model", self.whisper_vad_model.as_ref()),
             ("ffmpeg.bin", Some(&self.ffmpeg_bin)),
             ("ffprobe.bin", Some(&self.ffprobe_bin)),
             ("llm.default", Some(&self.llm_default)),

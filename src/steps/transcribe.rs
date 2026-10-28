@@ -35,8 +35,8 @@ pub struct Transcribe {
 
 impl Transcribe {
     /// `lang` is a whisper language code or `auto`. `vad_model` enables voice activity
-    /// detection (`--vad -vm <path>`; whisper-cli's `--vad` needs a model). The spec wants VAD
-    /// on by default, so the caller (T9/config) must supply one; `None` runs without VAD.
+    /// detection (`--vad -vm <path>`; whisper-cli's `--vad` needs a model). The runner passes
+    /// the resolved `whisper.vad_model`; `None` (no VAD model configured) runs without VAD.
     pub fn new(
         whisper: ToolInfo,
         model: PathBuf,

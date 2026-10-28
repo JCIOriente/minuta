@@ -21,7 +21,7 @@ use crate::llm::call::{CallCache, Policy};
 use crate::llm::claude::{self, Claude};
 use crate::llm::ollama::{self, Ollama};
 use crate::llm::{Backend, BackendId};
-use crate::models;
+use crate::models::{self, ModelKind};
 use crate::progress::{template_detail, Progress};
 use crate::steps::probe::read_probe;
 use crate::steps::transcribe::TRANSCRIPT_FILE;
@@ -82,6 +82,7 @@ pub fn run(
     }
     let Ready {
         toolchain,
+        vad_model,
         backends,
     } = ready?;
     let first = options
@@ -109,7 +110,7 @@ pub fn run(
         toolchain.whisper.clone(),
         model,
         config.whisper_lang.value.clone(),
-        None,
+        vad_model.clone(),
     );
     let steps: [&dyn Runnable; 5] = [&probe, &join, &audio, &transcribe, &Outputs];
 
@@ -133,7 +134,7 @@ pub fn run(
     }
     let plan = plan_stale(&job, &current, resolved.step_force);
     job.mark_stale(&plan)?;
-    if plan.iter().any(|(step, _)| *step == StepName::Transcribe) {
+    if vad_model.is_none() && plan.iter().any(|(step, _)| *step == StepName::Transcribe) {
         progress.note("VAD disabled (no VAD model configured)");
     }
 
@@ -314,25 +315,31 @@ fn resolve_force(
     }
 }
 
-/// What preflight found: the media tools and a ready backend per backend id in the run.
+/// What preflight found: the media tools, the VAD model and a ready backend per backend id
+/// in the run.
 pub(crate) struct Ready {
     toolchain: Toolchain,
+    /// `None` when no VAD model is configured.
+    vad_model: Option<PathBuf>,
     /// Keyed by backend id.
     backends: BTreeMap<String, Box<dyn Backend>>,
 }
 
 /// Resolves the toolchain for `config` and checks every backend in `backends`, listing every
-/// missing tool, the model and every unreachable backend or missing LLM model at once.
+/// missing tool, the model, a configured VAD model that is not a file and every unreachable
+/// backend or missing LLM model at once.
 pub(crate) fn preflight(config: &Config, backends: &[BackendId]) -> Result<Ready> {
     let mut missing = Vec::new();
     let toolchain = match tools::preflight(&tool_paths(config)?, true) {
         Ok(toolchain) => Some(toolchain),
         Err(Error::MissingTools(m)) => {
-            missing.extend(with_pull_hint(m, config));
+            missing.extend(m);
             None
         }
         Err(other) => return Err(other),
     };
+    let vad_model = locate_vad_model(config, &mut missing)?;
+    missing = with_pull_hint(missing, config);
     let mut ready: BTreeMap<String, Box<dyn Backend>> = BTreeMap::new();
     let mut claude_bin: Option<std::result::Result<PathBuf, Missing>> = None;
     for id in backends {
@@ -362,6 +369,7 @@ pub(crate) fn preflight(config: &Config, backends: &[BackendId]) -> Result<Ready
     match toolchain {
         Some(toolchain) if missing.is_empty() => Ok(Ready {
             toolchain,
+            vad_model,
             backends: ready,
         }),
         _ => Err(Error::MissingTools(missing)),
@@ -414,6 +422,7 @@ pub fn llm_status(config: &Config) -> String {
 /// What `doctor` shows for `config`.
 pub fn inspect(config: &Config) -> Result<Report> {
     let mut report = tools::inspect(&tool_paths(config)?, true);
+    locate_vad_model(config, &mut report.missing)?;
     report.missing = with_pull_hint(report.missing, config);
     Ok(report)
 }
@@ -422,13 +431,11 @@ pub fn inspect(config: &Config) -> Result<Report> {
 /// resolves into the models dir; a value that is neither a file nor a catalog name is kept
 /// as a path, so preflight reports it as missing.
 pub fn tool_paths(config: &Config) -> Result<ToolPaths> {
-    let model = match &config.whisper_model {
-        Some(setting) => Some(
-            models::resolve(&setting.value, &models::default_dir()?)
-                .unwrap_or_else(|_| PathBuf::from(&setting.value)),
-        ),
-        None => None,
-    };
+    let model = config
+        .whisper_model
+        .as_ref()
+        .map(|setting| model_path(&setting.value, ModelKind::Whisper))
+        .transpose()?;
     Ok(ToolPaths {
         ffmpeg: bin_path(&config.ffmpeg_bin.value, "ffmpeg"),
         ffprobe: bin_path(&config.ffprobe_bin.value, "ffprobe"),
@@ -457,14 +464,86 @@ fn bin_path(value: &str, tool: &str) -> Option<PathBuf> {
     Some(found.unwrap_or_else(|| path.to_path_buf()))
 }
 
-/// A missing model that is a catalog name only needs `minuta models pull <name>`.
-fn with_pull_hint(mut missing: Vec<Missing>, config: &Config) -> Vec<Missing> {
-    let Some(setting) = &config.whisper_model else {
-        return missing;
+/// The config key that takes a model of `kind`.
+fn model_key(kind: ModelKind) -> &'static str {
+    match kind {
+        ModelKind::Whisper => "whisper.model",
+        ModelKind::Vad => "whisper.vad_model",
+    }
+}
+
+/// A configured model of `kind`: a catalog name resolves into the models dir, anything else is
+/// kept as a path. A catalog name of the other kind is `Error::Usage`.
+fn model_path(value: &str, kind: ModelKind) -> Result<PathBuf> {
+    let path =
+        models::resolve(value, &models::default_dir()?).unwrap_or_else(|_| PathBuf::from(value));
+    let from_catalog = path != Path::new(value);
+    match models::CATALOG.iter().find(|m| m.name == value) {
+        Some(spec) if from_catalog && spec.kind != kind => {
+            let what = match spec.kind {
+                ModelKind::Whisper => "a whisper model",
+                ModelKind::Vad => "a VAD model",
+            };
+            Err(Error::Usage(format!(
+                "`{value}` is {what}; set it as {}, not {}",
+                model_key(spec.kind),
+                model_key(kind)
+            )))
+        }
+        _ => Ok(path),
+    }
+}
+
+/// The configured `whisper.vad_model` as a path, resolved like `whisper.model`.
+fn vad_model_path(config: &Config) -> Result<Option<PathBuf>> {
+    config
+        .whisper_vad_model
+        .as_ref()
+        .map(|setting| model_path(&setting.value, ModelKind::Vad))
+        .transpose()
+}
+
+/// The name of a missing VAD model in [`Missing`].
+const VAD_MODEL: &str = "vad model";
+
+/// The configured VAD model, if it is a file. One that is configured but not a file is added
+/// to `missing`; a metadata error other than not found is returned, naming the path.
+fn locate_vad_model(config: &Config, missing: &mut Vec<Missing>) -> Result<Option<PathBuf>> {
+    let Some(path) = vad_model_path(config)? else {
+        return Ok(None);
     };
-    if models::CATALOG.iter().any(|m| m.name == setting.value) {
-        for item in missing.iter_mut().filter(|m| m.name == "model") {
-            item.hint = format!("run `minuta models pull {}`", setting.value);
+    match fs::metadata(&path) {
+        Ok(meta) if meta.is_file() => return Ok(Some(path)),
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(Error::Io(io::Error::new(
+                e.kind(),
+                format!("{}: {e}", path.display()),
+            )))
+        }
+    }
+    missing.push(Missing {
+        name: VAD_MODEL.to_string(),
+        hint: format!("configured path {} is not a file", path.display()),
+    });
+    Ok(None)
+}
+
+/// A missing model or VAD model that is a catalog name only needs `minuta models pull <name>`.
+fn with_pull_hint(mut missing: Vec<Missing>, config: &Config) -> Vec<Missing> {
+    let settings = [
+        ("model", &config.whisper_model),
+        (VAD_MODEL, &config.whisper_vad_model),
+    ];
+    for (name, setting) in settings {
+        let Some(setting) = setting else {
+            continue;
+        };
+        if models::CATALOG.iter().any(|m| m.name == setting.value) {
+            for item in missing.iter_mut().filter(|m| m.name == name) {
+                item.hint = format!("run `minuta models pull {}`", setting.value);
+            }
         }
     }
     missing
@@ -862,6 +941,60 @@ mod tests {
         assert_eq!(hinted[0].hint, "run `minuta models pull small`");
         let kept = with_pull_hint(missing(), &config(&[("MINUTA_WHISPER_MODEL", "/m/x.bin")]));
         assert_eq!(kept, missing());
+    }
+
+    #[test]
+    fn vad_model_unset_is_none() {
+        assert_eq!(vad_model_path(&config(&[])).unwrap(), None);
+    }
+
+    #[test]
+    fn catalog_vad_model_resolves_into_models_dir() {
+        let path = vad_model_path(&config(&[("MINUTA_WHISPER_VAD_MODEL", "silero-v5.1.2")]));
+        assert_eq!(
+            path.unwrap(),
+            Some(
+                models::default_dir()
+                    .unwrap()
+                    .join("ggml-silero-v5.1.2.bin")
+            )
+        );
+    }
+
+    #[test]
+    fn vad_model_path_is_kept() {
+        let path = vad_model_path(&config(&[("MINUTA_WHISPER_VAD_MODEL", "/m/vad.bin")]));
+        assert_eq!(path.unwrap(), Some(PathBuf::from("/m/vad.bin")));
+    }
+
+    #[test]
+    fn pull_hint_for_each_model_uses_its_own_setting() {
+        let missing = || {
+            vec![
+                Missing {
+                    name: "model".into(),
+                    hint: "configured path is not a file".into(),
+                },
+                Missing {
+                    name: "vad model".into(),
+                    hint: "configured path is not a file".into(),
+                },
+            ]
+        };
+        let both = config(&[
+            ("MINUTA_WHISPER_MODEL", "small"),
+            ("MINUTA_WHISPER_VAD_MODEL", "silero-v5.1.2"),
+        ]);
+        let hinted = with_pull_hint(missing(), &both);
+        assert_eq!(hinted[0].hint, "run `minuta models pull small`");
+        assert_eq!(hinted[1].hint, "run `minuta models pull silero-v5.1.2`");
+        let vad_only = config(&[
+            ("MINUTA_WHISPER_MODEL", "/m/x.bin"),
+            ("MINUTA_WHISPER_VAD_MODEL", "silero-v5.1.2"),
+        ]);
+        let hinted = with_pull_hint(missing(), &vad_only);
+        assert_eq!(hinted[0].hint, "configured path is not a file");
+        assert_eq!(hinted[1].hint, "run `minuta models pull silero-v5.1.2`");
     }
 
     #[test]

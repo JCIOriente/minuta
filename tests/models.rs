@@ -1,4 +1,4 @@
-use minuta::models::{self, ModelSpec, Pulled};
+use minuta::models::{self, ModelKind, ModelSpec, Pulled};
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::io::{Read, Write};
@@ -23,6 +23,11 @@ type Requests = Arc<Mutex<Vec<String>>>;
 /// Serves `body` at `/ggml-tiny.bin` (404 for any other path) on a local port; returns the
 /// base URL and the request lines received.
 fn serve(body: &'static [u8]) -> (String, Requests) {
+    serve_at("/ggml-tiny.bin", body)
+}
+
+/// Serves `body` at `path` (404 for any other path).
+fn serve_at(path: &'static str, body: &'static [u8]) -> (String, Requests) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let requests: Requests = Arc::default();
@@ -44,7 +49,7 @@ fn serve(body: &'static [u8]) -> (String, Requests) {
                 .next()
                 .unwrap_or_default()
                 .to_string();
-            let found = line.starts_with("GET /ggml-tiny.bin ");
+            let found = line.starts_with(&format!("GET {path} "));
             log.lock().unwrap().push(line);
             let (status, payload) = if found {
                 ("200 OK", body)
@@ -78,10 +83,13 @@ fn bad_checksum_rejected_and_cleaned() {
     let wrong = sha(b"something else");
     let spec = ModelSpec {
         name: "tiny",
+        file: "ggml-tiny.bin",
+        kind: ModelKind::Whisper,
+        base_url: &base,
         sha256: &wrong,
         size: BODY.len() as u64,
     };
-    let err = models::pull(&spec, dir.path(), &base).unwrap_err();
+    let err = models::pull(&spec, dir.path()).unwrap_err();
     assert_eq!(err.to_string(), "job error: checksum mismatch for tiny");
     assert!(
         files_in(dir.path()).is_empty(),
@@ -97,10 +105,13 @@ fn good_download_renamed() {
     let good = sha(BODY);
     let spec = ModelSpec {
         name: "tiny",
+        file: "ggml-tiny.bin",
+        kind: ModelKind::Whisper,
+        base_url: &base,
         sha256: &good,
         size: BODY.len() as u64,
     };
-    let out = models::pull(&spec, dir.path(), &base).unwrap();
+    let out = models::pull(&spec, dir.path()).unwrap();
     assert_eq!(*requests.lock().unwrap(), ["GET /ggml-tiny.bin HTTP/1.1"]);
     assert_eq!(out, Pulled::Downloaded);
     assert_eq!(files_in(dir.path()), vec!["ggml-tiny.bin".to_string()]);
@@ -117,11 +128,14 @@ fn already_present_noop() {
     let good = sha(BODY);
     let spec = ModelSpec {
         name: "tiny",
+        file: "ggml-tiny.bin",
+        kind: ModelKind::Whisper,
+        base_url: &base,
         sha256: &good,
         size: BODY.len() as u64,
     };
     std::fs::write(dir.path().join("ggml-tiny.bin"), BODY).unwrap();
-    let out = models::pull(&spec, dir.path(), &base).unwrap();
+    let out = models::pull(&spec, dir.path()).unwrap();
     assert_eq!(out, Pulled::AlreadyPresent);
     assert!(requests.lock().unwrap().is_empty());
 }
@@ -133,14 +147,14 @@ fn invalid_present_file_is_replaced() {
     let good = sha(BODY);
     let spec = ModelSpec {
         name: "tiny",
+        file: "ggml-tiny.bin",
+        kind: ModelKind::Whisper,
+        base_url: &base,
         sha256: &good,
         size: BODY.len() as u64,
     };
     std::fs::write(dir.path().join("ggml-tiny.bin"), b"corrupt").unwrap();
-    assert_eq!(
-        models::pull(&spec, dir.path(), &base).unwrap(),
-        Pulled::Downloaded
-    );
+    assert_eq!(models::pull(&spec, dir.path()).unwrap(), Pulled::Downloaded);
     assert_eq!(
         std::fs::read(dir.path().join("ggml-tiny.bin")).unwrap(),
         BODY
@@ -170,19 +184,129 @@ fn resolve_path_vs_name() {
 #[test]
 fn catalog_lists_pinned_models() {
     let names: Vec<_> = models::CATALOG.iter().map(|m| m.name).collect();
-    assert_eq!(names, ["tiny", "base", "small", "medium", "large-v3"]);
+    assert_eq!(
+        names,
+        [
+            "tiny",
+            "base",
+            "small",
+            "medium",
+            "large-v3",
+            "silero-v5.1.2"
+        ]
+    );
     for m in models::CATALOG {
         assert_eq!(m.sha256.len(), 64);
         assert!(m.sha256.bytes().all(|b| b.is_ascii_hexdigit()));
     }
 }
 
+fn catalog_spec(name: &str) -> &'static ModelSpec<'static> {
+    models::CATALOG.iter().find(|m| m.name == name).unwrap()
+}
+
+#[test]
+fn catalog_silero_vad_entry() {
+    let spec = catalog_spec("silero-v5.1.2");
+    assert_eq!(spec.kind, ModelKind::Vad);
+    assert_eq!(spec.file, "ggml-silero-v5.1.2.bin");
+    assert_eq!(
+        spec.base_url,
+        "https://huggingface.co/ggml-org/whisper-vad/resolve/main"
+    );
+    assert_eq!(
+        spec.url(),
+        "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin"
+    );
+    assert_eq!(
+        spec.sha256,
+        "29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf"
+    );
+    assert_eq!(spec.size, 885_098);
+}
+
+#[test]
+fn catalog_whisper_entry_keeps_its_url() {
+    let spec = catalog_spec("small");
+    assert_eq!(spec.kind, ModelKind::Whisper);
+    assert_eq!(spec.file, "ggml-small.bin");
+    assert_eq!(
+        spec.url(),
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+    );
+}
+
+#[test]
+fn resolve_vad_name_uses_its_file_name() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(
+        models::resolve("silero-v5.1.2", dir.path()).unwrap(),
+        dir.path().join("ggml-silero-v5.1.2.bin")
+    );
+}
+
+#[test]
+fn pull_uses_the_spec_file_name() {
+    let (base, requests) = serve_at("/ggml-silero-v5.1.2.bin", BODY);
+    let dir = tempfile::tempdir().unwrap();
+    let good = sha(BODY);
+    let spec = ModelSpec {
+        name: "silero-v5.1.2",
+        file: "ggml-silero-v5.1.2.bin",
+        kind: ModelKind::Vad,
+        base_url: &base,
+        sha256: &good,
+        size: BODY.len() as u64,
+    };
+    assert_eq!(models::pull(&spec, dir.path()).unwrap(), Pulled::Downloaded);
+    assert_eq!(
+        *requests.lock().unwrap(),
+        ["GET /ggml-silero-v5.1.2.bin HTTP/1.1"]
+    );
+    assert_eq!(
+        files_in(dir.path()),
+        vec!["ggml-silero-v5.1.2.bin".to_string()]
+    );
+}
+
+#[test]
+fn list_shows_the_vad_model() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("ggml-silero-v5.1.2.bin"), b"vad").unwrap();
+    let rows = models::list(dir.path()).unwrap();
+    let vad = rows.iter().find(|r| r.name == "silero-v5.1.2").unwrap();
+    assert_eq!(
+        *vad,
+        models::ModelInfo {
+            name: "silero-v5.1.2".into(),
+            installed: true,
+            size: 3,
+        }
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn list_surfaces_metadata_errors_with_the_path() {
+    let dir = tempfile::tempdir().unwrap();
+    // A symlink to itself: metadata fails with "too many levels of symbolic links", which
+    // must not read as "not installed".
+    let entry = dir.path().join("ggml-base.bin");
+    std::os::unix::fs::symlink(&entry, &entry).unwrap();
+    let loop_error = std::fs::metadata(&entry).unwrap_err();
+    let err = models::list(dir.path()).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        format!("I/O error: {}: {loop_error}", entry.display())
+    );
+}
+
 #[test]
 fn list_shows_installed_and_available_with_sizes() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("ggml-base.bin"), b"12345").unwrap();
-    let rows = models::list(dir.path());
-    assert_eq!(rows.len(), 5);
+    let rows = models::list(dir.path()).unwrap();
+    assert_eq!(rows.len(), 6);
     let base = rows.iter().find(|r| r.name == "base").unwrap();
     assert!(base.installed);
     assert_eq!(base.size, 5);
@@ -198,11 +322,14 @@ fn corrupt_present_file_removed_when_download_also_bad() {
     let wrong = sha(b"something else");
     let spec = ModelSpec {
         name: "tiny",
+        file: "ggml-tiny.bin",
+        kind: ModelKind::Whisper,
+        base_url: &base,
         sha256: &wrong,
         size: BODY.len() as u64,
     };
     std::fs::write(dir.path().join("ggml-tiny.bin"), b"corrupt").unwrap();
-    models::pull(&spec, dir.path(), &base).unwrap_err();
+    models::pull(&spec, dir.path()).unwrap_err();
     assert!(
         files_in(dir.path()).is_empty(),
         "left {:?}",
@@ -215,16 +342,16 @@ fn trailing_slash_in_base_url_is_ok() {
     let (base, requests) = serve(BODY);
     let dir = tempfile::tempdir().unwrap();
     let good = sha(BODY);
+    let url = format!("{base}/");
     let spec = ModelSpec {
         name: "tiny",
+        file: "ggml-tiny.bin",
+        kind: ModelKind::Whisper,
+        base_url: &url,
         sha256: &good,
         size: BODY.len() as u64,
     };
-    let url = format!("{base}/");
-    assert_eq!(
-        models::pull(&spec, dir.path(), &url).unwrap(),
-        Pulled::Downloaded
-    );
+    assert_eq!(models::pull(&spec, dir.path()).unwrap(), Pulled::Downloaded);
     assert_eq!(*requests.lock().unwrap(), ["GET /ggml-tiny.bin HTTP/1.1"]);
 }
 
@@ -235,10 +362,13 @@ fn oversized_download_rejected_and_cleaned() {
     let good = sha(BODY);
     let spec = ModelSpec {
         name: "tiny",
+        file: "ggml-tiny.bin",
+        kind: ModelKind::Whisper,
+        base_url: &base,
         sha256: &good,
         size: BODY.len() as u64 - 5,
     };
-    let err = models::pull(&spec, dir.path(), &base).unwrap_err();
+    let err = models::pull(&spec, dir.path()).unwrap_err();
     assert_eq!(err.to_string(), "job error: size mismatch for tiny");
     assert!(
         files_in(dir.path()).is_empty(),
@@ -258,12 +388,16 @@ fn download_failure_leaves_no_file() {
     // "base" is not served by the test server, so it answers 404.
     for (name, url) in [("base", &base), ("tiny", &closed)] {
         let dir = tempfile::tempdir().unwrap();
+        let file = format!("ggml-{name}.bin");
         let spec = ModelSpec {
             name,
+            file: &file,
+            kind: ModelKind::Whisper,
+            base_url: url,
             sha256: &good,
             size: BODY.len() as u64,
         };
-        let err = models::pull(&spec, dir.path(), url).unwrap_err();
+        let err = models::pull(&spec, dir.path()).unwrap_err();
         assert_eq!(err.exit_code(), 1);
         if name == "base" {
             let msg = err.to_string();
@@ -302,10 +436,13 @@ fn undersized_download_rejected_and_cleaned() {
     let good = sha(BODY);
     let spec = ModelSpec {
         name: "tiny",
+        file: "ggml-tiny.bin",
+        kind: ModelKind::Whisper,
+        base_url: &base,
         sha256: &good,
         size: BODY.len() as u64 + 5,
     };
-    let err = models::pull(&spec, dir.path(), &base).unwrap_err();
+    let err = models::pull(&spec, dir.path()).unwrap_err();
     assert_eq!(err.to_string(), "job error: size mismatch for tiny");
     assert!(
         files_in(dir.path()).is_empty(),
