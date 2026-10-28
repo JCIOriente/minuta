@@ -306,6 +306,164 @@ fn second_run_all_cached() {
     );
 }
 
+/// The whisper invocation `run` makes for job `name`, with `vad` appended when given.
+fn whisper_call(env: &Env, name: &str, vad: Option<&Path>) -> String {
+    let job = env.job_dir(name);
+    let mut call = format!(
+        "whisper-cli -m {} -f {} -l auto -oj -of {}",
+        env.path("ggml-test.bin").display(),
+        job.join("audio.wav").display(),
+        job.join("whisper-raw").display()
+    );
+    if let Some(vad) = vad {
+        call.push_str(&format!(" --vad -vm {}", vad.display()));
+    }
+    call
+}
+
+#[test]
+fn vad_model_path_runs_whisper_with_vad() {
+    let env = Env::new();
+    let vad = env.path("vad.bin");
+    fs::write(&vad, "vad").unwrap();
+    let out = env.run_cmd({
+        let mut cmd = env.command(&["run", "clase-4.mp4"]);
+        cmd.env("MINUTA_WHISPER_VAD_MODEL", &vad);
+        cmd
+    });
+    out.clone().assert().success();
+    let whisper: Vec<String> = env
+        .calls()
+        .into_iter()
+        .filter(|c| c.starts_with("whisper-cli "))
+        .collect();
+    assert_eq!(whisper, [whisper_call(&env, "clase-4", Some(&vad))]);
+    let err = stderr(&out);
+    assert!(!err.contains("VAD disabled"), "stderr was {err}");
+}
+
+#[test]
+fn vad_model_catalog_name_resolves_into_models_dir() {
+    let env = Env::new();
+    let dir = env.path("home/.cache/minuta/models");
+    fs::create_dir_all(&dir).unwrap();
+    let vad = dir.join("ggml-silero-v5.1.2.bin");
+    fs::write(&vad, "vad").unwrap();
+    fs::write(
+        env.path("config.toml"),
+        "[whisper]\nvad_model = \"silero-v5.1.2\"\n",
+    )
+    .unwrap();
+    env.minuta(&["run", "clase-4.mp4"]).assert().success();
+    let whisper: Vec<String> = env
+        .calls()
+        .into_iter()
+        .filter(|c| c.starts_with("whisper-cli "))
+        .collect();
+    assert_eq!(whisper, [whisper_call(&env, "clase-4", Some(&vad))]);
+}
+
+#[test]
+fn without_vad_model_whisper_runs_without_vad() {
+    let env = Env::new();
+    env.minuta(&["run", "clase-4.mp4"]).assert().success();
+    let whisper: Vec<String> = env
+        .calls()
+        .into_iter()
+        .filter(|c| c.starts_with("whisper-cli "))
+        .collect();
+    assert_eq!(whisper, [whisper_call(&env, "clase-4", None)]);
+}
+
+#[test]
+fn vad_model_not_pulled_hints_pull() {
+    let env = Env::new();
+    let out = env.run_cmd({
+        let mut cmd = env.command(&["run", "clase-4.mp4"]);
+        cmd.env("MINUTA_WHISPER_VAD_MODEL", "silero-v5.1.2");
+        cmd
+    });
+    out.clone().assert().code(1).stdout("");
+    assert_eq!(
+        stderr(&out),
+        "minuta: missing required tools: vad model\n  \
+         vad model: run `minuta models pull silero-v5.1.2`\n"
+    );
+    assert!(env.calls().is_empty());
+    assert!(!env.path("minuta-out").exists());
+}
+
+#[test]
+fn vad_model_missing_path_is_preflight_error() {
+    let env = Env::new();
+    let vad = env.path("no-such-vad.bin");
+    let out = env.run_cmd({
+        let mut cmd = env.command(&["run", "clase-4.mp4"]);
+        cmd.env("MINUTA_WHISPER_VAD_MODEL", &vad);
+        cmd
+    });
+    out.clone().assert().code(1).stdout("");
+    assert_eq!(
+        stderr(&out),
+        format!(
+            "minuta: missing required tools: vad model\n  \
+             vad model: configured path {} is not a file\n",
+            vad.display()
+        )
+    );
+    assert!(env.calls().is_empty());
+}
+
+#[test]
+fn whisper_model_rejects_the_vad_catalog_name() {
+    let env = Env::new();
+    let out = env.run_cmd({
+        let mut cmd = env.command(&["run", "clase-4.mp4"]);
+        cmd.env("MINUTA_WHISPER_MODEL", "silero-v5.1.2");
+        cmd
+    });
+    out.clone().assert().code(2).stdout("");
+    assert_eq!(
+        stderr(&out),
+        "minuta: usage error: `silero-v5.1.2` is a VAD model; \
+         set it as whisper.vad_model, not whisper.model\n"
+    );
+    assert!(env.calls().is_empty());
+}
+
+#[test]
+fn vad_model_rejects_a_whisper_catalog_name() {
+    let env = Env::new();
+    let out = env.run_cmd({
+        let mut cmd = env.command(&["run", "clase-4.mp4"]);
+        cmd.env("MINUTA_WHISPER_VAD_MODEL", "tiny");
+        cmd
+    });
+    out.clone().assert().code(2).stdout("");
+    assert_eq!(
+        stderr(&out),
+        "minuta: usage error: `tiny` is a whisper model; \
+         set it as whisper.model, not whisper.vad_model\n"
+    );
+    assert!(env.calls().is_empty());
+}
+
+#[test]
+fn doctor_reports_missing_vad_model() {
+    let env = Env::new();
+    let out = env.run_cmd({
+        let mut cmd = env.command(&["doctor"]);
+        cmd.env("MINUTA_WHISPER_VAD_MODEL", "silero-v5.1.2");
+        cmd
+    });
+    out.clone().assert().code(1);
+    let err = stderr(&out);
+    assert!(
+        err.ends_with("\n  vad model: run `minuta models pull silero-v5.1.2`\n"),
+        "stderr was {err}"
+    );
+}
+
 #[test]
 fn transcribe_behaves_like_run() {
     let env = Env::new();
@@ -675,7 +833,8 @@ fn config_show_lists_values_and_sources() {
     let out = env.run_cmd({
         let mut cmd = env.command(&["config", "show"]);
         cmd.env_remove("MINUTA_WHISPER_MODEL")
-            .env("MINUTA_FFMPEG_BIN", "/opt/ffmpeg");
+            .env("MINUTA_FFMPEG_BIN", "/opt/ffmpeg")
+            .env("MINUTA_WHISPER_VAD_MODEL", "silero-v5.1.2");
         cmd
     });
     out.clone().assert().success();
@@ -685,6 +844,7 @@ fn config_show_lists_values_and_sources() {
          whisper.bin = whisper-cli (default)\n\
          whisper.model = (unset)\n\
          whisper.lang = es (file)\n\
+         whisper.vad_model = silero-v5.1.2 (env)\n\
          ffmpeg.bin = /opt/ffmpeg (env)\n\
          ffprobe.bin = ffprobe (default)\n\
          llm.default = ollama:gemma4:26b (default)\n\
@@ -707,11 +867,31 @@ fn models_list_shows_catalog() {
     fs::write(dir.join("ggml-tiny.bin"), "tiny").unwrap();
     let out = env.minuta(&["models", "list"]);
     out.clone().assert().success();
-    let lines: Vec<String> = stdout(&out).lines().map(String::from).collect();
-    assert_eq!(lines.len(), 5, "{lines:?}");
-    assert!(lines[0].starts_with("tiny") && lines[0].contains("installed"));
-    assert!(lines[1].starts_with("base") && lines[1].contains("available"));
-    assert!(lines[4].starts_with("large-v3"));
+    assert_eq!(
+        stdout(&out),
+        "tiny           installed  0.0 MiB\n\
+         base           available  141.1 MiB\n\
+         small          available  465.0 MiB\n\
+         medium         available  1.4 GiB\n\
+         large-v3       available  2.9 GiB\n\
+         silero-v5.1.2  available  0.8 MiB\n"
+    );
+}
+
+#[test]
+fn models_list_reports_unreadable_entry() {
+    let env = Env::new();
+    let dir = env.path("home/.cache/minuta/models");
+    fs::create_dir_all(&dir).unwrap();
+    let entry = dir.join("ggml-small.bin");
+    std::os::unix::fs::symlink(&entry, &entry).unwrap();
+    let loop_error = fs::metadata(&entry).unwrap_err();
+    let out = env.minuta(&["models", "list"]);
+    out.clone().assert().code(1).stdout("");
+    assert_eq!(
+        stderr(&out),
+        format!("minuta: I/O error: {}: {loop_error}\n", entry.display())
+    );
 }
 
 #[test]
@@ -720,7 +900,10 @@ fn models_pull_unknown_name_is_usage_error() {
     env.minuta(&["models", "pull", "huge"])
         .assert()
         .code(2)
-        .stderr(contains("tiny, base, small, medium, large-v3"));
+        .stderr(
+            "minuta: usage error: unknown model `huge`; expected one of \
+             tiny, base, small, medium, large-v3, silero-v5.1.2\n",
+        );
 }
 
 // ---------------------------------------------------------------------------------------

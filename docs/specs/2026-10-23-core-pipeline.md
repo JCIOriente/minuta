@@ -199,6 +199,6 @@ Plan: docs/plans/2026-10-23-core-pipeline.md. All tasks merged; deviations and f
 
 Known deviations from this spec (decided during implementation):
 - Name conflicts: only `--force` replaces an existing job; `--name` picks another name.
-- VAD is off until a VAD model is configured (`whisper-cli --vad` needs `--vad-model`); tracked in #22.
+- VAD is off until a VAD model is configured with `whisper.vad_model` (`MINUTA_WHISPER_VAD_MODEL`), a path or the catalog name `silero-v5.1.2` (`minuta models pull silero-v5.1.2`), because `whisper-cli --vad` needs `--vad-model` (#110).
 - An explicit `MINUTA_CONFIG` pointing at a missing file is an error; unknown config keys are rejected.
 - `derive_name` returns `Result<String>`; steps expose `run_with(ctx, RunOpts, on_line)` for interrupt and progress.

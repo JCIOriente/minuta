@@ -369,7 +369,10 @@ fn show_lists_every_key_with_source_or_unset() {
     let shown = cfg.entries();
     assert!(shown.iter().all(|(k, s)| match s {
         Some(s) => s.source == Source::Default,
-        None => matches!(*k, "whisper.model" | "llm.output_lang" | "llm.concurrency"),
+        None => matches!(
+            *k,
+            "whisper.model" | "whisper.vad_model" | "llm.output_lang" | "llm.concurrency"
+        ),
     }));
 }
 
@@ -400,6 +403,7 @@ fn env_snapshot_covers_every_minuta_name() {
         ("MINUTA_WHISPER_BIN", "env-wb".into()),
         ("MINUTA_WHISPER_MODEL", "env-wm".into()),
         ("MINUTA_WHISPER_LANG", "env-wl".into()),
+        ("MINUTA_WHISPER_VAD_MODEL", "env-wv".into()),
         ("MINUTA_FFMPEG_BIN", "env-ff".into()),
         ("MINUTA_FFPROBE_BIN", "env-fp".into()),
         ("MINUTA_LLM", "env-ld".into()),
@@ -447,11 +451,16 @@ fn env_snapshot_covers_every_minuta_name() {
     );
     assert_key(
         cfg.entries()[4].1,
+        Some(("env-wv", Source::Env)),
+        "whisper.vad_model",
+    );
+    assert_key(
+        cfg.entries()[5].1,
         Some(("env-ff", Source::Env)),
         "ffmpeg.bin",
     );
     assert_key(
-        cfg.entries()[5].1,
+        cfg.entries()[6].1,
         Some(("env-fp", Source::Env)),
         "ffprobe.bin",
     );
@@ -463,7 +472,7 @@ fn entries_map_each_key_to_its_own_file_value() {
     let dir = tempfile::tempdir().unwrap();
     let file = write_config(
         &dir,
-        "out_dir = \"out-v\"\n[whisper]\nbin = \"wb-v\"\nmodel = \"wm-v\"\nlang = \"wl-v\"\n[ffmpeg]\nbin = \"ff-v\"\n[ffprobe]\nbin = \"fp-v\"\n[llm]\ndefault = \"ld-v\"\noutput_lang = \"lo-v\"\nconcurrency = 3\nretries = 4\nbackoff_ms = 150\nrepairs = 6\n[ollama]\nurl = \"ou-v\"\nnum_ctx = 8192\n[claude]\nbin = \"cb-v\"\n",
+        "out_dir = \"out-v\"\n[whisper]\nbin = \"wb-v\"\nmodel = \"wm-v\"\nlang = \"wl-v\"\nvad_model = \"wv-v\"\n[ffmpeg]\nbin = \"ff-v\"\n[ffprobe]\nbin = \"fp-v\"\n[llm]\ndefault = \"ld-v\"\noutput_lang = \"lo-v\"\nconcurrency = 3\nretries = 4\nbackoff_ms = 150\nrepairs = 6\n[ollama]\nurl = \"ou-v\"\nnum_ctx = 8192\n[claude]\nbin = \"cb-v\"\n",
     );
     let cfg = Config::resolve(Overrides::default(), &no_env, Some(file.as_path())).unwrap();
     let want = [
@@ -471,6 +480,7 @@ fn entries_map_each_key_to_its_own_file_value() {
         ("whisper.bin", "wb-v"),
         ("whisper.model", "wm-v"),
         ("whisper.lang", "wl-v"),
+        ("whisper.vad_model", "wv-v"),
         ("ffmpeg.bin", "ff-v"),
         ("ffprobe.bin", "fp-v"),
         ("llm.default", "ld-v"),
@@ -549,6 +559,15 @@ struct NewCase {
 
 fn new_cases() -> Vec<NewCase> {
     vec![
+        NewCase {
+            key: "whisper.vad_model",
+            toml: "[whisper]\nvad_model = \"file\"\n",
+            file_value: "file",
+            env: "MINUTA_WHISPER_VAD_MODEL",
+            env_value: "env",
+            default: None,
+            get: |c| c.whisper_vad_model.as_ref(),
+        },
         NewCase {
             key: "llm.default",
             toml: "[llm]\ndefault = \"file\"\n",
@@ -741,6 +760,7 @@ fn entries_list_new_keys() {
             "whisper.bin",
             "whisper.model",
             "whisper.lang",
+            "whisper.vad_model",
             "ffmpeg.bin",
             "ffprobe.bin",
             "llm.default",

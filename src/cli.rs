@@ -223,13 +223,13 @@ fn doctor() -> Result<()> {
 }
 
 fn models_list() -> Result<()> {
-    for model in models::list(&models::default_dir()?) {
+    for model in models::list(&models::default_dir()?)? {
         let state = if model.installed {
             "installed"
         } else {
             "available"
         };
-        println!("{:<10} {state:<10} {}", model.name, human_size(model.size));
+        println!("{:<14} {state:<10} {}", model.name, human_size(model.size));
     }
     Ok(())
 }
@@ -251,7 +251,7 @@ fn models_pull(name: &str) -> Result<()> {
         human_size(spec.size),
         dir.display()
     );
-    match models::pull(spec, &dir, models::DEFAULT_BASE_URL)? {
+    match models::pull(spec, &dir)? {
         Pulled::AlreadyPresent => eprintln!("{name} is already present"),
         Pulled::Downloaded => eprintln!("{name} downloaded and verified"),
     }
