@@ -554,6 +554,12 @@ trait Execute {
         opts: RunOpts,
         on_line: &mut dyn FnMut(&str),
     ) -> Result<Vec<String>>;
+
+    /// Seconds of media the step's ffmpeg run processes, so its stats can show a percent;
+    /// `None` when the step runs no ffmpeg.
+    fn media_seconds(&self, _ctx: &Ctx) -> Result<Option<f64>> {
+        Ok(None)
+    }
 }
 
 impl Execute for Probe {
@@ -576,6 +582,10 @@ impl Execute for Join {
     ) -> Result<Vec<String>> {
         self.run_with(ctx, opts, on_line).map(|()| Vec::new())
     }
+
+    fn media_seconds(&self, ctx: &Ctx) -> Result<Option<f64>> {
+        probed_seconds(ctx)
+    }
 }
 
 impl Execute for Audio {
@@ -587,6 +597,18 @@ impl Execute for Audio {
     ) -> Result<Vec<String>> {
         self.run_with(ctx, opts, on_line).map(|()| Vec::new())
     }
+
+    /// The joined file is as long as the sources together.
+    fn media_seconds(&self, ctx: &Ctx) -> Result<Option<f64>> {
+        probed_seconds(ctx)
+    }
+}
+
+/// The total length of the sources in `probe.json`; `None` when it is not a positive
+/// number of seconds.
+fn probed_seconds(ctx: &Ctx) -> Result<Option<f64>> {
+    let total: f64 = read_probe(&ctx.dir)?.iter().map(|p| p.duration).sum();
+    Ok(Some(total).filter(|t| t.is_finite() && *t > 0.0))
 }
 
 impl Execute for Transcribe {
@@ -619,6 +641,7 @@ trait Runnable {
         opts: RunOpts,
         on_line: &mut dyn FnMut(&str),
     ) -> Result<Vec<String>>;
+    fn media_seconds(&self, ctx: &Ctx) -> Result<Option<f64>>;
 }
 
 impl<S: Step + Execute> Runnable for S {
@@ -641,6 +664,10 @@ impl<S: Step + Execute> Runnable for S {
         on_line: &mut dyn FnMut(&str),
     ) -> Result<Vec<String>> {
         Execute::execute(self, ctx, opts, on_line)
+    }
+
+    fn media_seconds(&self, ctx: &Ctx) -> Result<Option<f64>> {
+        Execute::media_seconds(self, ctx)
     }
 }
 
@@ -670,6 +697,10 @@ impl Pipeline<'_> {
                 return Err(Error::Interrupted);
             }
             progress.start(index, name.as_str());
+            // The total only turns ffmpeg's stats into a percent. If it can't be read, show
+            // the raw stats instead of failing a step that may not need probe.json at all
+            // (audio doesn't); a step that does need it reports the error itself.
+            progress.set_media_seconds(step.media_seconds(self.ctx).unwrap_or(None));
             let started = Instant::now();
             let opts = RunOpts {
                 cwd: None,
@@ -885,6 +916,88 @@ mod tests {
                 .map(|(_, v)| v.to_string())
         };
         Config::resolve(Overrides::default(), &lookup, None).unwrap()
+    }
+
+    /// A job folder whose `probe.json` lists audio-only sources of `durations` seconds.
+    fn probed_job(dir: &Path, durations: &[f64]) -> Ctx {
+        let sources: Vec<crate::steps::SourceProbe> = durations
+            .iter()
+            .enumerate()
+            .map(|(i, &duration)| crate::steps::SourceProbe {
+                path: dir.join(format!("{i}.m4a")),
+                duration,
+                video: None,
+                audio: crate::steps::probe::AudioStream {
+                    codec: "aac".into(),
+                    sample_rate: 48000,
+                    channels: 2,
+                },
+            })
+            .collect();
+        fs::write(
+            dir.join(crate::steps::probe::PROBE_FILE),
+            serde_json::to_string(&sources).unwrap(),
+        )
+        .unwrap();
+        Ctx {
+            dir: dir.to_path_buf(),
+            sources: sources.into_iter().map(|s| s.path).collect(),
+            source_digest: "d".into(),
+        }
+    }
+
+    #[test]
+    fn probed_seconds_sums_the_sources() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = probed_job(tmp.path(), &[30.5, 29.25]);
+        assert_eq!(probed_seconds(&ctx).unwrap(), Some(59.75));
+    }
+
+    #[test]
+    fn probed_seconds_of_zero_length_is_unknown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = probed_job(tmp.path(), &[0.0]);
+        assert_eq!(probed_seconds(&ctx).unwrap(), None);
+    }
+
+    #[test]
+    fn probed_seconds_without_probe_file_is_an_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = Ctx {
+            dir: tmp.path().to_path_buf(),
+            sources: vec![],
+            source_digest: "d".into(),
+        };
+        match probed_seconds(&ctx).unwrap_err() {
+            Error::Io(e) => assert_eq!(e.kind(), io::ErrorKind::NotFound),
+            other => panic!("expected Io error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn join_and_audio_report_probed_seconds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = probed_job(tmp.path(), &[30.0, 30.0]);
+        let ffmpeg = tools::ToolInfo {
+            path: PathBuf::from("/no/ffmpeg"),
+            version: "ffmpeg 0".into(),
+        };
+        let join = Join::new(ffmpeg.clone(), crate::steps::Encoder::X264);
+        assert_eq!(Runnable::media_seconds(&join, &ctx).unwrap(), Some(60.0));
+        let audio = Audio::new(ffmpeg);
+        assert_eq!(Runnable::media_seconds(&audio, &ctx).unwrap(), Some(60.0));
+    }
+
+    #[test]
+    fn transcribe_reports_no_media_seconds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = probed_job(tmp.path(), &[30.0]);
+        let whisper = tools::ToolInfo {
+            path: PathBuf::from("/no/whisper-cli"),
+            version: "whisper 0".into(),
+        };
+        let step = Transcribe::new(whisper, PathBuf::from("/no/model.bin"), "en", None);
+        assert_eq!(Runnable::media_seconds(&step, &ctx).unwrap(), None);
     }
 
     #[test]
@@ -1180,10 +1293,24 @@ mod tests {
         assert!(missing.iter().all(|m| !m.name.starts_with("ollama")));
     }
 
-    /// A step that records whether it ran and can set the interrupt flag while running.
+    /// A step that records whether it ran, can set the interrupt flag while running, sends
+    /// `lines` to `on_line` and reports `media` as its media seconds (`Err` fails with it).
     struct FakeStep {
         ran: Cell<bool>,
         sets: Option<Arc<AtomicBool>>,
+        lines: &'static [&'static str],
+        media: std::result::Result<Option<f64>, &'static str>,
+    }
+
+    impl Default for FakeStep {
+        fn default() -> FakeStep {
+            FakeStep {
+                ran: Cell::new(false),
+                sets: None,
+                lines: &[],
+                media: Ok(None),
+            }
+        }
     }
 
     impl Step for FakeStep {
@@ -1204,13 +1331,35 @@ mod tests {
     }
 
     impl Execute for FakeStep {
-        fn execute(&self, ctx: &Ctx, _: RunOpts, _: &mut dyn FnMut(&str)) -> Result<Vec<String>> {
+        fn execute(
+            &self,
+            ctx: &Ctx,
+            _: RunOpts,
+            on_line: &mut dyn FnMut(&str),
+        ) -> Result<Vec<String>> {
+            for line in self.lines {
+                on_line(line);
+            }
             self.run(ctx).map(|()| Vec::new())
+        }
+
+        fn media_seconds(&self, _: &Ctx) -> Result<Option<f64>> {
+            self.media.map_err(|e| Error::Io(io::Error::other(e)))
         }
     }
 
     /// Runs `step` as the only stale step of a fresh job with `interrupt`.
     fn run_one(step: &FakeStep, interrupt: &Arc<AtomicBool>) -> (Result<usize>, Job) {
+        let (result, job, _) = run_one_shown(step, interrupt, ProgressMode::Quiet);
+        (result, job)
+    }
+
+    /// [`run_one`] with progress in `mode`, also returning the progress to see what it showed.
+    fn run_one_shown(
+        step: &FakeStep,
+        interrupt: &Arc<AtomicBool>,
+        mode: ProgressMode,
+    ) -> (Result<usize>, Job, Progress) {
         let tmp = tempfile::tempdir().unwrap();
         let source = tmp.path().join("a.mp4");
         fs::write(&source, "media").unwrap();
@@ -1223,17 +1372,49 @@ mod tests {
             plan: &plan,
             interrupt,
         };
-        let mut progress = Progress::new(ProgressMode::Quiet);
+        let mut progress = Progress::new(mode);
         let result = pipeline.run(&mut job, &[step], &current, &mut progress);
-        (result, job)
+        (result, job, progress)
+    }
+
+    #[test]
+    fn spinner_shows_percent_of_the_step_media_seconds() {
+        let step = FakeStep {
+            lines: &["frame=  662 fps=0.0 q=28.0 size=  256KiB time=00:00:27.40 speed=33.7x"],
+            media: Ok(Some(60.0)),
+            ..FakeStep::default()
+        };
+        let interrupt = Arc::new(AtomicBool::new(false));
+        let (result, _, progress) = run_one_shown(&step, &interrupt, ProgressMode::Live);
+        assert_eq!(result.unwrap(), 1);
+        // The spinner message, then the step's done line (its time varies).
+        assert_eq!(progress.shown.len(), 2, "{:?}", progress.shown);
+        assert_eq!(progress.shown[0], "45%  00:27/01:00");
+    }
+
+    #[test]
+    fn media_seconds_error_runs_the_step_with_raw_progress() {
+        let step = FakeStep {
+            lines: &["frame=  662 fps=0.0 q=28.0 size=  256KiB time=00:00:27.40 speed=33.7x"],
+            media: Err("probe.json unreadable"),
+            ..FakeStep::default()
+        };
+        let interrupt = Arc::new(AtomicBool::new(false));
+        let (result, job, progress) = run_one_shown(&step, &interrupt, ProgressMode::Live);
+        assert_eq!(result.unwrap(), 1);
+        assert!(step.ran.get());
+        assert!(job.state.steps.contains_key(&StepName::Probe));
+        // No percent without a total: the spinner shows ffmpeg's own line, then the done line.
+        assert_eq!(progress.shown.len(), 2, "{:?}", progress.shown);
+        assert_eq!(
+            progress.shown[0],
+            "frame=  662 fps=0.0 q=28.0 size=  256KiB time=00:00:27.40 speed=33.7x"
+        );
     }
 
     #[test]
     fn preset_interrupt_runs_no_step() {
-        let step = FakeStep {
-            ran: Cell::new(false),
-            sets: None,
-        };
+        let step = FakeStep::default();
         let (result, job) = run_one(&step, &Arc::new(AtomicBool::new(true)));
         assert!(matches!(result, Err(Error::Interrupted)), "{result:?}");
         assert!(!step.ran.get());
@@ -1244,8 +1425,8 @@ mod tests {
     fn interrupt_during_the_last_step_is_reported() {
         let interrupt = Arc::new(AtomicBool::new(false));
         let step = FakeStep {
-            ran: Cell::new(false),
             sets: Some(Arc::clone(&interrupt)),
+            ..FakeStep::default()
         };
         let (result, _) = run_one(&step, &interrupt);
         assert!(step.ran.get());

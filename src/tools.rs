@@ -116,6 +116,55 @@ fn pump<R: Read + Send + 'static>(
     })
 }
 
+/// A progress report recognized in one line of a tool's output.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum ProgressLine {
+    /// An ffmpeg `-stats` line; `time` is its `time=` field in seconds, `None` for
+    /// `time=N/A`.
+    FfmpegStats { time: Option<f64> },
+    /// A whisper-cli `-pp` line: the percent done.
+    Whisper { percent: u32 },
+}
+
+/// What whisper-cli `-pp` prints before the percent (whisper.cpp 1.9.5:
+/// `whisper_print_progress_callback: progress =  23%`).
+const WHISPER_PROGRESS_PREFIX: &str = "whisper_print_progress_callback: progress =";
+
+/// The progress report in `line`, if it is one. An ffmpeg stats line starts with `frame=`
+/// (video) or `size=` (audio only) and has a `time=` field.
+pub(crate) fn progress_line(line: &str) -> Option<ProgressLine> {
+    let line = line.trim();
+    if let Some(rest) = line.strip_prefix(WHISPER_PROGRESS_PREFIX) {
+        let percent = rest.trim_start().strip_suffix('%')?.parse().ok()?;
+        return Some(ProgressLine::Whisper { percent });
+    }
+    if !(line.starts_with("frame=") || line.starts_with("size=")) {
+        return None;
+    }
+    let time = line
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("time="))?;
+    Some(ProgressLine::FfmpegStats {
+        time: clock_seconds(time),
+    })
+}
+
+/// Seconds in ffmpeg's `HH:MM:SS.ss` clock; `None` for anything else, such as `N/A`. ffmpeg
+/// prints a negative time before the first timestamp, which counts as zero.
+fn clock_seconds(clock: &str) -> Option<f64> {
+    if let Some(positive) = clock.strip_prefix('-') {
+        return clock_seconds(positive).map(|_| 0.0);
+    }
+    let mut parts = clock.splitn(3, ':');
+    let hours: u32 = parts.next()?.parse().ok()?;
+    let minutes: u32 = parts.next()?.parse().ok()?;
+    let seconds: f64 = parts.next()?.parse().ok()?;
+    if !seconds.is_finite() || seconds < 0.0 {
+        return None;
+    }
+    Some(f64::from(hours) * 3600.0 + f64::from(minutes) * 60.0 + seconds)
+}
+
 fn tool_name(program: &OsStr) -> String {
     Path::new(program)
         .file_name()
@@ -205,8 +254,9 @@ fn drain(
     }
 }
 
-/// The last [`STDERR_TAIL_LINES`] stderr lines. Of a run of `\r` updates only the latest
-/// is kept, so progress does not push the messages out.
+/// The last [`STDERR_TAIL_LINES`] stderr lines, so progress does not push the messages
+/// out: progress lines ([`progress_line`]) are left out, whether they end in `\r` (ffmpeg)
+/// or `\n` (whisper-cli), and of a run of other `\r` updates only the latest is kept.
 #[derive(Debug, Default)]
 struct Tail {
     lines: Vec<String>,
@@ -215,6 +265,9 @@ struct Tail {
 
 impl Tail {
     fn push(&mut self, text: String, update: bool) {
+        if progress_line(&text).is_some() {
+            return;
+        }
         if update && self.ends_in_update {
             self.lines.pop();
         } else if self.lines.len() == STDERR_TAIL_LINES {
@@ -679,6 +732,113 @@ mod tests {
         assert_eq!(
             tail_of(&[b"Error opening output\r", b"\nframe=1\r", b"frame=2\r"]),
             ["Error opening output", "frame=2"]
+        );
+    }
+
+    /// Real `ffmpeg -stats` stderr of a re-encoding join (ffmpeg 9.0.2), trimmed.
+    const FFMPEG_JOIN_STATS: &[u8] = include_bytes!("../tests/fixtures/ffmpeg/join-stats.stderr");
+
+    #[test]
+    fn progress_line_ffmpeg_video_stats() {
+        assert_eq!(
+            progress_line(
+                "frame=  366 fps=0.0 q=28.0 size=     256KiB time=00:00:16.99 \
+                 bitrate= 123.4kbits/s speed=33.7x elapsed=0:00:00.50"
+            ),
+            Some(ProgressLine::FfmpegStats { time: Some(16.99) })
+        );
+    }
+
+    #[test]
+    fn progress_line_ffmpeg_final_stats() {
+        assert_eq!(
+            progress_line(
+                "frame= 1500 fps=906 q=-1.0 Lsize=    1116KiB time=00:01:00.00 \
+                 bitrate= 152.4kbits/s speed=36.2x elapsed=0:00:01.65"
+            ),
+            Some(ProgressLine::FfmpegStats { time: Some(60.0) })
+        );
+    }
+
+    #[test]
+    fn progress_line_ffmpeg_audio_only_stats() {
+        assert_eq!(
+            progress_line(
+                "size=     938KiB time=00:00:30.00 bitrate= 256.0kbits/s \
+                 speed=2.35e+03x elapsed=0:00:00.01"
+            ),
+            Some(ProgressLine::FfmpegStats { time: Some(30.0) })
+        );
+    }
+
+    #[test]
+    fn progress_line_ffmpeg_hours() {
+        assert_eq!(
+            progress_line("size=  1KiB time=01:02:03.50 bitrate=N/A speed=1x"),
+            Some(ProgressLine::FfmpegStats { time: Some(3723.5) })
+        );
+    }
+
+    #[test]
+    fn progress_line_ffmpeg_negative_time_is_zero() {
+        assert_eq!(
+            progress_line("frame=    0 fps=0.0 q=0.0 size=       0KiB time=-00:00:00.02 speed=N/A"),
+            Some(ProgressLine::FfmpegStats { time: Some(0.0) })
+        );
+    }
+
+    #[test]
+    fn progress_line_ffmpeg_time_not_available() {
+        assert_eq!(
+            progress_line(
+                "frame=    0 fps=0.0 q=0.0 size=       0KiB time=N/A bitrate=N/A speed=N/A"
+            ),
+            Some(ProgressLine::FfmpegStats { time: None })
+        );
+    }
+
+    #[test]
+    fn progress_line_whisper() {
+        assert_eq!(
+            progress_line("whisper_print_progress_callback: progress =  23%"),
+            Some(ProgressLine::Whisper { percent: 23 })
+        );
+    }
+
+    #[test]
+    fn progress_line_whisper_hundred() {
+        assert_eq!(
+            progress_line("whisper_print_progress_callback: progress = 100%"),
+            Some(ProgressLine::Whisper { percent: 100 })
+        );
+    }
+
+    #[test]
+    fn progress_line_ignores_frame_without_time() {
+        assert_eq!(progress_line("frame=2"), None);
+    }
+
+    #[test]
+    fn progress_line_ignores_messages() {
+        assert_eq!(progress_line("Error opening output file out.mp4."), None);
+    }
+
+    #[test]
+    fn progress_line_ignores_other_progress_words() {
+        assert_eq!(progress_line("progress = 50%"), None);
+    }
+
+    #[test]
+    fn ffmpeg_stats_kept_out_of_tail() {
+        assert_eq!(
+            tail_of(&[FFMPEG_JOIN_STATS, b"Conversion failed!\n"]),
+            [
+                "      encoder         : Lavc63.1.102 aac",
+                "[out#0/mp4 @ 0x79794106c0] video:558KiB audio:507KiB subtitle:0KiB other \
+                 streams:0KiB global headers:0KiB muxing overhead: 4.741262%",
+                "[libx264 @ 0x797945df80] frame I:6     Avg QP:10.53  size:  8473",
+                "Conversion failed!",
+            ]
         );
     }
 

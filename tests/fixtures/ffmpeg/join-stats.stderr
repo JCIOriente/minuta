@@ -1,0 +1,4 @@
+      encoder         : Lavc63.1.102 aac
+frame=  366 fps=0.0 q=28.0 size=     256KiB time=00:00:16.99 bitrate= 123.4kbits/s speed=33.7x elapsed=0:00:00.50    frame=  762 fps=757 q=28.0 size=     512KiB time=00:00:32.39 bitrate= 129.5kbits/s speed=32.2x elapsed=0:00:01.00    frame= 1290 fps=854 q=28.0 size=     768KiB time=00:00:53.54 bitrate= 117.5kbits/s speed=35.4x elapsed=0:00:01.51    [out#0/mp4 @ 0x79794106c0] video:558KiB audio:507KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 4.741262%
+frame= 1500 fps=906 q=-1.0 Lsize=    1116KiB time=00:01:00.00 bitrate= 152.4kbits/s speed=36.2x elapsed=0:00:01.65    
+[libx264 @ 0x797945df80] frame I:6     Avg QP:10.53  size:  8473

@@ -428,6 +428,24 @@ exit 1",
 }
 
 #[test]
+fn progress_lines_kept_out_of_tail() {
+    let bin = fixture_tool("whisper-fails-late").into_os_string();
+    match run_r(&[bin], &RunOpts::default(), &mut |_| {}).unwrap_err() {
+        Error::Tool { tool, code, stderr } => {
+            assert_eq!(tool, "whisper-fails-late");
+            assert_eq!(code, Some(1));
+            assert_eq!(
+                stderr,
+                "whisper_init_from_file_with_params_no_state: loading model\n\
+                 whisper_model_load: model size    =   77.11 MB\n\
+                 whisper_full_with_state: failed to decode"
+            );
+        }
+        other => panic!("expected Tool error, got {other:?}"),
+    }
+}
+
+#[test]
 fn tool_error_names_the_tool() {
     let dir = tempfile::tempdir().unwrap();
     let bin = script(dir.path(), "my-tool", "exit 4").into_os_string();

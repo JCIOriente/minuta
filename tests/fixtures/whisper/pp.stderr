@@ -1,0 +1,10 @@
+main: processing '/tmp/jfk10.wav' (1760000 samples, 110.0 sec), 4 threads, 1 processors, 5 beams + best of 5, lang = en, task = transcribe, timestamps = 1 ...
+
+whisper_print_progress_callback: progress =  20%
+whisper_print_progress_callback: progress =  40%
+whisper_print_progress_callback: progress =  60%
+whisper_print_progress_callback: progress =  80%
+whisper_print_progress_callback: progress = 100%
+output_json: saving output to '/tmp/jfk10-out.json'
+
+whisper_print_timings:     load time =    33.40 ms
