@@ -90,6 +90,38 @@ fn e2e_llm_summary_with_real_ollama() {
     };
     let summary = fs::read_to_string(format!("{job}/summary.md")).unwrap();
     assert!(!summary.trim().is_empty(), "summary.md is empty");
+    assert_eq!(
+        empty_section_lines(&summary),
+        Vec::<&str>::new(),
+        "{summary}"
+    );
+}
+
+/// Lines of `summary` that belong to a section the default fixture (`sample.json`: a greeting
+/// and "let's start the meeting") has nothing for, or that are placeholders for missing content,
+/// in English or Spanish. The summary prompt says to omit such sections entirely (#115).
+fn empty_section_lines(summary: &str) -> Vec<&str> {
+    const SECTION_WORDS: [&str; 7] = [
+        "decision",
+        "decisión",
+        "action item",
+        "open question",
+        "tareas",
+        "acciones",
+        "preguntas",
+    ];
+    const PLACEHOLDER_STARTS: [&str; 7] = [
+        "no se ", "no hay ", "no hubo ", "ninguna", "ninguno", "none", "nothing ",
+    ];
+    summary
+        .lines()
+        .filter(|line| {
+            let lower = line.to_lowercase();
+            let text = lower.trim_start_matches(['#', '*', '-', ' ']);
+            SECTION_WORDS.iter().any(|w| lower.contains(w))
+                || PLACEHOLDER_STARTS.iter().any(|p| text.starts_with(p))
+        })
+        .collect()
 }
 
 /// `m:ss` below one hour, `h:mm:ss` from one hour (YouTube chapter stamps).
