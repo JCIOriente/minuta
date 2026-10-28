@@ -575,14 +575,22 @@ pub fn inspect(paths: &ToolPaths, need_model: bool) -> Report {
         "brew install whisper-cpp",
         &mut missing,
     );
-    let model = paths.model.clone().filter(|p| p.is_file());
     // A configured model that is not there is always reported: it is most likely a typo.
-    let hint = match (&paths.model, &model) {
-        (Some(p), None) => Some(format!("configured path {} is not a file", p.display())),
-        (None, _) if need_model => {
-            Some("run `minuta models pull base` or set whisper.model".to_string())
-        }
-        _ => None,
+    let (model, hint) = match &paths.model {
+        Some(p) => match std::fs::metadata(p) {
+            Ok(meta) if meta.is_file() => (Some(p.clone()), None),
+            Ok(_) => (None, Some(not_a_file(p))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (None, Some(not_a_file(p))),
+            Err(e) => (
+                None,
+                Some(format!("cannot read configured path {}: {e}", p.display())),
+            ),
+        },
+        None if need_model => (
+            None,
+            Some("run `minuta models pull base` or set whisper.model".to_string()),
+        ),
+        None => (None, None),
     };
     if let Some(hint) = hint {
         missing.push(Missing {
@@ -597,6 +605,10 @@ pub fn inspect(paths: &ToolPaths, need_model: bool) -> Report {
         model,
         missing,
     }
+}
+
+fn not_a_file(path: &Path) -> String {
+    format!("configured path {} is not a file", path.display())
 }
 
 /// Resolve the toolchain, reporting every missing item at once in `Error::MissingTools`.

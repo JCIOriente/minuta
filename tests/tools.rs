@@ -473,6 +473,29 @@ fn configured_missing_model_reported_without_need_model() {
     );
 }
 
+#[test]
+fn inspect_reports_model_metadata_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut paths = fake_toolchain(dir.path());
+    let file = dir.path().join("plain");
+    fs::write(&file, "not a directory").unwrap();
+    // A path under a regular file: metadata fails with ENOTDIR, not NotFound.
+    let model = file.join("ggml-base.bin");
+    paths.model = Some(model.clone());
+    let report = inspect_r(&paths, false);
+    assert_eq!(report.model, None);
+    let missing: Vec<_> = report
+        .missing
+        .iter()
+        .map(|m| (m.name.as_str(), m.hint.as_str()))
+        .collect();
+    let hint = format!(
+        "cannot read configured path {}: Not a directory (os error 20)",
+        model.display()
+    );
+    assert_eq!(missing, vec![("model", hint.as_str())]);
+}
+
 /// Runs the `#[ignore]`d test `name` of this binary in a child process whose `PATH` is
 /// only the fixture tools dir. Setting `PATH` in this process would race with the other
 /// test threads, which spawn tools.

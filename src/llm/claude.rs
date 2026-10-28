@@ -5,17 +5,13 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::error::{Error, Missing, Result};
 use crate::llm::Backend;
 use crate::tools::{self, RunOpts, ToolInfo};
 
 const WATCH_INTERVAL: Duration = Duration::from_millis(10);
-/// How long to wait for the Ctrl-C handler after `claude` died from a signal. Same value
-/// as `SIGNAL_GRACE` in `src/runner.rs`; keep the two in step.
-const SIGNAL_GRACE: Duration = Duration::from_millis(100);
 const CONTEXT_TOKENS: usize = 150_000;
 const INSTALL_HINT: &str = "install Claude Code: https://claude.com/claude-code";
 
@@ -28,7 +24,6 @@ pub struct Claude {
     bin: PathBuf,
     model: Option<String>,
     id: String,
-    signal_grace: Duration,
 }
 
 impl Claude {
@@ -37,20 +32,7 @@ impl Claude {
             Some(m) => format!("claude:{m}"),
             None => "claude".to_string(),
         };
-        Claude {
-            bin,
-            model,
-            id,
-            signal_grace: SIGNAL_GRACE,
-        }
-    }
-
-    /// Replaces [`SIGNAL_GRACE`]. Tests use a long grace so that a delayed Ctrl-C never
-    /// lands after it on a slow machine; the wait ends as soon as the flag is set.
-    #[doc(hidden)]
-    pub fn with_signal_grace(mut self, grace: Duration) -> Claude {
-        self.signal_grace = grace;
-        self
+        Claude { bin, model, id }
     }
 
     /// Flags are confirmed against `claude --help` (2.x): `--tools ""` disables every
@@ -77,6 +59,44 @@ impl Claude {
             argv.push(format!("--model={m}").into());
         }
         argv
+    }
+
+    /// What a finished `claude` run means for the call. `claude` runs in its own process
+    /// group, so the terminal's Ctrl-C never reaches it: a death from a signal is an
+    /// interrupt only when the flag is set (the group kill raced its own exit). With the
+    /// flag clear it crashed or was killed from outside, which a retry may get past.
+    /// Mirrors `runner::interrupted_by`.
+    fn reply(&self, result: Result<String>, interrupt: &AtomicBool) -> Result<String> {
+        let out = match result {
+            Ok(out) => out,
+            Err(Error::Tool { code: None, .. }) if interrupt.load(Ordering::SeqCst) => {
+                return Err(Error::Interrupted);
+            }
+            Err(Error::Tool { code, stderr, .. }) => {
+                let message = if stderr.trim().is_empty() {
+                    format!(
+                        "exited with status {}",
+                        code.map_or("none".into(), |c| c.to_string())
+                    )
+                } else {
+                    stderr
+                };
+                return Err(Error::Llm {
+                    backend: self.id.clone(),
+                    message,
+                    transient: true,
+                });
+            }
+            Err(e) => return Err(e),
+        };
+        if out.trim().is_empty() {
+            return Err(Error::Llm {
+                backend: self.id.clone(),
+                message: "claude returned no output".into(),
+                transient: true,
+            });
+        }
+        Ok(out)
     }
 }
 
@@ -124,23 +144,6 @@ struct SetOnDrop<'a>(&'a AtomicBool);
 impl Drop for SetOnDrop<'_> {
     fn drop(&mut self) {
         self.0.store(true, Ordering::SeqCst);
-    }
-}
-
-/// Whether `claude`, dead from a signal, was killed by Ctrl-C. The terminal signals the
-/// whole process group, so `claude` can die before the handler has set the flag: poll it
-/// for up to `grace`. Mirrors `runner::interrupted_by`.
-fn signal_was_interrupt(interrupt: &AtomicBool, grace: Duration) -> bool {
-    let deadline = Instant::now() + grace;
-    loop {
-        if interrupt.load(Ordering::SeqCst) {
-            return true;
-        }
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return false;
-        }
-        std::thread::sleep(left.min(WATCH_INTERVAL));
     }
 }
 
@@ -196,37 +199,37 @@ impl Backend for Claude {
             interrupt,
         );
         drop(scratch);
-        let out = match result {
-            Ok(out) => out,
-            Err(Error::Tool { code: None, .. })
-                if signal_was_interrupt(interrupt, self.signal_grace) =>
-            {
-                return Err(Error::Interrupted);
-            }
-            Err(Error::Tool { code, stderr, .. }) => {
-                let message = if stderr.trim().is_empty() {
-                    format!(
-                        "exited with status {}",
-                        code.map_or("none".into(), |c| c.to_string())
-                    )
-                } else {
-                    stderr
-                };
-                return Err(Error::Llm {
-                    backend: self.id.clone(),
-                    message,
-                    transient: true,
-                });
-            }
-            Err(e) => return Err(e),
-        };
-        if out.trim().is_empty() {
-            return Err(Error::Llm {
-                backend: self.id.clone(),
-                message: "claude returned no output".into(),
-                transient: true,
-            });
-        }
-        Ok(out)
+        self.reply(result, interrupt)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn killed() -> Result<String> {
+        Err(Error::Tool {
+            tool: "claude".into(),
+            code: None,
+            stderr: String::new(),
+        })
+    }
+
+    #[test]
+    fn signal_death_with_flag_is_interrupted() {
+        let claude = Claude::new(PathBuf::from("claude"), None);
+        let err = claude.reply(killed(), &AtomicBool::new(true)).unwrap_err();
+        assert!(matches!(err, Error::Interrupted), "{err:?}");
+    }
+
+    #[test]
+    fn signal_death_without_interrupt_is_transient() {
+        let claude = Claude::new(PathBuf::from("claude"), None);
+        let err = claude.reply(killed(), &AtomicBool::new(false)).unwrap_err();
+        assert!(
+            matches!(&err, Error::Llm { backend, message, transient: true }
+                if backend == "claude" && message == "exited with status none"),
+            "{err:?}"
+        );
     }
 }

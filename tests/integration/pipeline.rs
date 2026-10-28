@@ -238,3 +238,87 @@ fn name_conflict_errors() {
     );
     assert!(env.job_dir("talk").join("captions.srt").is_file());
 }
+
+/// Kills the given pids on drop, so a failing signal test leaves no orphan behind.
+/// Call `disarm` once the pids are known dead: a later kill could hit a recycled pid.
+struct KillOnDrop(Vec<String>);
+
+impl KillOnDrop {
+    fn disarm(mut self) {
+        self.0.clear();
+    }
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        for pid in &self.0 {
+            kill_pid(pid);
+        }
+    }
+}
+
+/// Polls `cond` under a generous deadline; panics with `what` when it never holds.
+fn poll_until(what: &str, mut cond: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !cond() {
+        assert!(std::time::Instant::now() < deadline, "{what}");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// Sends `sig` to `minuta run` (only its pid, not its process group) while whisper runs
+/// with a grandchild; checks that minuta exits through the interrupted path and that the
+/// tool and the grandchild are gone.
+fn signal_stops_tool_and_grandchild(sig: &str) {
+    let env = Env::new();
+    env.clip("a.m4a", 440);
+    let pid_file = env.path("whisper.pids");
+    let mut child = env
+        .command(&["run", "a.m4a"])
+        .env("FAKE_WHISPER_GRANDCHILD", &pid_file)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for(&pid_file);
+    let pids: Vec<String> = fs::read_to_string(&pid_file)
+        .unwrap()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    let cleanup = KillOnDrop(pids.clone());
+    let (tool, grandchild) = (&pids[0], &pids[1]);
+
+    signal(sig, &child);
+    poll_until(&format!("minuta did not exit after {sig}"), || {
+        child.try_wait().unwrap().is_some()
+    });
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(130), "{sig}: {}", stderr(&out));
+    assert_eq!(stdout(&out), "", "{sig}");
+    assert_eq!(
+        stderr(&out).lines().last(),
+        Some("minuta: interrupted"),
+        "{sig}"
+    );
+    poll_until(&format!("{sig} left whisper running"), || !pid_alive(tool));
+    poll_until(&format!("{sig} left the grandchild running"), || {
+        !pid_alive(grandchild)
+    });
+    cleanup.disarm();
+    let job = env.job_dir("a");
+    assert_eq!(tmp_files(&job), Vec::<String>::new(), "{sig}");
+    assert_eq!(job_json(&job)["steps"]["transcribe"]["status"], "stale");
+}
+
+#[test]
+fn sigterm_kills_tool_group_and_exits_interrupted() {
+    require_ffmpeg!();
+    signal_stops_tool_and_grandchild("-TERM");
+}
+
+#[test]
+fn sighup_kills_tool_group() {
+    require_ffmpeg!();
+    signal_stops_tool_and_grandchild("-HUP");
+}
