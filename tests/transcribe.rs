@@ -240,6 +240,24 @@ fn whisper_failure_leaves_no_artifact() {
 }
 
 #[test]
+fn missing_whisper_output_names_file() {
+    // Exits 0 but writes no `<prefix>.json`.
+    let s = setup(None, 0);
+    let err = run_step(&step(&s, "auto"), &s.ctx, &mut |_| {}).unwrap_err();
+
+    let expected = format!(
+        "whisper exited without writing {}",
+        s.ctx.dir.join("whisper-raw.json").display()
+    );
+    assert!(matches!(&err, Error::Job(m) if *m == expected), "{err}");
+    let names: Vec<_> = fs::read_dir(&s.ctx.dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(names, ["audio.wav"]);
+}
+
+#[test]
 fn outputs_derive_from_transcript_json() {
     let s = setup(None, 0);
     let t = Transcript {

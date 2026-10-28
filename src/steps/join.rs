@@ -301,9 +301,12 @@ impl Join {
 
     /// Joins the sources, passing every ffmpeg line to `on_line` and stopping with
     /// `Error::Interrupted` when `opts.interrupt` is set. No `joined.<ext>` is left behind
-    /// on failure. The runner uses this; [`Step::run`] is the same without progress or
-    /// interrupt.
+    /// on failure. An empty source list is an `Error::Job`. The runner uses this;
+    /// [`Step::run`] is the same without progress or interrupt.
     pub fn run_with(&self, ctx: &Ctx, opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<()> {
+        let Some(first_source) = ctx.sources.first() else {
+            return Err(Error::Job("no sources to join".into()));
+        };
         let probes = read_probe(&ctx.dir)?;
         if probes.len() != ctx.sources.len() {
             return Err(Error::Job(format!(
@@ -315,7 +318,7 @@ impl Join {
         }
         let out = joined_path(ctx);
         write_atomic(&out, |tmp| match plan_join(&probes) {
-            Mode::Link => link_or_copy(&ctx.sources[0], tmp, |s, d| fs::hard_link(s, d)),
+            Mode::Link => link_or_copy(first_source, tmp, |s, d| fs::hard_link(s, d)),
             Mode::StreamCopy => self.stream_copy(ctx, &out, tmp, &opts, on_line),
             Mode::Reencode => self.reencode(&probes, &ctx.sources, &out, tmp, &opts, on_line),
         })
@@ -387,6 +390,7 @@ impl Step for Join {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::steps::probe::{AudioStream, VideoStream};
 
     #[test]
     fn link_failure_falls_back_to_copy() {
@@ -440,5 +444,55 @@ mod tests {
         assert_eq!(codec("joined.flac"), "flac");
         assert_eq!(codec("joined.mp3"), "libmp3lame");
         assert_eq!(codec("joined.m4a"), "aac");
+    }
+
+    /// A 320x240 25 fps mpeg4 source with aac audio at `sample_rate` Hz and `channels`.
+    fn source(sample_rate: u32, channels: u32) -> SourceProbe {
+        SourceProbe {
+            path: PathBuf::from("/a.mp4"),
+            duration: 1.0,
+            video: Some(VideoStream {
+                codec: "mpeg4".into(),
+                width: 320,
+                height: 240,
+                fps: "25/1".into(),
+            }),
+            audio: AudioStream {
+                codec: "aac".into(),
+                sample_rate,
+                channels,
+            },
+        }
+    }
+
+    #[test]
+    fn plan_join_matching_streams_stream_copy() {
+        assert_eq!(
+            plan_join(&[source(48000, 2), source(48000, 2)]),
+            Mode::StreamCopy
+        );
+    }
+
+    #[test]
+    fn plan_join_differing_sample_rate_reencodes() {
+        assert_eq!(
+            plan_join(&[source(48000, 2), source(44100, 2)]),
+            Mode::Reencode
+        );
+    }
+
+    #[test]
+    fn plan_join_differing_channels_reencodes() {
+        assert_eq!(
+            plan_join(&[source(48000, 2), source(48000, 1)]),
+            Mode::Reencode
+        );
+    }
+
+    #[test]
+    fn plan_join_differing_audio_codec_reencodes() {
+        let mut mp3 = source(48000, 2);
+        mp3.audio.codec = "mp3".into();
+        assert_eq!(plan_join(&[source(48000, 2), mp3]), Mode::Reencode);
     }
 }
