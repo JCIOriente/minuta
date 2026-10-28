@@ -122,8 +122,8 @@ minuta config path | show
   missing item in one message with a hint (for example `brew install ffmpeg whisper-cpp`,
   `minuta models pull small`).
 - **Name:** `--name`, else the first source's file stem with media extensions stripped. If
-  `<out>/<name>` exists with a different source set, fail unless `--name` or `--force` is
-  given.
+  `<out>/<name>` exists with a different source set, fail unless `--force` is given, which
+  replaces that job. `--name` only picks another name; it never replaces a job.
 - **Join:** with one source, `joined.<ext>` is a copy (hard link when possible). With several,
   use stream copy when codec, resolution and frame rate match, else re-encode (VideoToolbox
   on macOS when available, else libx264). Inputs are joined in the order given.
