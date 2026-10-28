@@ -33,10 +33,8 @@ impl Audio {
                 "-nostdin".as_ref(),
                 "-y".as_ref(),
                 // Progress only, so not part of `params`: stats on stderr, one `\r`
-                // update every half second.
+                // update every half second (ffmpeg's default period).
                 "-stats".as_ref(),
-                "-stats_period".as_ref(),
-                "0.5".as_ref(),
                 "-i".as_ref(),
                 input.as_os_str(),
                 "-vn".as_ref(),

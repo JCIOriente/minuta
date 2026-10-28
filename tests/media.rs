@@ -678,17 +678,9 @@ fn audio_ffmpeg_argv_asks_for_stats_and_forwards_updates() {
 
     let input = tmp.path().join("joined.mp4");
     let tmp_out = tmp.path().join("audio.wav.tmp");
-    let mut expected: Vec<String> = [
-        "-hide_banner",
-        "-nostdin",
-        "-y",
-        "-stats",
-        "-stats_period",
-        "0.5",
-        "-i",
-    ]
-    .map(String::from)
-    .to_vec();
+    let mut expected: Vec<String> = ["-hide_banner", "-nostdin", "-y", "-stats", "-i"]
+        .map(String::from)
+        .to_vec();
     expected.extend(as_strings(&[&input]));
     expected.extend(
         [
@@ -726,8 +718,6 @@ fn join_stream_copy_argv_asks_for_stats_and_forwards_updates() {
         "-nostdin",
         "-y",
         "-stats",
-        "-stats_period",
-        "0.5",
         "-f",
         "concat",
         "-safe",
@@ -753,17 +743,9 @@ fn join_reencode_argv_asks_for_stats() {
         .unwrap();
 
     let tmp_out = tmp.path().join("joined.m4a.tmp");
-    let mut expected: Vec<String> = [
-        "-hide_banner",
-        "-nostdin",
-        "-y",
-        "-stats",
-        "-stats_period",
-        "0.5",
-        "-i",
-    ]
-    .map(String::from)
-    .to_vec();
+    let mut expected: Vec<String> = ["-hide_banner", "-nostdin", "-y", "-stats", "-i"]
+        .map(String::from)
+        .to_vec();
     expected.extend(as_strings(&[&ctx.sources[0]]));
     expected.push("-i".into());
     expected.extend(as_strings(&[&ctx.sources[1]]));
