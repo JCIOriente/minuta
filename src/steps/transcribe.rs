@@ -2,10 +2,11 @@
 
 use std::ffi::OsString;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::job::{write_atomic, Ctx, Step, StepName};
 use crate::tools::{run, RunOpts, ToolInfo};
 use crate::transcript::{from_whisper_json, Transcript};
@@ -107,7 +108,22 @@ impl Transcribe {
             argv.extend(["--vad".into(), "-vm".into(), vad.clone().into()]);
         }
         run(&argv, opts, on_line)?;
-        from_whisper_json(&fs::read_to_string(raw)?)
+        let json = match fs::read_to_string(raw) {
+            Ok(json) => json,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Err(Error::Job(format!(
+                    "whisper exited without writing {}",
+                    raw.display()
+                )))
+            }
+            Err(e) => {
+                return Err(Error::Io(io::Error::new(
+                    e.kind(),
+                    format!("{}: {e}", raw.display()),
+                )))
+            }
+        };
+        from_whisper_json(&json)
     }
 }
 

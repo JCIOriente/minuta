@@ -309,6 +309,118 @@ fn join_preserves_order() {
     }
 }
 
+#[test]
+fn reencode_preserves_order() {
+    let Some(t) = ffmpeg_available() else { return };
+    if !encoders(&t).contains("libx264") {
+        eprintln!("skipping: this ffmpeg has no libx264");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    // Different sizes force a re-encode.
+    let red = clip(&t, tmp.path(), "red.mp4", "red", "320x240", 1);
+    let blue = clip(&t, tmp.path(), "blue.mp4", "blue", "640x480", 1);
+    for (name, order, first_is_red) in [("one", [&red, &blue], true), ("two", [&blue, &red], false)]
+    {
+        let dir = tmp.path().join(name);
+        fs::create_dir(&dir).unwrap();
+        let ctx = probe_all(&t, &dir, &[order[0].clone(), order[1].clone()]);
+        assert_eq!(plan_join(&read_probe(&dir).unwrap()), Mode::Reencode);
+
+        Join::new(t.ffmpeg.clone(), Encoder::X264)
+            .run(&ctx)
+            .unwrap();
+
+        let joined = dir.join("joined.mp4");
+        let (first, last) = (colour(&t, &joined, false), colour(&t, &joined, true));
+        if first_is_red {
+            assert!(is_red(first) && is_blue(last), "{name}: {first:?} {last:?}");
+        } else {
+            assert!(is_blue(first) && is_red(last), "{name}: {first:?} {last:?}");
+        }
+    }
+}
+
+/// A one second 160x120 mpeg4 + aac clip of a solid red, with audio at `rate` Hz.
+fn clip_at_rate(tools: &Tools, dir: &Path, name: &str, rate: u32) -> PathBuf {
+    let path = dir.join(name);
+    let audio = format!("sine=frequency=440:sample_rate={rate}:d=1");
+    ffmpeg(
+        tools,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=160x120:r=25:d=1",
+            "-f",
+            "lavfi",
+            "-i",
+            &audio,
+            "-c:v",
+            "mpeg4",
+            "-c:a",
+            "aac",
+            "-shortest",
+            path.to_str().unwrap(),
+        ],
+    );
+    path
+}
+
+#[test]
+fn differing_audio_forces_reencode() {
+    let Some(t) = ffmpeg_available() else { return };
+    if !encoders(&t).contains("libx264") {
+        eprintln!("skipping: this ffmpeg has no libx264");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let a = clip_at_rate(&t, tmp.path(), "a.mp4", 44100);
+    let b = clip_at_rate(&t, tmp.path(), "b.mp4", 22050);
+    let ctx = probe_all(&t, tmp.path(), &[a, b]);
+    let probes = read_probe(tmp.path()).unwrap();
+    // Same video parameters; only the audio differs.
+    assert_eq!(probes[0].video, probes[1].video);
+    assert_eq!(
+        (probes[0].audio.sample_rate, probes[1].audio.sample_rate),
+        (44100, 22050)
+    );
+    assert_eq!(plan_join(&probes), Mode::Reencode);
+
+    Join::new(t.ffmpeg.clone(), Encoder::X264)
+        .run(&ctx)
+        .unwrap();
+
+    // Stream copy would keep mpeg4 and 44100 Hz; the re-encode gives h264 at 48000 Hz.
+    let joined = describe(&t, &tmp.path().join("joined.mp4"));
+    assert_eq!(joined.video.unwrap().codec, "h264");
+    assert_eq!(
+        (joined.audio.codec.as_str(), joined.audio.sample_rate),
+        ("aac", 48000)
+    );
+    assert!((joined.duration - 2.0).abs() < 0.3, "{}", joined.duration);
+}
+
+#[test]
+fn join_empty_sources_errors() {
+    let tmp = tempfile::tempdir().unwrap();
+    // A matching (empty) probe.json, so only the empty source list can fail.
+    fs::write(tmp.path().join("probe.json"), "[]").unwrap();
+    let ctx = ctx(tmp.path(), &[]);
+    let tool = ToolInfo {
+        path: "ffmpeg".into(),
+        version: "ffmpeg version 1".into(),
+    };
+
+    let err = Join::new(tool, Encoder::X264).run(&ctx).unwrap_err();
+
+    assert!(
+        matches!(&err, Error::Job(m) if m == "no sources to join"),
+        "{err}"
+    );
+    assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 1);
+}
+
 fn encoders(t: &Tools) -> String {
     let mut out = String::new();
     run(
