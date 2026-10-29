@@ -1,6 +1,6 @@
 # Models directory and download progress — Spec
 
-- Status: draft
+- Status: approved
 - Date: 2026-10-29
 - Owner: Arnold Gandarillas Castillo
 - Related: ADR-0010 (models directory location), `src/models.rs`, `src/cli.rs` (`models` commands), `src/progress.rs`
