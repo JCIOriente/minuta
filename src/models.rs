@@ -134,23 +134,24 @@ fn path_in(spec: &ModelSpec, dir: &Path) -> PathBuf {
     }
 }
 
-/// An existing path is used as is; a catalog name resolves into `dir`.
+/// A catalog name resolves into `dir`, even when a file of that name exists in the working
+/// directory; any other existing file is used as is.
 pub fn resolve(name_or_path: &str, dir: &Path) -> Result<PathBuf> {
+    if let Some(m) = CATALOG.iter().find(|m| m.name == name_or_path) {
+        return Ok(path_in(m, dir));
+    }
     let as_path = Path::new(name_or_path);
     if as_path.is_file() {
         return Ok(as_path.to_path_buf());
     }
-    match CATALOG.iter().find(|m| m.name == name_or_path) {
-        Some(m) => Ok(path_in(m, dir)),
-        None => Err(Error::Usage(format!(
-            "unknown model '{name_or_path}': not a file and not one of {}",
-            CATALOG
-                .iter()
-                .map(|m| m.name)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))),
-    }
+    Err(Error::Usage(format!(
+        "unknown model '{name_or_path}': not a file and not one of {}",
+        CATALOG
+            .iter()
+            .map(|m| m.name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )))
 }
 
 /// Every catalog entry and whether it is in `dir`. A missing file, or a path that is not a

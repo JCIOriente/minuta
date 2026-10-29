@@ -428,11 +428,10 @@ pub fn inspect(config: &Config) -> Result<Report> {
 /// resolves into the models dir; a value that is neither a file nor a catalog name is kept
 /// as a path, so preflight reports it as missing.
 pub fn tool_paths(config: &Config) -> Result<ToolPaths> {
-    let dir = config.models_dir_path()?;
     let model = config
         .whisper_model
         .as_ref()
-        .map(|setting| model_path(&setting.value, ModelKind::Whisper, &dir))
+        .map(|setting| model_path(&setting.value, ModelKind::Whisper, config))
         .transpose()?;
     Ok(ToolPaths {
         ffmpeg: bin_path(&config.ffmpeg_bin.value, "ffmpeg"),
@@ -472,11 +471,9 @@ fn model_key(kind: ModelKind) -> &'static str {
 
 /// A configured model of `kind`: a catalog name resolves into the models dir, anything else is
 /// kept as a path. A catalog name of the other kind is `Error::Usage`.
-fn model_path(value: &str, kind: ModelKind, dir: &Path) -> Result<PathBuf> {
-    let path = models::resolve(value, dir).unwrap_or_else(|_| PathBuf::from(value));
-    let from_catalog = path != Path::new(value);
+fn model_path(value: &str, kind: ModelKind, config: &Config) -> Result<PathBuf> {
     match models::CATALOG.iter().find(|m| m.name == value) {
-        Some(spec) if from_catalog && spec.kind != kind => {
+        Some(spec) if spec.kind != kind => {
             let what = match spec.kind {
                 ModelKind::Whisper => "a whisper model",
                 ModelKind::Vad => "a VAD model",
@@ -487,7 +484,8 @@ fn model_path(value: &str, kind: ModelKind, dir: &Path) -> Result<PathBuf> {
                 model_key(kind)
             )))
         }
-        _ => Ok(path),
+        Some(_) => models::resolve(value, &config.models_dir_path()?),
+        None => Ok(PathBuf::from(value)),
     }
 }
 
@@ -496,7 +494,7 @@ fn vad_model_path(config: &Config) -> Result<Option<PathBuf>> {
     let Some(setting) = config.whisper_vad_model.as_ref() else {
         return Ok(None);
     };
-    model_path(&setting.value, ModelKind::Vad, &config.models_dir_path()?).map(Some)
+    model_path(&setting.value, ModelKind::Vad, config).map(Some)
 }
 
 /// The name of a missing VAD model in [`Missing`].
@@ -1070,6 +1068,15 @@ mod tests {
             paths.unwrap().model,
             Some(PathBuf::from("/m/ggml-tiny.bin"))
         );
+    }
+
+    #[test]
+    fn bad_models_dir_does_not_break_a_file_model() {
+        let paths = tool_paths(&config(&[
+            ("MINUTA_MODELS_DIR", "~bob/models"),
+            ("MINUTA_WHISPER_MODEL", "/abs/x.bin"),
+        ]));
+        assert_eq!(paths.unwrap().model, Some(PathBuf::from("/abs/x.bin")));
     }
 
     #[test]
