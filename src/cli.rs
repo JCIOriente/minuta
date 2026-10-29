@@ -422,7 +422,6 @@ fn source_name(source: Source) -> &'static str {
     }
 }
 
-/// `141.1 MiB`, `2.9 GiB`.
 #[cfg(test)]
 mod tests {
     use super::*;

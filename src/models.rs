@@ -236,7 +236,7 @@ fn download(
         total += n as u64;
         hasher.update(&buf[..n]);
         out.write_all(&buf[..n])?;
-        on_bytes(total);
+        on_bytes(total.min(expected_size));
     }
     out.sync_all()?;
     if total != expected_size {
