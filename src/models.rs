@@ -248,7 +248,8 @@ pub fn pull(spec: &ModelSpec, dir: &Path) -> Result<Pulled> {
         }
         fs::remove_file(&target)?;
     }
-    let parent = target.parent().unwrap_or(dir);
+    // `path_in` always puts the target inside `dir`, so it has a parent.
+    let parent = target.parent().expect("a model path always has a parent");
     fs::create_dir_all(parent)?;
     let part = target.with_file_name(format!(".{}.part", spec.file));
     let url = spec.url();

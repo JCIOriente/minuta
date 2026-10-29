@@ -265,9 +265,13 @@ fn default_dir_is_minuta_models() {
 
 #[test]
 fn old_cache_folder_is_ignored() {
-    let home = Path::new("/home/u");
-    let tiny = models::resolve("tiny", &models::default_dir_for(home)).unwrap();
-    assert_eq!(tiny, Path::new("/home/u/.minuta/models/ggml-tiny.bin"));
+    let home = tempfile::tempdir().unwrap();
+    let old = home.path().join(".cache/minuta/models");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::write(old.join("ggml-tiny.bin"), b"old").unwrap();
+    let rows = models::list(&models::default_dir_for(home.path())).unwrap();
+    let tiny = rows.iter().find(|r| r.name == "tiny").unwrap();
+    assert!(!tiny.installed);
 }
 
 #[test]
@@ -308,7 +312,10 @@ fn pull_creates_vad_subfolder() {
         size: BODY.len() as u64,
     };
     models::pull(&spec, dir.path()).unwrap();
-    assert!(dir.path().join("vad").is_dir());
+    assert_eq!(
+        files_in(&dir.path().join("vad")),
+        vec!["ggml-silero-v5.1.2.bin".to_string()]
+    );
 }
 
 #[test]
