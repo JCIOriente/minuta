@@ -72,7 +72,7 @@ $ minuta doctor
 ffmpeg       ffmpeg version 8.0 ... (/opt/homebrew/bin/ffmpeg)
 ffprobe      ffprobe version 8.0 ... (/opt/homebrew/bin/ffprobe)
 whisper-cli  whisper.cpp version: 1.8.0 (/opt/homebrew/bin/whisper-cli)
-model        /Users/you/.cache/minuta/models/ggml-base.bin
+model        /Users/you/.minuta/models/ggml-base.bin
 llm          ollama:gemma4:26b (ok)
 ```
 
@@ -188,8 +188,21 @@ stderr.
 | `large-v3` | 2.9 GiB | Most accurate, slowest |
 | `silero-v5.1.2` | 0.8 MiB | Voice activity detection (VAD) model, see below |
 
-Models are saved in `~/.cache/minuta/models/`. Wherever minuta accepts a model,
-you can give a catalog name or the path to any whisper.cpp `ggml` model file.
+Models are saved in `~/.minuta/models/`, a folder for models that work with
+whisper. Whisper models sit there as plain `ggml-*.bin` files, the same layout
+whisper.cpp uses, so whisper.cpp can read them directly. VAD models go in
+`~/.minuta/models/vad/`. Change the folder with `MINUTA_MODELS_DIR` or
+`whisper.models_dir` in the config file; `minuta models list` shows the folder
+it reads.
+
+`models pull` shows a progress bar with the percent, speed and time left on a
+terminal. Pass `--quiet` to hide it.
+
+Models that an older version saved in `~/.cache/minuta/models/` are not used
+any more, so `models pull` downloads them again. You can delete that folder.
+
+Wherever minuta accepts a model, you can give a catalog name or the path to any
+whisper.cpp `ggml` model file.
 
 **Voice activity detection** stops whisper from inventing lines during
 silences. It is off until you configure a VAD model:
@@ -428,6 +441,7 @@ num_ctx = 16384
 | `whisper.model` | `MINUTA_WHISPER_MODEL` | `--model` | unset (required) |
 | `whisper.lang` | `MINUTA_WHISPER_LANG` | `--lang` | `auto` |
 | `whisper.vad_model` | `MINUTA_WHISPER_VAD_MODEL` | | unset (VAD off) |
+| `whisper.models_dir` | `MINUTA_MODELS_DIR` | | `~/.minuta/models` |
 | `whisper.bin` | `MINUTA_WHISPER_BIN` | | `whisper-cli` |
 | `ffmpeg.bin` | `MINUTA_FFMPEG_BIN` | | `ffmpeg` |
 | `ffprobe.bin` | `MINUTA_FFPROBE_BIN` | | `ffprobe` |
