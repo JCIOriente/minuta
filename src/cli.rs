@@ -237,8 +237,16 @@ fn doctor() -> Result<()> {
     }
 }
 
+/// The models directory from the resolved config (env, then file, then `~/.minuta/models`).
+fn models_dir() -> Result<PathBuf> {
+    Config::load(Overrides::default())?.models_dir_path()
+}
+
 fn models_list() -> Result<()> {
-    for model in models::list(&models::default_dir()?)? {
+    let dir = models_dir()?;
+    let rows = models::list(&dir)?;
+    println!("models in {}", dir.display());
+    for model in rows {
         let state = if model.installed {
             "installed"
         } else {
@@ -260,7 +268,7 @@ fn models_pull(name: &str) -> Result<()> {
                 names.join(", ")
             ))
         })?;
-    let dir = models::default_dir()?;
+    let dir = models_dir()?;
     eprintln!(
         "pulling {name} ({}) into {}",
         human_size(spec.size),

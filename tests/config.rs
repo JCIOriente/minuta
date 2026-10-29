@@ -451,11 +451,16 @@ fn env_snapshot_covers_every_minuta_name() {
     );
     assert_key(
         cfg.entries()[5].1,
+        Some(("env-md", Source::Env)),
+        "whisper.models_dir",
+    );
+    assert_key(
+        cfg.entries()[6].1,
         Some(("env-ff", Source::Env)),
         "ffmpeg.bin",
     );
     assert_key(
-        cfg.entries()[6].1,
+        cfg.entries()[7].1,
         Some(("env-fp", Source::Env)),
         "ffprobe.bin",
     );
@@ -467,7 +472,7 @@ fn entries_map_each_key_to_its_own_file_value() {
     let dir = tempfile::tempdir().unwrap();
     let file = write_config(
         &dir,
-        "out_dir = \"out-v\"\n[whisper]\nbin = \"wb-v\"\nmodel = \"wm-v\"\nlang = \"wl-v\"\nvad_model = \"wv-v\"\n[ffmpeg]\nbin = \"ff-v\"\n[ffprobe]\nbin = \"fp-v\"\n[llm]\ndefault = \"ld-v\"\noutput_lang = \"lo-v\"\nconcurrency = 3\nretries = 4\nbackoff_ms = 150\nrepairs = 6\n[ollama]\nurl = \"ou-v\"\nnum_ctx = 8192\n[claude]\nbin = \"cb-v\"\n",
+        "out_dir = \"out-v\"\n[whisper]\nbin = \"wb-v\"\nmodel = \"wm-v\"\nlang = \"wl-v\"\nvad_model = \"wv-v\"\nmodels_dir = \"md-v\"\n[ffmpeg]\nbin = \"ff-v\"\n[ffprobe]\nbin = \"fp-v\"\n[llm]\ndefault = \"ld-v\"\noutput_lang = \"lo-v\"\nconcurrency = 3\nretries = 4\nbackoff_ms = 150\nrepairs = 6\n[ollama]\nurl = \"ou-v\"\nnum_ctx = 8192\n[claude]\nbin = \"cb-v\"\n",
     );
     let cfg = Config::resolve(Overrides::default(), &no_env, Some(file.as_path())).unwrap();
     let want = [
@@ -476,6 +481,7 @@ fn entries_map_each_key_to_its_own_file_value() {
         ("whisper.model", "wm-v"),
         ("whisper.lang", "wl-v"),
         ("whisper.vad_model", "wv-v"),
+        ("whisper.models_dir", "md-v"),
         ("ffmpeg.bin", "ff-v"),
         ("ffprobe.bin", "fp-v"),
         ("llm.default", "ld-v"),
@@ -756,6 +762,7 @@ fn entries_list_new_keys() {
             "whisper.model",
             "whisper.lang",
             "whisper.vad_model",
+            "whisper.models_dir",
             "ffmpeg.bin",
             "ffprobe.bin",
             "llm.default",

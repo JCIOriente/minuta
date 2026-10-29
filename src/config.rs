@@ -375,6 +375,7 @@ impl Config {
             ("whisper.model", self.whisper_model.as_ref()),
             ("whisper.lang", Some(&self.whisper_lang)),
             ("whisper.vad_model", self.whisper_vad_model.as_ref()),
+            ("whisper.models_dir", Some(&self.models_dir)),
             ("ffmpeg.bin", Some(&self.ffmpeg_bin)),
             ("ffprobe.bin", Some(&self.ffprobe_bin)),
             ("llm.default", Some(&self.llm_default)),

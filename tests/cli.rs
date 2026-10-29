@@ -827,6 +827,22 @@ fn config_path_prints_path_even_when_malformed() {
 }
 
 #[test]
+fn config_show_models_dir_from_env() {
+    let env = Env::new();
+    let out = env.run_cmd({
+        let mut cmd = env.command(&["config", "show"]);
+        cmd.env("MINUTA_MODELS_DIR", "/data/models");
+        cmd
+    });
+    out.clone().assert().success();
+    assert!(
+        stdout(&out).contains("whisper.models_dir = /data/models (env)\n"),
+        "stdout was {}",
+        stdout(&out)
+    );
+}
+
+#[test]
 fn config_show_lists_values_and_sources() {
     let env = Env::new();
     fs::write(env.path("config.toml"), "[whisper]\nlang = \"es\"\n").unwrap();
@@ -845,6 +861,7 @@ fn config_show_lists_values_and_sources() {
          whisper.model = (unset)\n\
          whisper.lang = es (file)\n\
          whisper.vad_model = silero-v5.1.2 (env)\n\
+         whisper.models_dir = ~/.minuta/models (default)\n\
          ffmpeg.bin = /opt/ffmpeg (env)\n\
          ffprobe.bin = ffprobe (default)\n\
          llm.default = ollama:gemma4:26b (default)\n\
@@ -869,12 +886,29 @@ fn models_list_shows_catalog() {
     out.clone().assert().success();
     assert_eq!(
         stdout(&out),
-        "tiny           installed  0.0 MiB\n\
+        format!("models in {}\n", dir.display())
+            + "tiny           installed  0.0 MiB\n\
          base           available  141.1 MiB\n\
          small          available  465.0 MiB\n\
          medium         available  1.4 GiB\n\
          large-v3       available  2.9 GiB\n\
          silero-v5.1.2  available  0.8 MiB\n"
+    );
+}
+
+#[test]
+fn models_list_header_uses_env_models_dir() {
+    let env = Env::new();
+    let custom = env.path("custom-models");
+    let out = env.run_cmd({
+        let mut cmd = env.command(&["models", "list"]);
+        cmd.env("MINUTA_MODELS_DIR", &custom);
+        cmd
+    });
+    out.clone().assert().success();
+    assert_eq!(
+        stdout(&out).lines().next(),
+        Some(format!("models in {}", custom.display()).as_str())
     );
 }
 
