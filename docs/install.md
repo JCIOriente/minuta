@@ -97,7 +97,7 @@ whisper-cli --help
 ## A whisper model
 
 minuta downloads models for you, checks their checksums and stores them in
-`~/.cache/minuta/models/`:
+`~/.minuta/models/` (see the README for changing that folder):
 
 ```sh
 minuta models list         # show the catalog and what is installed

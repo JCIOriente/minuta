@@ -1,6 +1,6 @@
 # ADR-0010: Models directory location
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-29
 - Deciders: Arnold Gandarillas Castillo
 - Related: docs/specs/2026-10-29-models-dir-and-pull-progress.md, ADR-0002 (whisper CLI as subprocess)

@@ -122,6 +122,6 @@ Updated by the PRs that implement this spec.
 - [x] Plan: [docs/plans/2026-10-29-models-dir-and-pull-progress.md](../plans/2026-10-29-models-dir-and-pull-progress.md)
 - [x] T1 config keys: #138
 - [x] T2 catalog subfolders: #139
-- [ ] T3 CLI and runner: #140
-- [ ] T4 pull progress bar: #141
-- [ ] T5 docs: #142
+- [x] T3 CLI and runner: #140
+- [x] T4 pull progress bar: #141
+- [x] T5 docs: #142
