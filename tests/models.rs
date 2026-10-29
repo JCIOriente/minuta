@@ -504,3 +504,41 @@ fn undersized_download_rejected_and_cleaned() {
         files_in(dir.path())
     );
 }
+
+#[test]
+fn pull_reports_bytes_up_to_the_size() {
+    let (base, _requests) = serve_at("/ggml-silero-v5.1.2.bin", BODY);
+    let dir = tempfile::tempdir().unwrap();
+    let good = sha(BODY);
+    let spec = ModelSpec {
+        name: "silero-v5.1.2",
+        file: "ggml-silero-v5.1.2.bin",
+        kind: ModelKind::Vad,
+        base_url: &base,
+        sha256: &good,
+        size: BODY.len() as u64,
+    };
+    let mut seen = Vec::new();
+    let result = models::pull_with_progress(&spec, dir.path(), &mut |n| seen.push(n)).unwrap();
+    assert_eq!(result, Pulled::Downloaded);
+    assert_eq!(seen.last(), Some(&(BODY.len() as u64)));
+}
+
+#[test]
+fn pull_already_present_reports_no_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("vad")).unwrap();
+    std::fs::write(dir.path().join("vad").join("ggml-silero-v5.1.2.bin"), BODY).unwrap();
+    let good = sha(BODY);
+    let spec = ModelSpec {
+        name: "silero-v5.1.2",
+        file: "ggml-silero-v5.1.2.bin",
+        kind: ModelKind::Vad,
+        base_url: "http://127.0.0.1:9",
+        sha256: &good,
+        size: BODY.len() as u64,
+    };
+    let mut seen = Vec::new();
+    models::pull_with_progress(&spec, dir.path(), &mut |n| seen.push(n)).unwrap();
+    assert!(seen.is_empty());
+}
