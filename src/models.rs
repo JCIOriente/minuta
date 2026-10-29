@@ -203,7 +203,13 @@ fn file_sha256(path: &Path) -> Result<String> {
 
 /// Streams the model into `part`, returning the SHA-256 of what was written.
 /// Reads at most `expected_size + 1` bytes and rejects any other length.
-fn download(name: &str, url: &str, part: &Path, expected_size: u64) -> Result<String> {
+fn download(
+    name: &str,
+    url: &str,
+    part: &Path,
+    expected_size: u64,
+    on_bytes: &mut dyn FnMut(u64),
+) -> Result<String> {
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(CONNECT_TIMEOUT)
         .timeout_read(READ_TIMEOUT)
@@ -230,6 +236,7 @@ fn download(name: &str, url: &str, part: &Path, expected_size: u64) -> Result<St
         total += n as u64;
         hasher.update(&buf[..n]);
         out.write_all(&buf[..n])?;
+        on_bytes(total.min(expected_size));
     }
     out.sync_all()?;
     if total != expected_size {
@@ -242,6 +249,16 @@ fn download(name: &str, url: &str, part: &Path, expected_size: u64) -> Result<St
 /// The bytes come from [`ModelSpec::url`] and go to a temp file that is renamed into place
 /// only after the checksum matches.
 pub fn pull(spec: &ModelSpec, dir: &Path) -> Result<Pulled> {
+    pull_with_progress(spec, dir, &mut |_| {})
+}
+
+/// [`pull`], calling `on_bytes` with the running byte count after each chunk is written.
+/// Nothing is reported when the file is already present.
+pub fn pull_with_progress(
+    spec: &ModelSpec,
+    dir: &Path,
+    on_bytes: &mut dyn FnMut(u64),
+) -> Result<Pulled> {
     let target = path_in(spec, dir);
     if target.is_file() {
         if file_sha256(&target)? == spec.sha256 {
@@ -254,7 +271,7 @@ pub fn pull(spec: &ModelSpec, dir: &Path) -> Result<Pulled> {
     fs::create_dir_all(parent)?;
     let part = target.with_file_name(format!(".{}.part", spec.file));
     let url = spec.url();
-    let result = download(spec.name, &url, &part, spec.size).and_then(|digest| {
+    let result = download(spec.name, &url, &part, spec.size, on_bytes).and_then(|digest| {
         if digest == spec.sha256 {
             fs::rename(&part, &target)?;
             Ok(Pulled::Downloaded)

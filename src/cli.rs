@@ -10,8 +10,8 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::config::{self, Config, Overrides, Source};
 use crate::error::{Error, Result};
-use crate::models::{self, Pulled};
-use crate::progress::{Mode, Progress};
+use crate::models;
+use crate::progress::{human_size, Mode, Progress, PullReport};
 use crate::runner::{self, ForceArg};
 use crate::template::discover::{discover, Dirs};
 use crate::template::{Input, Layer, Output};
@@ -59,6 +59,9 @@ pub enum ModelsCommand {
     Pull {
         #[arg(help = pull_name_help())]
         name: String,
+        /// Show neither the progress bar nor the start and finish lines
+        #[arg(long)]
+        quiet: bool,
     },
 }
 
@@ -154,7 +157,7 @@ pub fn execute(cli: Cli, interrupt: &Arc<AtomicBool>) -> Result<()> {
         Command::Transcribe(args) => run(args, Templates::default(), interrupt),
         Command::Doctor => doctor(),
         Command::Models(ModelsCommand::List) => models_list(),
-        Command::Models(ModelsCommand::Pull { name }) => models_pull(&name),
+        Command::Models(ModelsCommand::Pull { name, quiet }) => models_pull(&name, quiet),
         Command::Config(ConfigCommand::Path) => config_path(),
         Command::Config(ConfigCommand::Show) => config_show(),
         Command::Templates(TemplatesCommand::List) => templates_list(),
@@ -257,7 +260,7 @@ fn models_list() -> Result<()> {
     Ok(())
 }
 
-fn models_pull(name: &str) -> Result<()> {
+fn models_pull(name: &str, quiet: bool) -> Result<()> {
     let spec = models::CATALOG
         .iter()
         .find(|m| m.name == name)
@@ -269,14 +272,19 @@ fn models_pull(name: &str) -> Result<()> {
             ))
         })?;
     let dir = models_dir()?;
-    eprintln!(
-        "pulling {name} ({}) into {}",
-        human_size(spec.size),
-        dir.display()
-    );
-    match models::pull(spec, &dir)? {
-        Pulled::AlreadyPresent => eprintln!("{name} is already present"),
-        Pulled::Downloaded => eprintln!("{name} downloaded and verified"),
+    let mut report = PullReport::new(if quiet {
+        Mode::Quiet
+    } else {
+        Mode::detect(false)
+    });
+    report.start(name, spec.size, &dir);
+    let outcome = models::pull_with_progress(spec, &dir, &mut |done| report.progress(done));
+    match outcome {
+        Ok(pulled) => report.finish(name, pulled),
+        Err(e) => {
+            report.abandon();
+            return Err(e);
+        }
     }
     println!("{}", models::resolve(name, &dir)?.display());
     Ok(())
@@ -411,17 +419,6 @@ fn source_name(source: Source) -> &'static str {
         Source::Env => "env",
         Source::File => "file",
         Source::Default => "default",
-    }
-}
-
-/// `141.1 MiB`, `2.9 GiB`.
-fn human_size(bytes: u64) -> String {
-    const MIB: f64 = 1024.0 * 1024.0;
-    let mib = bytes as f64 / MIB;
-    if mib < 1024.0 {
-        format!("{mib:.1} MiB")
-    } else {
-        format!("{:.1} GiB", mib / 1024.0)
     }
 }
 
