@@ -57,9 +57,24 @@ pub enum ModelsCommand {
     List,
     /// Download a model and verify its checksum
     Pull {
-        /// tiny, base, small, medium or large-v3
+        #[arg(help = pull_name_help())]
         name: String,
     },
+}
+
+/// Lists every catalog model, so the help can't fall behind the catalog.
+fn pull_name_help() -> String {
+    let names: Vec<String> = models::CATALOG
+        .iter()
+        .map(|m| match m.kind {
+            models::ModelKind::Whisper => m.name.to_string(),
+            models::ModelKind::Vad => format!("{} (voice activity detection)", m.name),
+        })
+        .collect();
+    match names.split_last() {
+        Some((last, rest)) => format!("Model name: {}, or {last}", rest.join(", ")),
+        None => "Model name".into(),
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -411,6 +426,28 @@ mod tests {
     fn sizes() {
         assert_eq!(human_size(147_951_465), "141.1 MiB");
         assert_eq!(human_size(3_095_033_483), "2.9 GiB");
+    }
+
+    #[test]
+    fn models_pull_help_lists_every_catalog_model() {
+        use clap::CommandFactory;
+        let mut cmd = Cli::command();
+        let pull = cmd
+            .find_subcommand_mut("models")
+            .unwrap()
+            .find_subcommand_mut("pull")
+            .unwrap();
+        let help = pull.render_help().to_string();
+        for m in models::CATALOG {
+            assert!(help.contains(m.name), "{} missing from:\n{help}", m.name);
+        }
+        assert!(
+            help.contains(
+                "Model name: tiny, base, small, medium, large-v3, \
+                 or silero-v5.1.2 (voice activity detection)"
+            ),
+            "help was:\n{help}"
+        );
     }
 
     #[test]
