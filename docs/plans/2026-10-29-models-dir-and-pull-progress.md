@@ -2,7 +2,7 @@
 
 - Spec: docs/specs/2026-10-29-models-dir-and-pull-progress.md
 - Date: 2026-10-29
-- Status: approved
+- Status: in backlog
 
 ## Overview
 Five tasks in a chain that avoids file overlap. T1 (config keys) and T2 (catalog layout) are
@@ -30,7 +30,7 @@ Can start immediately in parallel: T1, T2
 
 ## Tasks
 
-### T1: Models directory config and env keys  (#issue once created)
+### T1: Models directory config and env keys  (#138)
 - Priority: 0
 - Depends on: none
 - Owns: `src/config.rs`, `tests/config.rs`
@@ -45,7 +45,7 @@ Can start immediately in parallel: T1, T2
 - Tests first: `models_dir_defaults_under_home_minuta`, `models_dir_env_beats_file`, `models_dir_file_used_when_no_env`, `models_dir_tilde_expands`, `models_dir_empty_value_is_unset`, `models_dir_without_home_is_config_error`
 - Notes: follow the `pick`/`pick_opt` pattern used for `whisper.model`. `Config::resolve` takes an injected env closure, so tests need no real home directory; inject the home path through a parameter, not `BaseDirs` directly.
 
-### T2: Catalog subfolders and resolution  (#issue once created)
+### T2: Catalog subfolders and resolution  (#139)
 - Priority: 0
 - Depends on: none
 - Owns: `src/models.rs` (catalog, `resolve`, `list`, and the directory helpers), `tests/models.rs`
@@ -59,7 +59,7 @@ Can start immediately in parallel: T1, T2
 - Tests first: `whisper_model_resolves_flat`, `vad_model_resolves_into_vad_subfolder`, `list_reports_vad_under_vad_subfolder`, `default_dir_is_minuta_models`, `old_cache_folder_is_ignored`, `pull_creates_vad_subfolder`
 - Notes: add a `subdir` derived from `ModelKind` in one place, not per entry. Keep `ModelSpec`'s fields otherwise unchanged so `CATALOG` stays a const.
 
-### T3: CLI and runner use the models directory  (#issue once created)
+### T3: CLI and runner use the models directory  (#140)
 - Priority: 1
 - Depends on: T1, T2
 - Owns: `src/cli.rs` (the `models` handlers and the `config` printer), `tests/cli.rs`
@@ -73,7 +73,7 @@ Can start immediately in parallel: T1, T2
 - Tests first: `models_list_prints_directory_header`, `models_pull_stdout_is_only_the_path`, `runner_resolves_bare_name_into_models_dir`, `config_prints_models_dir_and_source`, `env_models_dir_used_by_list_and_pull`
 - Notes: `models::default_dir()` callers become the resolved value from T1; pass it down, do not re-read the environment in `cli.rs`. Keep the header and `config` line wording exact; T5 documents them.
 
-### T4: Download progress bar for `models pull`  (#issue once created)
+### T4: Download progress bar for `models pull`  (#141)
 - Priority: 2
 - Depends on: T2, T3
 - Owns: `src/models.rs` (`download` and `pull` only), new progress helper in `src/progress.rs` (a `ModelProgress` type, additive), `tests/models.rs` (progress cases)
@@ -87,7 +87,7 @@ Can start immediately in parallel: T1, T2
 - Tests first: `pull_progress_reports_bytes_and_total`, `pull_plain_mode_prints_start_and_finish`, `pull_quiet_prints_nothing`, `pull_failure_removes_part_and_clears_bar`, `pull_stdout_is_only_path_with_progress`
 - Notes: the byte sink is a trait or closure passed to `pull`, so tests can record calls without a terminal. The bar uses `indicatif` (already a dependency) and reuses `Mode::choose` from `src/progress.rs` for the terminal and `NO_COLOR` decision. Local HTTP server for tests: follow `tests/support/fake_ollama.rs`.
 
-### T5: Docs for the models directory  (#issue once created)
+### T5: Docs for the models directory  (#142)
 - Priority: 3
 - Depends on: T3, T4
 - Owns: `README.md` (models and config sections only), `docs/adr/0010-models-directory-location.md` (status only), `docs/specs/2026-10-29-models-dir-and-pull-progress.md` (implementation status checklist)
