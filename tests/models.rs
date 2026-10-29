@@ -237,12 +237,37 @@ fn catalog_whisper_entry_keeps_its_url() {
 }
 
 #[test]
-fn resolve_vad_name_uses_its_file_name() {
+fn vad_model_resolves_into_vad_subfolder() {
     let dir = tempfile::tempdir().unwrap();
     assert_eq!(
         models::resolve("silero-v5.1.2", dir.path()).unwrap(),
-        dir.path().join("ggml-silero-v5.1.2.bin")
+        dir.path().join("vad").join("ggml-silero-v5.1.2.bin")
     );
+}
+
+#[test]
+fn whisper_model_resolves_flat() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(
+        models::resolve("tiny", dir.path()).unwrap(),
+        dir.path().join("ggml-tiny.bin")
+    );
+}
+
+#[test]
+fn default_dir_is_minuta_models() {
+    let home = Path::new("/home/u");
+    assert_eq!(
+        models::default_dir_for(home),
+        Path::new("/home/u/.minuta/models")
+    );
+}
+
+#[test]
+fn old_cache_folder_is_ignored() {
+    let home = Path::new("/home/u");
+    let tiny = models::resolve("tiny", &models::default_dir_for(home)).unwrap();
+    assert_eq!(tiny, Path::new("/home/u/.minuta/models/ggml-tiny.bin"));
 }
 
 #[test]
@@ -264,15 +289,37 @@ fn pull_uses_the_spec_file_name() {
         ["GET /ggml-silero-v5.1.2.bin HTTP/1.1"]
     );
     assert_eq!(
-        files_in(dir.path()),
+        files_in(&dir.path().join("vad")),
         vec!["ggml-silero-v5.1.2.bin".to_string()]
     );
 }
 
 #[test]
-fn list_shows_the_vad_model() {
+fn pull_creates_vad_subfolder() {
+    let (base, _requests) = serve_at("/ggml-silero-v5.1.2.bin", BODY);
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("ggml-silero-v5.1.2.bin"), b"vad").unwrap();
+    let good = sha(BODY);
+    let spec = ModelSpec {
+        name: "silero-v5.1.2",
+        file: "ggml-silero-v5.1.2.bin",
+        kind: ModelKind::Vad,
+        base_url: &base,
+        sha256: &good,
+        size: BODY.len() as u64,
+    };
+    models::pull(&spec, dir.path()).unwrap();
+    assert!(dir.path().join("vad").is_dir());
+}
+
+#[test]
+fn list_reports_vad_under_vad_subfolder() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("vad")).unwrap();
+    std::fs::write(
+        dir.path().join("vad").join("ggml-silero-v5.1.2.bin"),
+        b"vad",
+    )
+    .unwrap();
     let rows = models::list(dir.path()).unwrap();
     let vad = rows.iter().find(|r| r.name == "silero-v5.1.2").unwrap();
     assert_eq!(
