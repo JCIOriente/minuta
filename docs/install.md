@@ -9,7 +9,7 @@ programs, which you install once:
 | [whisper.cpp](#whispercpp) (`whisper-cli`) | Transcription | Always |
 | [A whisper model](#a-whisper-model) | Transcription | Always |
 | [Ollama](#ollama) | Generating documents locally | For templates, unless you use Claude |
-| [Claude Code](#claude-code) | Generating documents with Claude | Only with `--llm claude` |
+| [Claude Code](#claude-code) | Generating documents with Claude | When a template uses a `claude` backend |
 
 `minuta transcribe` needs only the first three. `minuta run -t ...` also needs
 the LLM backend that its templates use.
@@ -171,7 +171,8 @@ default = "ollama:<model>"
 
 Browse models at [ollama.com/library](https://ollama.com/library). If Ollama
 runs on another machine or port, set `ollama.url`, for example
-`url = "http://192.168.1.20:11434"` under `[ollama]`.
+`url = "http://192.168.1.20:11434"` under `[ollama]`. Transcripts are then sent
+to that machine.
 
 ## Claude Code
 
@@ -203,8 +204,9 @@ minuta doctor
 ```
 
 `doctor` prints each tool with its version and path, the model, and the state
-of the default LLM backend. It exits with status 1 and shows a fix for each
-missing item:
+of the default LLM backend. If a tool or model is missing, it exits with status
+1 and shows a fix for each one. An unreachable LLM backend is shown but does not
+change the exit status.
 
 ```console
 $ minuta doctor

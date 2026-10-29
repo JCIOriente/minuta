@@ -12,14 +12,15 @@ running the same command again only redoes what changed.
 
 ```console
 $ minuta run standup.mp4 -t summary -t youtube
-minuta-out/standup
-$ ls minuta-out/standup
+/Users/you/talks/minuta-out/standup
+$ ls /Users/you/talks/minuta-out/standup
 audio.wav      chapters.json  job.json    llm-cache   summary.md       transcript.txt  youtube.md
 captions.srt   chapters.md    joined.mp4  probe.json  transcript.json  youtube.json
 ```
 
 - **Local by default.** Transcription always runs on your machine. Documents
-  stay local with Ollama, and leave the machine only if you choose Claude.
+  stay local with a local Ollama, and leave the machine only if you choose
+  Claude or a remote Ollama.
 - **Templates are plain Markdown files.** Write your own, and chain them: one
   template's output can be another's input.
 - **Resumable.** Interrupt a run or change a template, and the next run picks up
@@ -44,8 +45,10 @@ with Cargo. You need Rust 1.80 or newer, which you can get from
 [rustup.rs](https://rustup.rs).
 
 ```sh
-cargo install minuta
+cargo install --locked minuta
 ```
+
+`--locked` builds with the dependency versions minuta was tested with.
 
 ### Runtime requirements
 
@@ -56,7 +59,7 @@ minuta calls a few external tools. Install them once:
 | `ffmpeg` and `ffprobe` | Reading, joining and converting media | `brew install ffmpeg` |
 | `whisper-cli` | Transcription | `brew install whisper-cpp` |
 | A whisper model | Transcription | `minuta models pull base` |
-| Ollama *or* Claude Code | Templates only (`run -t ...`) | `brew install ollama`, then `ollama pull gemma4:26b` |
+| Ollama *or* Claude Code | Templates only (`run -t ...`) | `brew install ollama`, start it with `ollama serve`, then `ollama pull gemma4:26b` |
 
 **[Read the full installation guide](https://github.com/JCIOriente/minuta/blob/main/docs/install.md)**
 for Linux package managers, building whisper.cpp from source, choosing a
@@ -73,7 +76,9 @@ model        /Users/you/.cache/minuta/models/ggml-base.bin
 llm          ollama:gemma4:26b (ok)
 ```
 
-`doctor` exits with status 1 and shows a fix for each missing item.
+If a tool or model is missing, `doctor` exits with status 1 and shows a fix for
+each one. The `llm` line is for information: it shows whether the default
+backend is reachable, but does not change the exit status.
 
 ## Quick start
 
@@ -83,10 +88,12 @@ llm          ollama:gemma4:26b (ok)
    ```sh
    minuta models pull base
    mkdir -p ~/.config/minuta
-   printf 'whisper.model = "base"\n' > ~/.config/minuta/config.toml
+   printf '[whisper]\nmodel = "base"\n' > ~/.config/minuta/config.toml
    ```
 
-   You can also pass `--model base` on each run instead of setting a default.
+   This creates the config file, replacing any you already have. If you have
+   one, add `model = "base"` under its `[whisper]` section instead. You can
+   also pass `--model base` on each run instead of setting a default.
 
 2. **Transcribe a recording.**
 
@@ -128,7 +135,7 @@ cat "$(minuta run talk.mp4 -t linkedin -q)/linkedin.md"
 | --- | --- |
 | `minuta run FILES... [-t TEMPLATE]...` | Transcribe, generate documents from templates, and print the job folder's path |
 | `minuta transcribe FILES...` | Same as `run`, without templates |
-| `minuta doctor` | Report tools, versions, the model and the LLM backend; exit 1 if anything is missing |
+| `minuta doctor` | Report tools, versions, the model and the LLM backend; exit 1 if a tool or model is missing |
 | `minuta models list` | Show every catalog model and whether it is installed |
 | `minuta models pull NAME` | Download a model and verify its checksum |
 | `minuta templates list` | Show every template with its layer, input, output and backend, then any invalid files |
@@ -166,9 +173,9 @@ stderr.
 | Code | Meaning |
 | --- | --- |
 | `0` | Success |
-| `1` | Any failure: a missing tool, a tool error, or an LLM, template, config or I/O error |
-| `2` | Usage error |
-| `130` | Interrupted (Ctrl-C, `SIGTERM` or `SIGHUP`). The running tool is stopped too |
+| `1` | A missing tool, a tool error, an LLM or generation error, or a config, job or I/O error |
+| `2` | Usage error: bad arguments, an unknown or invalid template, or an unknown language, model, step or backend ID |
+| `130` | `run` or `transcribe` was interrupted (Ctrl-C, `SIGTERM` or `SIGHUP`). The running tool is stopped too |
 
 ### Whisper models
 
@@ -238,7 +245,9 @@ minuta templates show summary > ~/.config/minuta/templates/summary.md
 ### Writing a template
 
 The file name is the template's name, so `weekly-sync.md` defines
-`weekly-sync`. Names use lowercase letters, digits, `-` and `_`. The file is a
+`weekly-sync`. Names start with a lowercase letter or digit and use only
+lowercase letters, digits, `-` and `_`. The names `transcript`, `probe`,
+`join`, `audio`, `transcribe`, `outputs` and `job` are reserved. The file is a
 Markdown prompt with an optional YAML header:
 
 ```markdown
@@ -272,7 +281,12 @@ Every key is optional. Unknown keys are an error.
 | `limits` | With `output: fields`, the limits for each field: `{ max_chars: N, max: N }` | none |
 | `format` | With `output: fields`, how fields render in the `.md` file: `plain` or `markdown` | `plain` |
 | `llm` | The backend for this template, such as `ollama:qwen3:14b` or `claude` | the configured default |
-| `lang` | The language this template writes in, such as `en` | the run's output language |
+| `lang` | The language this template writes in, such as `en`. `--output-lang` overrides it | `llm.output_lang`, else the detected speech language |
+
+The `chapters` template is special: it uses `output: chapters`, which no other
+template may use. If you override `chapters`, keep `output: chapters`. Its
+only allowed limit is `limits: { chapters: { max: N, max_chars: N } }`, with
+`max` at least 3.
 
 #### Variables
 
@@ -324,12 +338,15 @@ Write a short post about "{{job_name}}" from the summary in the input.
 | `claude:<model>` | Claude Code with a given model, such as `claude:sonnet` |
 
 The backend is chosen in this order: the `--llm` flag, then the template's
-`llm` key, then `llm.default` in the config (default: `ollama:gemma4:26b`).
+`llm` key, then `llm.default`, set in the config file or with `MINUTA_LLM`
+(default: `ollama:gemma4:26b`). Unlike the flag, `MINUTA_LLM` does not override
+a template's `llm` key.
 
 With Claude, minuta runs `claude -p` using your existing Claude Code login. It
 runs Claude without tools, sessions or MCP servers, from an empty temporary
-directory. Claude is the only backend that sends the transcript off your
-machine, and minuta prints a notice whenever a template uses it.
+directory. Claude sends the transcript to Anthropic, and minuta prints a notice
+whenever a template uses it. Ollama keeps it on your machine, unless
+`ollama.url` points to another machine.
 
 Long transcripts are split to fit the model's context window and then
 combined. For Ollama, the window is the smaller of `ollama.num_ctx` and the
@@ -347,7 +364,7 @@ Each run works in a job folder, `<out>/<name>/`. By default that is
 | `transcript.json` | Timestamped segments and the detected language |
 | `<template>.md` | Each generated document |
 | `<template>.json` | The structured result of a `fields` or `chapters` template |
-| `joined.<ext>` | The joined recording. With one source, a link to it |
+| `joined.<ext>` | The joined recording. With one source, a hard link to it (or a copy) |
 | `audio.wav` | 16 kHz mono audio given to whisper |
 | `probe.json`, `job.json`, `llm-cache/` | minuta's bookkeeping and cache |
 
@@ -378,9 +395,11 @@ minuta run meeting.mp4 -t summary --force summary
 
 ## Configuration
 
-Every setting can come from a flag, an environment variable or the config
-file. When a setting is given in more than one place, a flag beats an
-environment variable, which beats the config file, which beats the default.
+Every setting can come from the config file or an environment variable, and
+some also have a flag. When a setting is given in more than one place, a flag
+beats an environment variable, which beats the config file, which beats the
+default. A template's `llm` and `lang` keys sit between the flag and the other
+layers (see [LLM backends](#llm-backends)).
 Run `minuta config show` to see every value and where it came from.
 
 The config file is `~/.config/minuta/config.toml`. Set `MINUTA_CONFIG` to use
