@@ -10,15 +10,18 @@ use crate::error::{Error, Result};
 
 const DEFAULT_OUT_DIR: &str = "./minuta-out";
 const DEFAULT_LANG: &str = "auto";
+/// Kept as written (with `~`) until [`expand_tilde`] runs against the home directory.
+const DEFAULT_MODELS_DIR: &str = "~/.minuta/models";
 
 /// Every environment variable minuta reads.
-const ENV_NAMES: [&str; 17] = [
+const ENV_NAMES: [&str; 18] = [
     "MINUTA_CONFIG",
     "MINUTA_OUT_DIR",
     "MINUTA_WHISPER_BIN",
     "MINUTA_WHISPER_MODEL",
     "MINUTA_WHISPER_LANG",
     "MINUTA_WHISPER_VAD_MODEL",
+    "MINUTA_MODELS_DIR",
     "MINUTA_FFMPEG_BIN",
     "MINUTA_FFPROBE_BIN",
     "MINUTA_LLM",
@@ -72,6 +75,8 @@ pub struct Config {
     pub whisper_lang: Setting,
     /// A path or a catalog name; `None` when unset: whisper runs without VAD.
     pub whisper_vad_model: Option<Setting>,
+    /// Where models are kept, with a leading `~` still unexpanded. See [`Config::models_dir_path`].
+    pub models_dir: Setting,
     pub ffmpeg_bin: Setting,
     pub ffprobe_bin: Setting,
     pub llm_default: Setting,
@@ -148,6 +153,7 @@ struct ToolTable {
     model: Option<String>,
     lang: Option<String>,
     vad_model: Option<String>,
+    models_dir: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -247,6 +253,12 @@ impl Config {
                 DEFAULT_LANG,
             ),
             whisper_vad_model: pick_opt(None, env("MINUTA_WHISPER_VAD_MODEL"), whisper.vad_model),
+            models_dir: pick(
+                None,
+                env("MINUTA_MODELS_DIR"),
+                whisper.models_dir,
+                DEFAULT_MODELS_DIR,
+            ),
             ffmpeg_bin: pick(
                 flags.ffmpeg_bin,
                 env("MINUTA_FFMPEG_BIN"),
@@ -349,6 +361,12 @@ impl Config {
         self.llm_concurrency.as_ref().map(parse_checked)
     }
 
+    /// The models directory with a leading `~` expanded against the home directory.
+    pub fn models_dir_path(&self) -> Result<PathBuf> {
+        let home = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf());
+        expand_tilde(&self.models_dir.value, home.as_deref())
+    }
+
     /// Every key with its resolved setting in documented order; `None` means unset.
     pub fn entries(&self) -> Vec<(&'static str, Option<&Setting>)> {
         vec![
@@ -369,6 +387,27 @@ impl Config {
             ("ollama.num_ctx", Some(&self.ollama_num_ctx)),
             ("claude.bin", Some(&self.claude_bin)),
         ]
+    }
+}
+
+/// Expands a leading `~` or `~/` against `home`. Any other value is returned as written,
+/// including relative paths. A `~` with no home directory is `Error::Config` naming the key.
+pub fn expand_tilde(value: &str, home: Option<&Path>) -> Result<PathBuf> {
+    let rest = if value == "~" {
+        Some("")
+    } else {
+        value.strip_prefix("~/")
+    };
+    match rest {
+        None => Ok(PathBuf::from(value)),
+        Some(rest) => {
+            let home = home.ok_or_else(|| {
+                Error::Config(format!(
+                    "whisper.models_dir is {value:?} but the home directory is unknown; set an absolute path"
+                ))
+            })?;
+            Ok(home.join(rest))
+        }
     }
 }
 
