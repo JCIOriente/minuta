@@ -113,11 +113,25 @@ pub enum Pulled {
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// `~/.cache/minuta/models`.
+/// `~/.minuta/models`: the folder for models that work with whisper.
 pub fn default_dir() -> Result<PathBuf> {
     let base = BaseDirs::new()
         .ok_or_else(|| Error::Config("cannot determine the home directory".into()))?;
-    Ok(base.home_dir().join(".cache").join("minuta").join("models"))
+    Ok(default_dir_for(base.home_dir()))
+}
+
+/// [`default_dir`] for the given home directory.
+pub fn default_dir_for(home: &Path) -> PathBuf {
+    home.join(".minuta").join("models")
+}
+
+/// Where `spec` lives under `dir`: whisper models sit flat (as in whisper.cpp), VAD models
+/// in `vad/`.
+fn path_in(spec: &ModelSpec, dir: &Path) -> PathBuf {
+    match spec.kind {
+        ModelKind::Whisper => dir.join(spec.file),
+        ModelKind::Vad => dir.join("vad").join(spec.file),
+    }
 }
 
 /// An existing path is used as is; a catalog name resolves into `dir`.
@@ -127,7 +141,7 @@ pub fn resolve(name_or_path: &str, dir: &Path) -> Result<PathBuf> {
         return Ok(as_path.to_path_buf());
     }
     match CATALOG.iter().find(|m| m.name == name_or_path) {
-        Some(m) => Ok(dir.join(m.file)),
+        Some(m) => Ok(path_in(m, dir)),
         None => Err(Error::Usage(format!(
             "unknown model '{name_or_path}': not a file and not one of {}",
             CATALOG
@@ -145,7 +159,7 @@ pub fn list(dir: &Path) -> Result<Vec<ModelInfo>> {
     CATALOG
         .iter()
         .map(|m| {
-            let path = dir.join(m.file);
+            let path = path_in(m, dir);
             let on_disk = match fs::metadata(&path) {
                 Ok(md) if md.is_file() => Some(md),
                 Ok(_) => None,
@@ -227,15 +241,17 @@ fn download(name: &str, url: &str, part: &Path, expected_size: u64) -> Result<St
 /// The bytes come from [`ModelSpec::url`] and go to a temp file that is renamed into place
 /// only after the checksum matches.
 pub fn pull(spec: &ModelSpec, dir: &Path) -> Result<Pulled> {
-    let target = dir.join(spec.file);
+    let target = path_in(spec, dir);
     if target.is_file() {
         if file_sha256(&target)? == spec.sha256 {
             return Ok(Pulled::AlreadyPresent);
         }
         fs::remove_file(&target)?;
     }
-    fs::create_dir_all(dir)?;
-    let part = dir.join(format!(".{}.part", spec.file));
+    // `path_in` always puts the target inside `dir`, so it has a parent.
+    let parent = target.parent().expect("a model path always has a parent");
+    fs::create_dir_all(parent)?;
+    let part = target.with_file_name(format!(".{}.part", spec.file));
     let url = spec.url();
     let result = download(spec.name, &url, &part, spec.size).and_then(|digest| {
         if digest == spec.sha256 {

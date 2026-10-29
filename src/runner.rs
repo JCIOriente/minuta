@@ -1062,6 +1062,7 @@ mod tests {
             Some(
                 models::default_dir()
                     .unwrap()
+                    .join("vad")
                     .join("ggml-silero-v5.1.2.bin")
             )
         );

@@ -345,7 +345,7 @@ fn vad_model_path_runs_whisper_with_vad() {
 #[test]
 fn vad_model_catalog_name_resolves_into_models_dir() {
     let env = Env::new();
-    let dir = env.path("home/.cache/minuta/models");
+    let dir = env.path("home/.minuta/models/vad");
     fs::create_dir_all(&dir).unwrap();
     let vad = dir.join("ggml-silero-v5.1.2.bin");
     fs::write(&vad, "vad").unwrap();
@@ -862,7 +862,7 @@ fn config_show_lists_values_and_sources() {
 #[test]
 fn models_list_shows_catalog() {
     let env = Env::new();
-    let dir = env.path("home/.cache/minuta/models");
+    let dir = env.path("home/.minuta/models");
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("ggml-tiny.bin"), "tiny").unwrap();
     let out = env.minuta(&["models", "list"]);
@@ -881,7 +881,7 @@ fn models_list_shows_catalog() {
 #[test]
 fn models_list_reports_unreadable_entry() {
     let env = Env::new();
-    let dir = env.path("home/.cache/minuta/models");
+    let dir = env.path("home/.minuta/models");
     fs::create_dir_all(&dir).unwrap();
     let entry = dir.join("ggml-small.bin");
     std::os::unix::fs::symlink(&entry, &entry).unwrap();
