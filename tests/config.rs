@@ -1117,7 +1117,38 @@ fn models_dir_absolute_path_is_not_expanded() {
 #[test]
 fn models_dir_tilde_without_home_is_config_error() {
     match expand_tilde("~/models", None) {
-        Err(Error::Config(msg)) => assert!(msg.contains("whisper.models_dir"), "no key: {msg}"),
+        Err(Error::Config(msg)) => assert_eq!(
+            msg,
+            "whisper.models_dir is \"~/models\" but the home directory is unknown; set an absolute path",
+        ),
         other => panic!("expected Error::Config, got {other:?}"),
     }
+}
+
+#[test]
+fn models_dir_user_form_is_config_error() {
+    match expand_tilde("~alice/models", Some(Path::new("/home/u"))) {
+        Err(Error::Config(msg)) => assert_eq!(
+            msg,
+            "whisper.models_dir is \"~alice/models\": only ~ and ~/ expand; use ~/ or an absolute path",
+        ),
+        other => panic!("expected Error::Config, got {other:?}"),
+    }
+}
+
+#[test]
+fn models_dir_trailing_slash_expands_to_home() {
+    let home = Path::new("/home/u");
+    assert_eq!(
+        expand_tilde("~/", Some(home)).unwrap(),
+        PathBuf::from("/home/u/"),
+    );
+}
+
+#[test]
+fn models_dir_relative_path_is_not_expanded() {
+    assert_eq!(
+        expand_tilde("models/here", None).unwrap(),
+        PathBuf::from("models/here"),
+    );
 }

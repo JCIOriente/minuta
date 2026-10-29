@@ -399,6 +399,9 @@ pub fn expand_tilde(value: &str, home: Option<&Path>) -> Result<PathBuf> {
         value.strip_prefix("~/")
     };
     match rest {
+        None if value.starts_with('~') => Err(Error::Config(format!(
+            "whisper.models_dir is {value:?}: only ~ and ~/ expand; use ~/ or an absolute path"
+        ))),
         None => Ok(PathBuf::from(value)),
         Some(rest) => {
             let home = home.ok_or_else(|| {
