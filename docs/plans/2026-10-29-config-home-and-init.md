@@ -2,7 +2,7 @@
 
 - Spec: docs/specs/2026-10-29-config-home-and-init.md
 - Date: 2026-10-29
-- Status: draft
+- Status: in backlog
 
 ## Overview
 Four tasks. T1 (config path) and T2 (templates path) touch different files and can run in
@@ -29,7 +29,7 @@ Can start immediately in parallel: T1, T2
 
 ## Tasks
 
-### T1: Config file default path under `~/.minuta`  (#issue once created)
+### T1: Config file default path under `~/.minuta`  (#149)
 - Priority: 0
 - Depends on: none
 - Owns: `src/config.rs`, `tests/config.rs`
@@ -43,7 +43,7 @@ Can start immediately in parallel: T1, T2
 - Tests first: `default_path_is_under_home_minuta`, `default_path_ignores_old_config_location`, `resolve_path_env_beats_default`, `missing_default_file_yields_defaults`
 - Notes: `default_path()` currently calls `directories::BaseDirs` directly. Add `default_path_in(home: &Path) -> PathBuf` and have `default_path()` call it. Only the path changes; `Config::resolve` precedence is untouched.
 
-### T2: User templates folder under `~/.minuta/templates`
+### T2: User templates folder under `~/.minuta/templates`  (#150)
 - Priority: 0
 - Depends on: none
 - Owns: `src/template/discover.rs`, `tests/templates.rs`
@@ -56,7 +56,7 @@ Can start immediately in parallel: T1, T2
 - Tests first: `user_templates_dir_is_under_home_minuta`, `old_user_templates_dir_is_ignored`, `user_layer_overridden_by_project_layer`
 - Notes: `Dirs::standard` calls `BaseDirs` for the home. Add `Dirs::for_home(home: &Path, cwd: &Path)` and have `standard()` call it, so the test passes a temp home. Update the doc comment on `Dirs::user`.
 
-### T3: `minuta config init [--force]`
+### T3: `minuta config init [--force]`  (#151)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/config_init.rs` (new), `tests/config_init.rs` (new)
@@ -74,7 +74,7 @@ Can start immediately in parallel: T1, T2
 - Tests first: `config_init_creates_file_and_parent`, `config_init_leaves_existing_file`, `config_init_force_overwrites`, `config_init_ignores_malformed_existing_file`, `config_init_honours_minuta_config`, `config_init_template_covers_every_key`, `config_init_template_parses_when_uncommented`
 - Notes: keep the template text as a `const &str` in `src/config_init.rs`, next to the code, so `config_init_template_covers_every_key` can compare it with `Config::entries()`. The `[whisper]` section header is the only one not commented out. Follow the existing `config_path()` / `config_show()` functions in `src/cli.rs` for the handler shape. Use `std::fs::create_dir_all` for the parent and `OpenOptions::create_new` unless `--force`.
 
-### T4: Docs for the new locations and `config init`
+### T4: Docs for the new locations and `config init`  (#152)
 - Priority: 2
 - Depends on: T1, T2, T3
 - Owns: `README.md`, `docs/install.md`, `CONTEXT.md`, `docs/common-issues.md`
