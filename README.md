@@ -174,7 +174,7 @@ stderr.
 | --- | --- |
 | `0` | Success |
 | `1` | A missing tool, a tool error, an LLM or generation error, or a config, job or I/O error |
-| `2` | Usage error: bad arguments, an unknown or invalid template, or an unknown language, model, step or backend ID |
+| `2` | Usage error: bad arguments, an unknown or invalid template, an unknown language, step or backend ID, or an unknown model name for `models pull` |
 | `130` | `run` or `transcribe` was interrupted (Ctrl-C, `SIGTERM` or `SIGHUP`). The running tool is stopped too |
 
 ### Whisper models
