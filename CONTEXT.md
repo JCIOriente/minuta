@@ -28,6 +28,8 @@ code, specs and issues. When a term is ambiguous or keeps needing explanation, a
 | Chapter rules | YouTube's rules for a chapter list: first at 0:00, at least 3, ascending, each at least 10 s (the last up to the transcript end), plus the template's `max` and `max_chars`. | Limits of a fields template |
 | Snapping | Replacing each model start with the nearest transcript segment start, floored to whole seconds, then setting the first start to 0. Done in code before the chapter rules are checked. | A repair call |
 | Fields artifact | `<name>.json`: versioned JSON with a fields template's validated values, for later consumers such as the YouTube publisher. | The rendered `<name>.md` |
+| Models directory | The folder holding downloaded models: `~/.minuta/models` by default, or `MINUTA_MODELS_DIR` / `whisper.models_dir`. Whisper models sit flat in it; VAD models in `vad/`. | The job folder, and the old `~/.cache/minuta/models` |
+| VAD model | A Silero voice activity detection model, passed to `whisper-cli --vad-model`, that marks where speech is. Downloaded into the `vad/` subfolder of the models directory. | A whisper model, which transcribes the speech |
 | Backend | An LLM provider that completes (system, user) into text, named by a backend id: `ollama:<model>`, `claude`, `claude:<model>`. | The model, which is only part of the id |
 | Output language | The language documents are written in. Default: the detected speech language. | Speech language, prompt language |
 | Prompt language | The language a template's prompt is written in. minuta never assumes or changes it. | Output language |
