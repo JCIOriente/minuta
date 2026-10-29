@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.80"
 description = "Turn meeting recordings into transcripts and minutes"
+license = "Apache-2.0"
+repository = "https://github.com/JCIOriente/minuta"
+homepage = "https://github.com/JCIOriente/minuta"
+readme = "README.md"
+keywords = ["transcription", "whisper", "meetings", "llm", "subtitles"]
+categories = ["command-line-utilities", "multimedia::audio"]
+# Development-only material that users of the crate do not need.
+exclude = [".baton/", ".github/", ".claude/", "docs/", "CONTEXT.md", "Makefile", "rust-toolchain.toml"]
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
