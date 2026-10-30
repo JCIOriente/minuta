@@ -58,11 +58,11 @@ wins) already exists; what is missing is a way to fill it.
   | Local file | vs manifest | vs catalog | State | `pull` does |
   |---|---|---|---|---|
   | missing | - | - | **new** | downloads |
-  | present | equal | equal | **up to date** | nothing |
+  | present | any | equal | **up to date** | nothing |
   | present | equal | differs | **update available** | downloads, no `--force` needed |
-  | present | differs, or no manifest entry | any | **modified** | skips and says so; with `--force` saves the old file as `NAME.md.bak`, then overwrites |
+  | present | differs, or no manifest entry | differs | **modified** | skips and says so; with `--force` saves the old file as `NAME.md.bak`, then overwrites |
 
-  A file minuta did not write has no manifest entry, so it counts as *modified*. Minuta never overwrites a file it did not write unless `--force`.
+  The *up to date* row is checked first: a file whose bytes already equal the catalog is up to date whatever the manifest says. Otherwise a file minuta did not write has no manifest entry, so it counts as *modified*. Minuta never overwrites a file it did not write unless `--force`.
 - A file whose SHA-256 differs from the catalog, or that fails `Template::parse`, is not written and the command exits non-zero naming the file. Other selected files are not written either (all or nothing).
 - Adding a template to the repo needs a new `templates/<name>.md` and one catalog entry. No Rust change.
 - A repo test fails if `templates/index.toml` and the files disagree (missing file, wrong hash, file not parsable, name not matching the file stem).
