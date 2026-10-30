@@ -35,3 +35,8 @@
 - Symptom: tests pass, but `cargo test` sends requests to the developer's real Ollama (or another daemon on a default port).
 - Cause: a new code path reads a default URL from config that the existing test environment never overrode (`doctor` started probing `127.0.0.1:11434` in #51). A "closed port" helper that binds port 0 and drops the listener can also hand that port to a parallel fake server.
 - Avoid: every test environment sets every service URL explicitly (`MINUTA_OLLAMA_URL`), to a fake or to a never-served address like `http://127.0.0.1:9`; never use bind-then-drop to find a closed port.
+
+## A write into a folder from an untrusted clone follows a planted symlink
+- Symptom: a command that writes into `./templates` (or any folder a cloned repo can fill) overwrites a file outside it, for example `~/.zshrc`.
+- Cause: the temp file next to the target is written with `fs::write(<file>.tmp)`, which follows a symlink an attacker committed at that name. `job::write_atomic` only renames; what its callback writes to the temp path decides. Job folders are normally created by minuta, so their step writers (`generate.rs`, `state.rs`, `steps/*.rs`) are not hardened; that holds only while a resumed job folder is trusted, because `Job::open` resumes any folder with a valid `job.json` and `clean_tmp` skips symlinks (tracked in #175). `./templates` is exposed by design.
+- Avoid: in such folders, remove a stale temp file first, create the new one with `create_new` (O_EXCL), then rename; refuse a symlinked folder, manifest or target. `write_file` in `src/template/pull.rs` does this, and `tests/pull_core.rs` plants a symlink at `<file>.tmp`, `.pulled.toml.tmp` and `<file>.bak.tmp` and checks a victim file is untouched.

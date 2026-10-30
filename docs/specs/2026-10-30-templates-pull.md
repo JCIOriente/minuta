@@ -174,9 +174,9 @@ None. Approved by the owner with default `--ref main` and the 256 KiB / 1 MiB si
 - [x] ADR-0011 (proposed, PR #159)
 - [x] Plan: `docs/plans/2026-10-30-templates-pull.md`
 - [x] #160 catalog, manifest and states (PR #167)
-- [x] #161 fetch, plan, verify, write
-- [x] #162 CLI command
-- [x] #163 repo catalog and consistency test
-- [x] #164 persona briefs
-- [ ] #166 curated templates
-- [ ] #165 docs
+- [x] #161 fetch, plan, verify, write (PR #169)
+- [x] #162 CLI command (PR #171)
+- [x] #163 repo catalog and consistency test (PR #170)
+- [x] #164 persona briefs (PR #168)
+- [x] #166 curated templates (PR #173)
+- [x] #165 docs (PR #172)
