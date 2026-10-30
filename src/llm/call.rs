@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use super::Backend;
 use crate::error::{Error, Result};
 use crate::fields::Violation;
-use crate::job::{fingerprint, layout};
+use crate::job::{fingerprint, layout, reject_symlinked_tier};
 
 /// Longest single sleep, so `interrupt` is noticed promptly.
 const SLEEP_SLICE: Duration = Duration::from_millis(25);
@@ -63,6 +63,9 @@ impl CallCache {
     /// Writes to a temp file unique to this call, syncs it and renames it into place, so
     /// concurrent writers of one key never share a temp file.
     fn write(&self, key: &str, text: &str) -> Result<()> {
+        for dir in self.dir.ancestors().take(2) {
+            reject_symlinked_tier(dir)?;
+        }
         fs::create_dir_all(&self.dir).map_err(|e| with_path(&self.dir, e))?;
         let path = self.entry(key);
         let tmp = self.dir.join(format!(
@@ -91,6 +94,9 @@ impl CallCache {
     /// Removes leftover `*.tmp` files in `llm-cache`; call only when no calls are in flight
     /// (at the start of a run). A missing cache dir is fine.
     pub fn clean_tmp(&self) -> Result<()> {
+        for dir in self.dir.ancestors().take(2) {
+            reject_symlinked_tier(dir)?;
+        }
         let entries = match fs::read_dir(&self.dir) {
             Ok(entries) => entries,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -424,11 +430,7 @@ mod tests {
         assert_eq!(run(&b, &cache, &policy(1), false).unwrap(), "first");
         assert_eq!(b.calls().len(), 1);
         let key = cache_key(&b, "sys", "usr");
-        let path = dir
-            .path()
-            .join(".minuta")
-            .join("llm-cache")
-            .join(format!("{key}.txt"));
+        let path = layout::call_cache_dir(dir.path()).join(format!("{key}.txt"));
         assert_eq!(fs::read_to_string(path).unwrap(), "first");
     }
 
@@ -450,13 +452,7 @@ mod tests {
         let b = backend(vec![Ok("x".into())]);
         let key = cache_key(&b, "sys", "usr");
         // A directory in place of the entry: reading fails with something other than NotFound.
-        fs::create_dir_all(
-            dir.path()
-                .join(".minuta")
-                .join("llm-cache")
-                .join(format!("{key}.txt")),
-        )
-        .unwrap();
+        fs::create_dir_all(layout::call_cache_dir(dir.path()).join(format!("{key}.txt"))).unwrap();
         let err = run(&b, &cache, &policy(1), false).unwrap_err();
         assert!(matches!(err, Error::Io(_)), "{err}");
         assert!(b.calls().is_empty());
@@ -540,11 +536,7 @@ mod tests {
         let b = backend(vec![Ok("<think>x</think>\n```md\nbody\n```".into())]);
         assert_eq!(run(&b, &cache, &policy(1), false).unwrap(), "body");
         let key = cache_key(&b, "sys", "usr");
-        let path = dir
-            .path()
-            .join(".minuta")
-            .join("llm-cache")
-            .join(format!("{key}.txt"));
+        let path = layout::call_cache_dir(dir.path()).join(format!("{key}.txt"));
         assert_eq!(fs::read_to_string(path).unwrap(), "body");
     }
 
@@ -554,7 +546,7 @@ mod tests {
         let cache = CallCache::new(dir.path());
         let b = backend(vec![Ok("fresh".into())]);
         let key = cache_key(&b, "sys", "usr");
-        let cache_dir = dir.path().join(".minuta").join("llm-cache");
+        let cache_dir = layout::call_cache_dir(dir.path());
         fs::create_dir_all(&cache_dir).unwrap();
         fs::write(cache_dir.join(format!("{key}.txt")), "").unwrap();
         assert_eq!(run(&b, &cache, &policy(1), false).unwrap(), "fresh");
@@ -566,7 +558,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // A file where the cache dir should be.
         fs::create_dir(dir.path().join(".minuta")).unwrap();
-        fs::write(dir.path().join(".minuta").join("llm-cache"), "x").unwrap();
+        fs::write(layout::call_cache_dir(dir.path()), "x").unwrap();
         let cache = CallCache::new(dir.path());
         let err = cache.write("k", "text").unwrap_err();
         assert!(err.to_string().contains("llm-cache"), "{err}");
@@ -576,14 +568,27 @@ mod tests {
     fn rename_error_names_entry_path() {
         let dir = tempfile::tempdir().unwrap();
         let cache = CallCache::new(dir.path());
-        let entry = dir.path().join(".minuta").join("llm-cache").join("k.txt");
+        let entry = layout::call_cache_dir(dir.path()).join("k.txt");
         fs::create_dir_all(entry.join("child")).unwrap();
         let err = cache.write("k", "text").unwrap_err();
         assert!(err.to_string().contains("k.txt"), "{err}");
-        let tmp_left = fs::read_dir(dir.path().join(".minuta").join("llm-cache"))
+        let tmp_left = fs::read_dir(layout::call_cache_dir(dir.path()))
             .unwrap()
             .any(|e| e.unwrap().path().extension().is_some_and(|x| x == "tmp"));
         assert!(!tmp_left);
+    }
+
+    #[test]
+    fn clean_tmp_refuses_a_symlinked_state_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("llm-cache");
+        fs::create_dir(&victim).unwrap();
+        fs::write(victim.join("x.tmp"), "keep").unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join(".minuta")).unwrap();
+        let err = CallCache::new(dir.path()).clean_tmp().unwrap_err();
+        assert!(matches!(err, Error::Job(_)), "{err}");
+        assert!(victim.join("x.tmp").exists());
     }
 
     #[test]
@@ -592,7 +597,7 @@ mod tests {
         let cache = CallCache::new(dir.path());
         cache.clean_tmp().unwrap(); // missing dir is fine
         cache.write("k", "text").unwrap();
-        let cache_dir = dir.path().join(".minuta").join("llm-cache");
+        let cache_dir = layout::call_cache_dir(dir.path());
         fs::write(cache_dir.join("k.1-2.tmp"), "partial").unwrap();
         cache.clean_tmp().unwrap();
         assert!(!cache_dir.join("k.1-2.tmp").exists());
@@ -605,7 +610,7 @@ mod tests {
         let cache = CallCache::new(dir.path());
         cache.write("k", "a").unwrap();
         cache.write("k", "b").unwrap();
-        let names: Vec<_> = fs::read_dir(dir.path().join(".minuta").join("llm-cache"))
+        let names: Vec<_> = fs::read_dir(layout::call_cache_dir(dir.path()))
             .unwrap()
             .map(|e| e.unwrap().file_name())
             .collect();
@@ -741,9 +746,7 @@ mod tests {
 
     fn json_entry(dir: &Path, b: &ScriptedBackend) -> PathBuf {
         let key = json_cache_key(b, "sys", "usr", &schema());
-        dir.join(".minuta")
-            .join("llm-cache")
-            .join(format!("{key}.txt"))
+        layout::call_cache_dir(dir).join(format!("{key}.txt"))
     }
 
     #[test]
@@ -801,12 +804,7 @@ mod tests {
                 violations: vec![Violation("not good: bad".into())],
             }
         );
-        assert!(!dir
-            .path()
-            .join(".minuta")
-            .join("llm-cache")
-            .try_exists()
-            .unwrap());
+        assert!(!layout::call_cache_dir(dir.path()).try_exists().unwrap());
     }
 
     #[test]
@@ -866,12 +864,7 @@ mod tests {
             "{err}"
         );
         assert_eq!(b.calls().len(), 2);
-        assert!(!dir
-            .path()
-            .join(".minuta")
-            .join("llm-cache")
-            .try_exists()
-            .unwrap());
+        assert!(!layout::call_cache_dir(dir.path()).try_exists().unwrap());
     }
 
     #[test]

@@ -220,7 +220,9 @@ impl Job {
     pub fn clean_tmp(&self) -> Result<()> {
         remove_tmp_files(&self.dir)?;
         for tier in [layout::ASSETS_DIR, layout::STATE_DIR] {
-            match remove_tmp_files(&self.dir.join(tier)) {
+            let tier = self.dir.join(tier);
+            reject_symlinked_tier(&tier)?;
+            match remove_tmp_files(&tier) {
                 Err(Error::Io(e)) if e.kind() == io::ErrorKind::NotFound => {}
                 other => other?,
             }
@@ -240,6 +242,27 @@ fn set_stale<K: Ord>(states: &mut BTreeMap<K, StepState>, key: K, reason: &Reaso
     });
     state.status = Status::Stale;
     state.reason = Some(reason.to_string());
+}
+
+/// Fails with `Error::Job` if `path` is a symlink named like a tier folder (`assets` or
+/// `.minuta`): a link planted there would make writes and the `*.tmp` cleanup reach outside the
+/// job folder. Other names and missing paths pass.
+pub fn reject_symlinked_tier(path: &Path) -> Result<()> {
+    let is_tier = path
+        .file_name()
+        .is_some_and(|n| n == layout::ASSETS_DIR || n == layout::STATE_DIR);
+    if !is_tier {
+        return Ok(());
+    }
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(Error::Job(format!(
+            "{} is a symbolic link; remove it or choose another job folder",
+            path.display()
+        ))),
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(with_path(path, e)),
+    }
 }
 
 fn remove_tmp_files(dir: &Path) -> Result<()> {
@@ -296,8 +319,8 @@ fn is_media_extension(ext: &str) -> bool {
     MEDIA_EXTENSIONS.iter().any(|m| ext.eq_ignore_ascii_case(m))
 }
 
-/// Writes an artifact atomically, creating its parent folder when missing: `f` writes to `<path>.tmp`, which is synced to disk and
-/// renamed to `path` only if `f` succeeds. On failure the temp file is removed and `path` is
+/// Writes an artifact atomically, creating its parent folder when missing: `f` writes to
+/// `<path>.tmp`, which is synced to disk and renamed to `path` only if `f` succeeds. On failure the temp file is removed and `path` is
 /// left untouched.
 ///
 /// Whatever already sits at the temp path is removed first and `f` is not called if that fails.
@@ -307,6 +330,9 @@ fn is_media_extension(ext: &str) -> bool {
 pub fn write_atomic(path: &Path, f: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
     let tmp = tmp_path(path);
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        for ancestor in parent.ancestors() {
+            reject_symlinked_tier(ancestor)?;
+        }
         fs::create_dir_all(parent).map_err(|e| with_path(parent, e))?;
     }
     match fs::remove_file(&tmp) {

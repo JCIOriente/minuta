@@ -1377,3 +1377,49 @@ fn call_cache_lives_in_minuta() {
         root.path().join(".minuta").join("llm-cache").as_path()
     );
 }
+
+/// A job whose `tier` folder (`.minuta` or `assets`) is a symlink to a folder outside it
+/// holding a `victim.tmp` file. Returns the job, the outside folder and the victim.
+fn job_with_symlinked_tier(tier: &str) -> (TempDir, Job, PathBuf, PathBuf) {
+    let (root, out, source) = setup();
+    let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
+    let outside = root.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    let victim = outside.join("victim.tmp");
+    fs::write(&victim, b"keep").unwrap();
+    let link = job.dir.join(tier);
+    if link.is_dir() {
+        fs::remove_dir_all(&link).unwrap();
+    }
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    (root, job, outside, victim)
+}
+
+#[test]
+fn clean_tmp_refuses_a_symlinked_tier() {
+    for tier in [layout::STATE_DIR, layout::ASSETS_DIR] {
+        let (_root, job, _outside, victim) = job_with_symlinked_tier(tier);
+        let err = job.clean_tmp().unwrap_err();
+        assert!(matches!(err, Error::Job(_)), "{tier}: {err}");
+        assert!(err.to_string().contains(tier), "{err}");
+        assert_eq!(fs::read(&victim).unwrap(), b"keep", "{tier}");
+    }
+}
+
+#[test]
+fn write_atomic_refuses_a_symlinked_parent() {
+    let (_root, job, outside, _victim) = job_with_symlinked_tier(layout::ASSETS_DIR);
+    let path = layout::audio_file(&job.dir);
+    let err = write_atomic(&path, |tmp| Ok(fs::write(tmp, b"x")?)).unwrap_err();
+    assert!(matches!(err, Error::Job(_)), "{err}");
+    assert!(!outside.join("audio.wav").exists());
+}
+
+#[test]
+fn write_atomic_does_not_create_through_a_symlinked_ancestor_tier() {
+    let (_root, job, outside, _victim) = job_with_symlinked_tier(layout::STATE_DIR);
+    let path = layout::call_cache_dir(&job.dir).join("k.txt");
+    let err = write_atomic(&path, |tmp| Ok(fs::write(tmp, b"x")?)).unwrap_err();
+    assert!(matches!(err, Error::Job(_)), "{err}");
+    assert!(!outside.join("llm-cache").exists());
+}
