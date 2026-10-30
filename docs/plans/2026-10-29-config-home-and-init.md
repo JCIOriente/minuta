@@ -46,7 +46,7 @@ Can start immediately in parallel: T1, T2
 ### T2: User templates folder under `~/.minuta/templates`  (#150)
 - Priority: 0
 - Depends on: none
-- Owns: `src/template/discover.rs`, `tests/templates.rs`
+- Owns: `src/template/discover.rs`, `tests/templates.rs`, and the three old-path template fixtures in `tests/cli.rs` (`templates_list_shows_layers`) and `tests/integration/templates.rs` (`templates_list_shows_built_in_user_and_project_layers`, `templates_show_prints_the_file_of_each_layer`). Added after T2's run found these; the Impact section already required them to move.
 - Touches (read-only or additive): none
 - Acceptance:
   - [ ] `Dirs::standard().user` is `<home>/.minuta/templates`
