@@ -285,6 +285,8 @@ instagram.md  written
 youtube.md    updated
 ```
 
+On a terminal, a progress bar on stderr counts the files as they download; it is not drawn when output is piped or `NO_COLOR` is set.
+
 The names above are examples; `--list` shows what the catalog has now. It is
 fetched fresh each time, so a new template shows up without a new minuta
 release. A pulled file is an ordinary project template: `minuta templates list`

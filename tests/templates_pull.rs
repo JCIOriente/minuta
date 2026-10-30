@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use minuta::error::{Error, Result};
+use minuta::progress::Mode;
 use minuta::template::catalog::{sha256_hex, Manifest};
 use minuta::template::pull::Origin;
 use minuta::template::pull_cmd::{parse_choice, run, Choice, Options, Terminal};
@@ -71,6 +72,7 @@ struct Case {
     interactive: bool,
     input: &'static str,
     known: Option<Vec<String>>,
+    mode: Mode,
 }
 
 fn case(choice: Choice) -> Case {
@@ -82,6 +84,7 @@ fn case(choice: Choice) -> Case {
         interactive: false,
         input: "",
         known: Some(vec![]),
+        mode: Mode::Plain,
     }
 }
 
@@ -105,6 +108,7 @@ impl Case {
             force: self.force,
             yes: self.yes,
             known: self.known.as_deref(),
+            mode: self.mode,
         };
         let mut input = Cursor::new(self.input.as_bytes().to_vec());
         let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
@@ -1325,4 +1329,38 @@ fn a_template_folder_that_cannot_be_read_does_not_block_pulling() {
     );
     assert_eq!(lines[1], "beta.md  written");
     assert!(env.work().join("out/beta.md").is_file());
+}
+
+#[test]
+fn plain_mode_prints_no_bar_and_same_lines() {
+    let server = server();
+    let dest = Dest::new();
+    let mut c = case(names(&["alpha", "beta"]));
+    c.yes = true;
+    c.mode = Mode::Plain;
+    let out = c.run(&server, &dest.dir());
+    out.result.unwrap();
+    assert_eq!(out.stderr, "alpha  written\nbeta   written\n");
+    assert_eq!(
+        out.stdout.lines().count(),
+        2,
+        "stdout carries only the paths"
+    );
+}
+
+#[test]
+fn bar_cleared_on_fetch_failure() {
+    // beta is in the catalog but the server does not have its file.
+    let mut routes = vec![Route::ok("/templates/index.toml", catalog_text(&ENTRIES))];
+    routes.push(Route::ok("/templates/alpha.md", template_text("alpha")));
+    routes.push(Route::status("/templates/beta.md", 404, "missing"));
+    let server = FakeHttp::start(routes);
+    let dest = Dest::new();
+    let mut c = case(names(&["alpha", "beta"]));
+    c.yes = true;
+    c.mode = Mode::Live;
+    let out = c.run(&server, &dest.dir());
+    assert!(out.result.is_err());
+    assert!(!out.stderr.contains('\r') && !out.stderr.contains('\x1b'));
+    assert!(out.stdout.is_empty());
 }

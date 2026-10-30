@@ -13,6 +13,7 @@ use super::pull::{
 use super::valid_stem;
 use crate::cli::sanitize;
 use crate::error::{Error, Result};
+use crate::progress::{Mode, TemplatesReport};
 
 /// Which templates to download.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +38,8 @@ pub struct Options<'a> {
     /// template whose `input:` is missing. `None` when that could not be found out: no note
     /// is made then.
     pub known: Option<&'a [String]>,
+    /// How much progress to show on stderr while files are fetched.
+    pub mode: Mode,
 }
 
 pub struct Terminal<'a> {
@@ -141,13 +144,22 @@ pub fn run(origin: &Origin, options: &Options<'_>, term: &mut Terminal<'_>) -> R
         }
     }
 
-    let done = apply(
+    let mut report = TemplatesReport::new(options.mode, download_count(&items, options.force));
+    let applied = apply(
         &options.dest,
         &items,
         options.force,
-        &mut |entry| fetch_file(origin, entry),
+        &mut |entry| {
+            report.fetching(&entry.name);
+            let bytes = fetch_file(origin, entry);
+            report.fetched();
+            bytes
+        },
         &mut manifest,
-    )?;
+    );
+    // Whether it worked or not, the bar is gone before any result line or error prints.
+    report.clear();
+    let done = applied?;
     for item in &done {
         writeln!(
             term.stderr,
@@ -369,4 +381,49 @@ pub fn parse_choice(line: &str, count: usize) -> Result<Vec<usize>> {
         }
     }
     Ok(chosen)
+}
+
+/// How many of `items` will be downloaded: kept and up-to-date files are not counted.
+fn download_count(items: &[Item<'_>], force: bool) -> usize {
+    items.iter().filter(|i| will_write(i, force)).count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::template::catalog::State;
+
+    fn entry(name: &str) -> Entry {
+        Entry {
+            name: name.to_string(),
+            description: String::new(),
+            platform: None,
+            tags: Vec::new(),
+            input: None,
+            sha256: String::new(),
+        }
+    }
+
+    #[test]
+    fn bar_total_counts_only_files_to_download() {
+        let entries: Vec<Entry> = ["a", "b", "c", "d"].map(entry).into();
+        let states = [
+            State::New,
+            State::UpToDate,
+            State::Modified,
+            State::UpdateAvailable,
+        ];
+        let items: Vec<Item<'_>> = entries
+            .iter()
+            .zip(states)
+            .map(|(entry, state)| Item {
+                entry,
+                path: PathBuf::from(md(&entry.name)),
+                state,
+            })
+            .collect();
+        // Modified is kept without --force; with it, it is replaced.
+        assert_eq!(download_count(&items, false), 2);
+        assert_eq!(download_count(&items, true), 3);
+    }
 }
