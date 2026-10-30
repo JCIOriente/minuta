@@ -14,7 +14,8 @@ use crate::config::{Config, Setting, Source};
 use crate::error::{Error, Missing, Result};
 use crate::generate::{self, TemplateRun};
 use crate::job::{
-    self, plan_stale, step_fingerprint, template_reason, Ctx, Force, Job, Reason, Step, StepName,
+    self, layout, plan_stale, step_fingerprint, template_reason, Ctx, Force, Job, Reason, Step,
+    StepName,
 };
 use crate::lang;
 use crate::llm::call::{CallCache, Policy};
@@ -175,6 +176,9 @@ struct Resolved {
     catalog: Catalog,
     /// The templates in the run: the requested ones plus their inputs, dependencies first.
     order: Vec<String>,
+    /// The templates the user asked for: `-t` and the target of `--force <template>`. The other
+    /// templates in `order` are implicit: they run only because a requested one needs them.
+    requested: Vec<String>,
     /// The backend of each template in `order`.
     backends: BTreeMap<String, BackendId>,
     /// The steps `--force` covers.
@@ -259,6 +263,13 @@ fn resolve(options: &Options, config: &Config) -> Result<Resolved> {
     let (step_force, forced) = resolve_force(options.force.as_ref(), &resolved)?;
     resolved.step_force = step_force;
     resolved.forced = forced;
+    resolved.requested = options.templates.clone();
+    if let Some(ForceArg::Name(name)) = &options.force {
+        let is_template = name.parse::<StepName>().is_err() && resolved.order.contains(name);
+        if is_template && !resolved.requested.contains(name) {
+            resolved.requested.push(name.clone());
+        }
+    }
     Ok(resolved)
 }
 
@@ -772,13 +783,14 @@ impl TemplatePhase<'_> {
         }
         CallCache::new(&self.ctx.dir).clean_tmp()?;
         let detected = detected_language(&self.ctx.dir)?;
+        let implicit = self.implicit_templates(job);
         let mut ran = 0;
         for (i, name) in self.resolved.order.iter().enumerate() {
             let index = self.first_index + i;
             if self.interrupt.load(Ordering::SeqCst) {
                 return Err(Error::Interrupted);
             }
-            match self.run_one(job, name, index, &detected, progress) {
+            match self.run_one(job, name, index, &detected, &implicit, progress) {
                 Ok(true) => ran += 1,
                 Ok(false) => {}
                 Err(e) => {
@@ -799,13 +811,29 @@ impl TemplatePhase<'_> {
         Ok(ran)
     }
 
-    /// Runs template `name` when it is stale; returns whether it ran.
+    /// The templates that run only as a dependency, whose files go to `.minuta/derived/`. One
+    /// that an earlier run wrote to its normal places (it was requested then) stays there.
+    fn implicit_templates(&self, job: &Job) -> Vec<String> {
+        let kept_in_place = |name: &String| {
+            let recorded = job.state.templates.get(name);
+            let first = recorded.and_then(|r| r.artifacts.first());
+            first.is_some_and(|artifact| !artifact.starts_with(layout::STATE_DIR))
+        };
+        let resolved = self.resolved;
+        let is_implicit =
+            |name: &&String| !resolved.requested.contains(name) && !kept_in_place(name);
+        resolved.order.iter().filter(is_implicit).cloned().collect()
+    }
+
+    /// Runs template `name` when it is stale; returns whether it ran. `implicit` lists the
+    /// implicit templates of the run.
     fn run_one(
         &self,
         job: &mut Job,
         name: &str,
         index: usize,
         detected: &str,
+        implicit: &[String],
         progress: &mut Progress,
     ) -> Result<bool> {
         let resolved = self.resolved;
@@ -826,9 +854,16 @@ impl TemplatePhase<'_> {
             output_lang,
             forced,
             repairs: self.config.repairs(),
+            implicit: implicit.iter().any(|n| n == name),
+            implicit_inputs: implicit,
         };
         let fingerprint = run.fingerprint(self.ctx, self.job_name)?;
         let Some(reason) = template_reason(job, name, &fingerprint, forced)? else {
+            if run.move_derived(self.ctx)? {
+                let seconds = job.state.templates.get(name).and_then(|t| t.seconds);
+                let artifacts = run.artifacts(&self.ctx.dir);
+                job.mark_template_done(name, &fingerprint, seconds.unwrap_or(0.0), &artifacts)?;
+            }
             progress.cached(index, name);
             return Ok(false);
         };
@@ -849,7 +884,7 @@ impl TemplatePhase<'_> {
             &mut |event| progress.event(event),
         )?;
         let seconds = started.elapsed().as_secs_f64();
-        job.mark_template_done(name, &fingerprint, seconds, &run.artifacts())?;
+        job.mark_template_done(name, &fingerprint, seconds, &run.artifacts(&self.ctx.dir))?;
         let detail = template_detail(&id, generated.calls);
         progress.done(index, name, Some(&detail), seconds);
         Ok(true)

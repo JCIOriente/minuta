@@ -154,7 +154,7 @@ fn chapters_run_writes_artifacts_then_cached() {
     let job = env.job_dir("a");
     let state = &job_json(&job)["templates"]["chapters"];
     let outcome = (
-        read(&job.join("chapters.json")),
+        read(&minuta::job::layout::template_json(&job, "chapters")),
         read(&job.join("chapters.md")),
         state["status"].clone(),
         state["artifacts"].clone(),
@@ -167,7 +167,7 @@ fn chapters_run_writes_artifacts_then_cached() {
             VALID_CHAPTERS_JSON.to_string(),
             VALID_CHAPTERS_MD.to_string(),
             serde_json::json!("done"),
-            serde_json::json!(["chapters.json", "chapters.md"]),
+            serde_json::json!(["assets/chapters.json", "chapters.md"]),
             1,
             0,
         ),
@@ -226,7 +226,10 @@ fn chapters_start_off_segment_is_snapped() {
     let out = run_class(&env, &ARGS_CHAPTERS, &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
-        read(&env.job_dir("a").join("chapters.json")),
+        read(&minuta::job::layout::template_json(
+            &env.job_dir("a"),
+            "chapters"
+        )),
         VALID_CHAPTERS_JSON
     );
 }
@@ -274,9 +277,9 @@ fn chapters_always_broken_fails_and_rerun_asks_again() {
     let first_run = (
         out.status.code(),
         last_line(&out),
-        exists(&job, "chapters.json"),
+        exists(&job, "assets/chapters.json"),
         exists(&job, "chapters.md"),
-        exists(&job, "youtube.json"),
+        exists(&job, "assets/youtube.json"),
         exists(&job, "youtube.md"),
     );
     let first_roles = roles(&fake, 0);
@@ -565,5 +568,192 @@ in the input.
                 .to_string(),
             built_in.to_string()
         )
+    );
+}
+
+/// Where the files of template `name` ended up, as (root, assets, derived) listings of the
+/// `<name>.*` files.
+fn homes(job: &Path, name: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let listing = |dir: std::path::PathBuf| {
+        let mut files: Vec<String> = match fs::read_dir(&dir) {
+            Ok(entries) => entries
+                .map(|e| e.unwrap().file_name().into_string().unwrap())
+                .filter(|f| f.starts_with(&format!("{name}.")))
+                .collect(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => panic!("{}: {e}", dir.display()),
+        };
+        files.sort();
+        files
+    };
+    (
+        listing(job.to_path_buf()),
+        listing(job.join(minuta::job::layout::ASSETS_DIR)),
+        listing(minuta::job::layout::derived_dir(job)),
+    )
+}
+
+#[test]
+fn requested_template_writes_md_at_root_and_json_in_assets() {
+    require_ffmpeg!();
+    let env = env_with_clip();
+    let fake = scripted(|_| valid_chapters(), "unused");
+    let out = run_class(&env, &ARGS_CHAPTERS, &fake);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let job = env.job_dir("a");
+    let outcome = (
+        homes(&job, "chapters"),
+        read(&minuta::job::layout::template_json(&job, "chapters")),
+        read(&job.join("chapters.md")),
+        job_json(&job)["templates"]["chapters"]["artifacts"].clone(),
+    );
+    assert_eq!(
+        outcome,
+        (
+            (
+                vec!["chapters.md".to_string()],
+                vec!["chapters.json".to_string()],
+                Vec::new()
+            ),
+            VALID_CHAPTERS_JSON.to_string(),
+            VALID_CHAPTERS_MD.to_string(),
+            serde_json::json!(["assets/chapters.json", "chapters.md"]),
+        ),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn youtube_run_leaves_no_chapters_at_root() {
+    require_ffmpeg!();
+    let env = env_with_clip();
+    let fake = scripted(|_| valid_chapters(), "unused");
+    let out = run_class(&env, &ARGS_YOUTUBE, &fake);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let job = env.job_dir("a");
+    let derived = minuta::job::layout::derived_dir(&job);
+    let outcome = (
+        homes(&job, "chapters"),
+        read(&derived.join("chapters.json")),
+        read(&derived.join("chapters.md")),
+        homes(&job, "youtube"),
+        read(&job.join("youtube.md")),
+        job_json(&job)["templates"]["chapters"]["artifacts"].clone(),
+    );
+    assert_eq!(
+        outcome,
+        (
+            (
+                Vec::new(),
+                Vec::new(),
+                vec!["chapters.json".to_string(), "chapters.md".to_string()]
+            ),
+            VALID_CHAPTERS_JSON.to_string(),
+            VALID_CHAPTERS_MD.to_string(),
+            (
+                vec!["youtube.md".to_string()],
+                vec!["youtube.json".to_string()],
+                Vec::new()
+            ),
+            VALID_YOUTUBE_MD.to_string(),
+            serde_json::json!([
+                ".minuta/derived/chapters.json",
+                ".minuta/derived/chapters.md"
+            ]),
+        ),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn unchanged_templates_are_skipped_after_move() {
+    require_ffmpeg!();
+    let env = env_with_clip();
+    let fake = scripted(|_| valid_chapters(), "unused");
+    let out = run_class(&env, &ARGS_YOUTUBE, &fake);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let calls = fake.chat_count();
+    let moved = run_class(
+        &env,
+        &["run", "a.mp4", "-t", "youtube", "-t", "chapters"],
+        &fake,
+    );
+    assert!(moved.status.success(), "{}", stderr(&moved));
+    let again = run_class(
+        &env,
+        &["run", "a.mp4", "-t", "youtube", "-t", "chapters"],
+        &fake,
+    );
+    assert!(again.status.success(), "{}", stderr(&again));
+    let back = run_class(&env, &ARGS_YOUTUBE, &fake);
+    assert!(back.status.success(), "{}", stderr(&back));
+    let job = env.job_dir("a");
+    let cached = |out: &Output| {
+        let mut names = cached_steps(&stderr(out));
+        names.retain(|n| n == "chapters" || n == "youtube");
+        names
+    };
+    let outcome = (
+        cached(&moved),
+        cached(&again),
+        cached(&back),
+        fake.chat_count() - calls,
+        homes(&job, "chapters"),
+        job_json(&job)["templates"]["chapters"]["artifacts"].clone(),
+    );
+    assert_eq!(
+        outcome,
+        (
+            vec!["chapters".to_string(), "youtube".to_string()],
+            vec!["chapters".to_string(), "youtube".to_string()],
+            vec!["chapters".to_string(), "youtube".to_string()],
+            0,
+            (
+                vec!["chapters.md".to_string()],
+                vec!["chapters.json".to_string()],
+                Vec::new()
+            ),
+            serde_json::json!(["assets/chapters.json", "chapters.md"]),
+        ),
+        "{}",
+        stderr(&back)
+    );
+}
+
+#[test]
+fn requesting_a_derived_template_moves_its_outputs() {
+    require_ffmpeg!();
+    let env = env_with_clip();
+    let fake = scripted(|_| valid_chapters(), "unused");
+    let out = run_class(&env, &ARGS_YOUTUBE, &fake);
+    assert!(out.status.success(), "{}", stderr(&out));
+    // Forcing runs the template again, now as a requested one: the derived copies go away.
+    let out = run_class(
+        &env,
+        &["run", "a.mp4", "-t", "chapters", "--force", "chapters"],
+        &fake,
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let job = env.job_dir("a");
+    let outcome = (
+        homes(&job, "chapters"),
+        read(&minuta::job::layout::template_json(&job, "chapters")),
+        read(&job.join("chapters.md")),
+    );
+    assert_eq!(
+        outcome,
+        (
+            (
+                vec!["chapters.md".to_string()],
+                vec!["chapters.json".to_string()],
+                Vec::new()
+            ),
+            VALID_CHAPTERS_JSON.to_string(),
+            VALID_CHAPTERS_MD.to_string(),
+        ),
+        "{}",
+        stderr(&out)
     );
 }

@@ -9,6 +9,7 @@ use minuta::error::Error;
 use minuta::fields::prompt::{fields_block, repair_system, repair_user, schema};
 use minuta::fields::{FieldsSpec, Violation, FIELDS_VERSION};
 use minuta::generate::{backend_id, output_lang, TemplateRun};
+use minuta::job::layout::{derived_dir, template_json};
 use minuta::job::{fingerprint, Ctx};
 use minuta::llm::call::Policy;
 use minuta::llm::chunk::{language_instruction, transcript_text, Event, PROMPT_VERSION};
@@ -78,6 +79,8 @@ fn run<'a>(template: &'a Template, backend: &'a dyn Backend, lang: &str) -> Temp
         output_lang: lang.into(),
         forced: false,
         repairs: 2,
+        implicit: false,
+        implicit_inputs: &[],
     }
 }
 
@@ -198,8 +201,8 @@ fn markdown_artifacts() {
     let t = tpl("summary", TEXT);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
     assert_eq!(
-        run(&t, &b, "es").artifacts(),
-        vec![PathBuf::from("summary.md")]
+        run(&t, &b, "es").artifacts(Path::new("/job")),
+        vec![PathBuf::from("/job/summary.md")]
     );
 }
 
@@ -208,8 +211,11 @@ fn fields_artifacts() {
     let t = tpl("social", FIELDS);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
     assert_eq!(
-        run(&t, &b, "es").artifacts(),
-        vec![PathBuf::from("social.json"), PathBuf::from("social.md")]
+        run(&t, &b, "es").artifacts(Path::new("/job")),
+        vec![
+            PathBuf::from("/job/assets/social.json"),
+            PathBuf::from("/job/social.md")
+        ]
     );
 }
 
@@ -626,8 +632,12 @@ fn execute_events(
 }
 
 fn assert_no_artifacts(dir: &Path) {
-    for file in ["social.json", "social.md"] {
-        assert!(!dir.join(file).try_exists().unwrap(), "{file} was written");
+    for path in [template_json(dir, "social"), dir.join("social.md")] {
+        assert!(
+            !path.try_exists().unwrap(),
+            "{} was written",
+            path.display()
+        );
     }
 }
 
@@ -650,7 +660,7 @@ fn fields_first_answer_valid() {
     );
     assert_eq!(user, &transcript_text(&transcript));
 
-    let json = fs::read_to_string(dir.path().join("social.json")).unwrap();
+    let json = fs::read_to_string(template_json(dir.path(), "social")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(
         parsed,
@@ -691,7 +701,7 @@ fn fields_repair_then_valid() {
     assert_eq!(b.schemas(), vec![Some(schema(spec)), Some(schema(spec))]);
     let md = fs::read_to_string(dir.path().join("social.md")).unwrap();
     assert_eq!(md, "Hola\n\nCorto.\n");
-    assert!(dir.path().join("social.json").try_exists().unwrap());
+    assert!(template_json(dir.path(), "social").try_exists().unwrap());
 }
 
 #[test]
@@ -802,7 +812,7 @@ fn fields_invalid_json_then_valid() {
         "{}",
         calls[1].1
     );
-    assert!(dir.path().join("social.json").try_exists().unwrap());
+    assert!(template_json(dir.path(), "social").try_exists().unwrap());
     assert!(dir.path().join("social.md").try_exists().unwrap());
 }
 
@@ -906,7 +916,7 @@ fn fields_markdown_write_failure_removes_json() {
     let err = execute(&run(&t, &b, "es"), dir.path()).unwrap_err();
     assert!(matches!(err, Error::Io(_)), "{err}");
     assert!(
-        !dir.path().join("social.json").try_exists().unwrap(),
+        !template_json(dir.path(), "social").try_exists().unwrap(),
         "social.json left behind"
     );
 }
@@ -982,8 +992,12 @@ fn class_job() -> (TempDir, Transcript) {
 }
 
 fn assert_no_chapters_artifacts(dir: &Path) {
-    for file in ["chapters.json", "chapters.md"] {
-        assert!(!dir.join(file).try_exists().unwrap(), "{file} was written");
+    for path in [template_json(dir, "chapters"), dir.join("chapters.md")] {
+        assert!(
+            !path.try_exists().unwrap(),
+            "{} was written",
+            path.display()
+        );
     }
 }
 
@@ -992,8 +1006,11 @@ fn chapters_artifacts() {
     let t = tpl("chapters", CHAPTERS);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
     assert_eq!(
-        run(&t, &b, "es").artifacts(),
-        vec![PathBuf::from("chapters.json"), PathBuf::from("chapters.md")]
+        run(&t, &b, "es").artifacts(Path::new("/job")),
+        vec![
+            PathBuf::from("/job/assets/chapters.json"),
+            PathBuf::from("/job/chapters.md")
+        ]
     );
 }
 
@@ -1054,7 +1071,7 @@ fn chapters_first_answer_valid() {
     );
     assert_eq!(calls[0].1, transcript_text(&transcript));
 
-    let json = fs::read_to_string(dir.path().join("chapters.json")).unwrap();
+    let json = fs::read_to_string(template_json(dir.path(), "chapters")).unwrap();
     assert_eq!(json, CHAPTERS_VALID_JSON);
     let md = fs::read_to_string(dir.path().join("chapters.md")).unwrap();
     assert_eq!(md, CHAPTERS_VALID_MD);
@@ -1099,7 +1116,7 @@ fn chapters_repair_then_valid() {
             Some(chapters_prompt::schema())
         ]
     );
-    let json = fs::read_to_string(dir.path().join("chapters.json")).unwrap();
+    let json = fs::read_to_string(template_json(dir.path(), "chapters")).unwrap();
     assert_eq!(json, CHAPTERS_VALID_JSON);
     let md = fs::read_to_string(dir.path().join("chapters.md")).unwrap();
     assert_eq!(md, CHAPTERS_VALID_MD);
@@ -1270,16 +1287,26 @@ fn chapters_forced_refreshes() {
 const YOUTUBE: &str = "---\noutput: fields\nfields: [title, chapters, body]\nlimits:\n  body: { max_chars: 10 }\n---\nWrite about {{job_name}}.\n";
 const CHAPTERS_ARTIFACT: &str = "{\n  \"version\": 1,\n  \"output_lang\": \"es\",\n  \"chapters\": [\n    {\n      \"start\": 0,\n      \"title\": \"Introducción\"\n    },\n    {\n      \"start\": 12,\n      \"title\": \"Empezamos\"\n    }\n  ]\n}\n";
 
-/// The short job folder plus `chapters.json` holding `text`.
+fn write_chapters_json(dir: &Path, text: impl AsRef<[u8]>) {
+    let path = template_json(dir, "chapters");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, text).unwrap();
+}
+
+/// The short job folder plus `assets/chapters.json` holding `text`.
 fn youtube_job(text: &str) -> (TempDir, Transcript) {
     let (dir, t) = job();
-    fs::write(dir.path().join("chapters.json"), text).unwrap();
+    write_chapters_json(dir.path(), text);
     (dir, t)
 }
 
 fn assert_no_youtube_artifacts(dir: &Path) {
-    for file in ["youtube.json", "youtube.md"] {
-        assert!(!dir.join(file).try_exists().unwrap(), "{file} was written");
+    for path in [template_json(dir, "youtube"), dir.join("youtube.md")] {
+        assert!(
+            !path.try_exists().unwrap(),
+            "{} was written",
+            path.display()
+        );
     }
 }
 
@@ -1319,7 +1346,7 @@ fn fields_with_chapters_fingerprint_parts() {
     );
 
     let other = CHAPTERS_ARTIFACT.replace("Empezamos", "Comenzamos");
-    fs::write(dir.path().join("chapters.json"), &other).unwrap();
+    write_chapters_json(dir.path(), &other);
     let changed = r.fingerprint(&ctx(dir.path()), "reunion").unwrap();
     assert_eq!(changed, with(other.as_bytes(), CHAPTERS_VERSION));
     assert_ne!(changed, got, "new chapters.json content reruns");
@@ -1363,7 +1390,7 @@ fn fields_filled_from_chapters_json() {
     );
     assert_eq!(calls[0].1, transcript_text(&transcript));
 
-    let json = fs::read_to_string(dir.path().join("youtube.json")).unwrap();
+    let json = fs::read_to_string(template_json(dir.path(), "youtube")).unwrap();
     assert_eq!(
         json,
         "{\n  \"version\": 1,\n  \"template\": \"youtube\",\n  \"output_lang\": \"es\",\n  \
@@ -1436,7 +1463,7 @@ fn fields_chapters_json_damaged() {
 #[test]
 fn fields_chapters_json_not_utf8() {
     let (dir, _) = job();
-    fs::write(dir.path().join("chapters.json"), [0xff, 0xfe]).unwrap();
+    write_chapters_json(dir.path(), [0xff, 0xfe]);
     let t = tpl("youtube", YOUTUBE);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
     let err = execute(&run(&t, &b, "es"), dir.path()).unwrap_err();
@@ -1451,14 +1478,166 @@ fn fields_chapters_json_not_utf8() {
 #[test]
 fn fields_chapters_json_unreadable_is_io_error() {
     let (dir, _) = job();
-    fs::create_dir(dir.path().join("chapters.json")).unwrap();
+    fs::create_dir_all(template_json(dir.path(), "chapters")).unwrap();
     let t = tpl("youtube", YOUTUBE);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
     let err = execute(&run(&t, &b, "es"), dir.path()).unwrap_err();
-    let path = dir.path().join("chapters.json");
+    let path = template_json(dir.path(), "chapters");
     assert!(
         matches!(err, Error::Io(ref e) if e.to_string().starts_with(&format!("{}: ", path.display()))),
         "{err}"
     );
     assert!(b.calls().is_empty(), "{:?}", b.calls());
+}
+
+// ---- where the outputs go: requested and implicit templates ----
+
+const SOCIAL_JSON: &str = "{\n  \"version\": 1,\n  \"template\": \"social\",\n  \"output_lang\": \"es\",\n  \"fields\": {\n    \"title\": \"Hola\",\n    \"body\": \"Corto.\"\n  }\n}\n";
+
+fn run_implicit<'a>(
+    template: &'a Template,
+    backend: &'a dyn Backend,
+    implicit: bool,
+    implicit_inputs: &'a [String],
+) -> TemplateRun<'a> {
+    TemplateRun {
+        implicit,
+        implicit_inputs,
+        ..run(template, backend, "es")
+    }
+}
+
+/// Every file under `dir` (relative, sorted), skipping the transcript the job starts with and
+/// the call cache.
+fn files_under(dir: &Path) -> Vec<String> {
+    fn walk(dir: &Path, base: &Path, out: &mut Vec<String>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, base, out);
+            } else {
+                out.push(path.strip_prefix(base).unwrap().display().to_string());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, &mut out);
+    out.retain(|f| f != TRANSCRIPT_FILE && !f.starts_with(".minuta/llm-cache/"));
+    out.sort();
+    out
+}
+
+#[test]
+fn requested_template_writes_md_at_root_and_json_in_assets() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    execute(&run(&t, &b, "es"), dir.path()).unwrap();
+    assert_eq!(files_under(dir.path()), ["assets/social.json", "social.md"]);
+    assert_eq!(
+        fs::read_to_string(template_json(dir.path(), "social")).unwrap(),
+        SOCIAL_JSON
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("social.md")).unwrap(),
+        "Hola\n\nCorto.\n"
+    );
+}
+
+#[test]
+fn implicit_dependency_writes_to_derived() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    let r = run_implicit(&t, &b, true, &[]);
+    execute(&r, dir.path()).unwrap();
+    assert_eq!(
+        files_under(dir.path()),
+        [".minuta/derived/social.json", ".minuta/derived/social.md"]
+    );
+    let derived = derived_dir(dir.path());
+    assert_eq!(
+        r.artifacts(dir.path()),
+        vec![derived.join("social.json"), derived.join("social.md")]
+    );
+    assert_eq!(
+        fs::read_to_string(derived.join("social.json")).unwrap(),
+        SOCIAL_JSON
+    );
+    assert_eq!(
+        fs::read_to_string(derived.join("social.md")).unwrap(),
+        "Hola\n\nCorto.\n"
+    );
+}
+
+#[test]
+fn implicit_markdown_dependency_writes_only_md_to_derived() {
+    let (dir, _) = job();
+    let t = tpl("summary", TEXT);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok("Resumen.".into())]);
+    execute(&run_implicit(&t, &b, true, &[]), dir.path()).unwrap();
+    assert_eq!(files_under(dir.path()), [".minuta/derived/summary.md"]);
+}
+
+#[test]
+fn dependent_reads_implicit_inputs_from_derived() {
+    let (dir, _) = job();
+    let derived = derived_dir(dir.path());
+    fs::create_dir_all(&derived).unwrap();
+    fs::write(derived.join("chapters.json"), CHAPTERS_ARTIFACT).unwrap();
+    fs::write(derived.join("summary.md"), "El resumen.\n").unwrap();
+    let implicit = ["chapters".to_string(), "summary".to_string()];
+
+    let youtube = tpl("youtube", YOUTUBE);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    let r = run_implicit(&youtube, &b, false, &implicit);
+    execute(&r, dir.path()).unwrap();
+    let json = fs::read_to_string(template_json(dir.path(), "youtube")).unwrap();
+    assert!(json.contains("\"start\": 12"), "{json}");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("youtube.md")).unwrap(),
+        "Hola\n\n0:00 Introducción\n0:12 Empezamos\n\nCorto.\n"
+    );
+
+    let brief = tpl("brief", "---\ninput: summary\n---\nShorten it.\n");
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok("Corto.".into())]);
+    let r = run_implicit(&brief, &b, false, &implicit);
+    execute(&r, dir.path()).unwrap();
+    assert_eq!(b.calls()[0].1, "El resumen.\n");
+    // The same fingerprint as when the inputs sit in their normal places.
+    assert_eq!(r.fingerprint(&ctx(dir.path()), "reunion").unwrap(), {
+        let (normal, _) = job();
+        fs::write(normal.path().join("summary.md"), "El resumen.\n").unwrap();
+        run(&brief, &b, "es")
+            .fingerprint(&ctx(normal.path()), "reunion")
+            .unwrap()
+    });
+}
+
+#[test]
+fn requesting_a_derived_template_moves_its_outputs() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into()), Ok(VALID.into())]);
+    execute(&run_implicit(&t, &b, true, &[]), dir.path()).unwrap();
+    let requested = run(&t, &b, "es");
+    execute(&requested, dir.path()).unwrap();
+    assert_eq!(files_under(dir.path()), ["assets/social.json", "social.md"]);
+}
+
+#[test]
+fn move_derived_moves_files_without_running() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    execute(&run_implicit(&t, &b, true, &[]), dir.path()).unwrap();
+    let requested = run(&t, &b, "es");
+    assert!(requested.move_derived(&ctx(dir.path())).unwrap());
+    assert_eq!(files_under(dir.path()), ["assets/social.json", "social.md"]);
+    assert_eq!(
+        fs::read_to_string(template_json(dir.path(), "social")).unwrap(),
+        SOCIAL_JSON
+    );
+    assert!(!requested.move_derived(&ctx(dir.path())).unwrap());
+    assert_eq!(b.calls().len(), 1, "no new call");
 }

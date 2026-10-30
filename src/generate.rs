@@ -20,7 +20,7 @@ use crate::fields::prompt::{fields_block, repair_system, repair_user, schema};
 use crate::fields::render::{artifact_json, render};
 use crate::fields::validate::parse_answer;
 use crate::fields::{Violation, FIELDS_VERSION};
-use crate::job::{fingerprint, write_atomic, Ctx};
+use crate::job::{fingerprint, layout, write_atomic_in, Ctx};
 use crate::lang;
 use crate::llm::call::{call, call_json, Answer, CallCache, Policy};
 use crate::llm::chunk::{self, transcript_text, Event, Generated, Request, PROMPT_VERSION};
@@ -103,19 +103,58 @@ pub struct TemplateRun<'a> {
     /// Repair calls after a rejected fields or chapters answer (`llm.repairs`); unused for
     /// Markdown.
     pub repairs: u32,
+    /// The template runs only because another one needs it: its files go to
+    /// `.minuta/derived/` instead of the job folder and `assets/`.
+    pub implicit: bool,
+    /// The templates of this run that are implicit. A template that reads one of them (as its
+    /// input or as the chapters it fills in) finds its files in `.minuta/derived/`.
+    pub implicit_inputs: &'a [String],
 }
 
 impl TemplateRun<'_> {
-    /// The artifacts the template writes, relative to the job folder, in write order:
-    /// `<name>.md`, or `<name>.json` then `<name>.md` for a fields template (ADR-0007), or
-    /// `chapters.json` then `chapters.md` for the chapters template (ADR-0009).
-    pub fn artifacts(&self) -> Vec<PathBuf> {
-        let file = |ext: &str| PathBuf::from(format!("{}.{ext}", self.template.name));
+    /// The artifacts the template writes in the job folder `dir`, in write order: `<name>.md`,
+    /// or `<name>.json` then `<name>.md` for a fields template (ADR-0007), or `chapters.json`
+    /// then `<name>.md` for the chapters template (ADR-0009). The `.md` is in `dir` and the
+    /// `.json` in `assets/`; an implicit template keeps both in `.minuta/derived/`.
+    pub fn artifacts(&self, dir: &Path) -> Vec<PathBuf> {
+        self.artifacts_at(dir, self.implicit)
+    }
+
+    fn artifacts_at(&self, dir: &Path, implicit: bool) -> Vec<PathBuf> {
+        let md = md_path(dir, &self.template.name, implicit);
         match self.template.output {
-            Output::Markdown => vec![file("md")],
-            Output::Fields(_) => vec![file("json"), file("md")],
-            Output::Chapters(_) => vec![PathBuf::from(crate::chapters::JSON_FILE), file("md")],
+            Output::Markdown => vec![md],
+            Output::Fields(_) => vec![json_path(dir, &self.template.name, implicit), md],
+            Output::Chapters(_) => vec![json_path(dir, chapters::NAME, implicit), md],
         }
+    }
+
+    /// A requested template whose files an earlier run left in `.minuta/derived/` (it ran as
+    /// an implicit dependency then) gets them moved to their normal places, so an unchanged
+    /// template needs no new run. Returns whether anything moved. Does nothing for an
+    /// implicit template.
+    pub fn move_derived(&self, ctx: &Ctx) -> Result<bool> {
+        if self.implicit {
+            return Ok(false);
+        }
+        let mut moved = false;
+        let pairs = self
+            .artifacts_at(&ctx.dir, true)
+            .into_iter()
+            .zip(self.artifacts_at(&ctx.dir, false));
+        for (derived, normal) in pairs {
+            if !exists(&derived)? || exists(&normal)? {
+                continue;
+            }
+            let bytes = fs::read(&derived).map_err(|e| io_error(&derived, e))?;
+            write_atomic_in(&ctx.dir, &normal, |tmp| {
+                fs::write(tmp, &bytes)?;
+                Ok(())
+            })?;
+            fs::remove_file(&derived).map_err(|e| io_error(&derived, e))?;
+            moved = true;
+        }
+        Ok(moved)
     }
 
     /// The template's fingerprint. It hashes the content of the input artifact and the
@@ -294,9 +333,8 @@ impl TemplateRun<'_> {
         };
 
         let mut written: Vec<PathBuf> = Vec::new();
-        for (file, text) in self.artifacts().iter().zip(&contents) {
-            let path = ctx.dir.join(file);
-            let result = write_atomic(&path, |tmp| {
+        for (path, text) in self.artifacts(&ctx.dir).into_iter().zip(&contents) {
+            let result = write_atomic_in(&ctx.dir, &path, |tmp| {
                 fs::write(tmp, text)?;
                 Ok(())
             });
@@ -305,7 +343,24 @@ impl TemplateRun<'_> {
             }
             written.push(path);
         }
+        self.remove_derived(ctx)?;
         Ok(generated)
+    }
+
+    /// A requested template supersedes the copies it left in `.minuta/derived/` while it was
+    /// an implicit dependency.
+    fn remove_derived(&self, ctx: &Ctx) -> Result<()> {
+        if self.implicit {
+            return Ok(());
+        }
+        for path in self.artifacts_at(&ctx.dir, true) {
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(io_error(&path, e)),
+            }
+        }
+        Ok(())
     }
 
     /// Generates a JSON output (fields or chapters): the final call asks for JSON with
@@ -422,21 +477,33 @@ impl TemplateRun<'_> {
     }
 
     fn read_input(&self, ctx: &Ctx) -> Result<Vec<u8>> {
-        self.read_job_file(ctx, &self.input_file())
+        let path = match &self.template.input {
+            Input::Transcript => ctx.dir.join(TRANSCRIPT_FILE),
+            Input::Template(dep) => md_path(&ctx.dir, dep, self.is_implicit_input(dep)),
+        };
+        self.read_job_file(&path, &self.input_file())
     }
 
-    /// `file` in the job folder; a missing file is a template error, any other I/O error
-    /// names the path.
-    fn read_job_file(&self, ctx: &Ctx, file: &str) -> Result<Vec<u8>> {
-        let path = ctx.dir.join(file);
-        fs::read(&path).map_err(|e| match e.kind() {
+    fn is_implicit_input(&self, name: &str) -> bool {
+        self.implicit_inputs.iter().any(|n| n == name)
+    }
+
+    /// The file at `path`, called `file` in messages; a missing file is a template error, any
+    /// other I/O error names the path.
+    fn read_job_file(&self, path: &Path, file: &str) -> Result<Vec<u8>> {
+        fs::read(path).map_err(|e| match e.kind() {
             io::ErrorKind::NotFound => self.error(format!("input {file} is missing")),
-            _ => io_error(&path, e),
+            _ => io_error(path, e),
         })
     }
 
     fn read_chapters_json(&self, ctx: &Ctx) -> Result<Vec<u8>> {
-        self.read_job_file(ctx, JSON_FILE)
+        let path = json_path(
+            &ctx.dir,
+            chapters::NAME,
+            self.is_implicit_input(chapters::NAME),
+        );
+        self.read_job_file(&path, JSON_FILE)
     }
 
     /// The chapters a fields template fills in: `chapters.json`, read and checked against the
@@ -462,6 +529,29 @@ impl TemplateRun<'_> {
         }
         Ok(artifact)
     }
+}
+
+/// `<name>.md`: in the job folder, or in `.minuta/derived/` for an implicit template.
+fn md_path(dir: &Path, name: &str, implicit: bool) -> PathBuf {
+    let home = if implicit {
+        layout::derived_dir(dir)
+    } else {
+        dir.to_path_buf()
+    };
+    home.join(format!("{name}.md"))
+}
+
+/// `<name>.json`: in `assets/`, or in `.minuta/derived/` for an implicit template.
+fn json_path(dir: &Path, name: &str, implicit: bool) -> PathBuf {
+    if implicit {
+        layout::derived_dir(dir).join(format!("{name}.json"))
+    } else {
+        layout::template_json(dir, name)
+    }
+}
+
+fn exists(path: &Path) -> Result<bool> {
+    path.try_exists().map_err(|e| io_error(path, e))
 }
 
 fn read_transcript(dir: &Path) -> Result<Transcript> {
