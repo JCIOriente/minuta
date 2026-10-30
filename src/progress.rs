@@ -334,6 +334,16 @@ impl TemplatesReport {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn total(&self) -> u64 {
+        self.total
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bar_active(&self) -> bool {
+        self.bar.is_some()
+    }
+
     /// Removes the bar, so the lines that follow (results or an error) print cleanly.
     pub fn clear(&mut self) {
         if let Some(bar) = self.bar.take() {

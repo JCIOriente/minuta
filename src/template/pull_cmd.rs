@@ -6,7 +6,7 @@
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
-use super::catalog::{select, Entry, Selection};
+use super::catalog::{select, Entry, Manifest, Selection};
 use super::pull::{
     apply, fetch_catalog, fetch_file, outcome_for, plan, read_manifest, Done, Item, Origin, Outcome,
 };
@@ -144,21 +144,14 @@ pub fn run(origin: &Origin, options: &Options<'_>, term: &mut Terminal<'_>) -> R
         }
     }
 
-    let mut report = TemplatesReport::new(options.mode, download_count(&items, options.force));
-    let applied = apply(
+    let (applied, _) = apply_reported(
         &options.dest,
         &items,
         options.force,
-        &mut |entry| {
-            report.fetching(&entry.name);
-            let bytes = fetch_file(origin, entry);
-            report.fetched();
-            bytes
-        },
+        options.mode,
+        &mut |entry| fetch_file(origin, entry),
         &mut manifest,
     );
-    // Whether it worked or not, the bar is gone before any result line or error prints.
-    report.clear();
     let done = applied?;
     for item in &done {
         writeln!(
@@ -383,6 +376,34 @@ pub fn parse_choice(line: &str, count: usize) -> Result<Vec<usize>> {
     Ok(chosen)
 }
 
+/// `apply` with a progress bar over the files that will be downloaded. The bar is gone when
+/// this returns, whether it worked or not, so result lines and errors print cleanly. The
+/// report comes back so tests can see what it was told.
+fn apply_reported(
+    dest: &Path,
+    items: &[Item<'_>],
+    force: bool,
+    mode: Mode,
+    fetch: &mut dyn FnMut(&Entry) -> Result<Vec<u8>>,
+    manifest: &mut Manifest,
+) -> (Result<Vec<Done>>, TemplatesReport) {
+    let mut report = TemplatesReport::new(mode, download_count(items, force));
+    let applied = apply(
+        dest,
+        items,
+        force,
+        &mut |entry| {
+            report.fetching(&entry.name);
+            let bytes = fetch(entry);
+            report.fetched();
+            bytes
+        },
+        manifest,
+    );
+    report.clear();
+    (applied, report)
+}
+
 /// How many of `items` will be downloaded: kept and up-to-date files are not counted.
 fn download_count(items: &[Item<'_>], force: bool) -> usize {
     items.iter().filter(|i| will_write(i, force)).count()
@@ -391,7 +412,7 @@ fn download_count(items: &[Item<'_>], force: bool) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::template::catalog::State;
+    use crate::template::catalog::{sha256_hex, State};
 
     fn entry(name: &str) -> Entry {
         Entry {
@@ -425,5 +446,80 @@ mod tests {
         // Modified is kept without --force; with it, it is replaced.
         assert_eq!(download_count(&items, false), 2);
         assert_eq!(download_count(&items, true), 3);
+    }
+
+    fn valid(name: &str) -> (Entry, Vec<u8>) {
+        let text = format!("---\ndescription: {name}\n---\nWrite about {{{{job_name}}}}.\n");
+        let mut e = entry(name);
+        e.sha256 = sha256_hex(text.as_bytes());
+        (e, text.into_bytes())
+    }
+
+    #[test]
+    fn report_is_told_the_files_to_download_not_the_catalog_size() {
+        let dest = tempfile::tempdir().unwrap();
+        let (a, a_bytes) = valid("a");
+        let (b, _) = valid("b");
+        let items = [
+            Item {
+                entry: &a,
+                path: dest.path().join("a.md"),
+                state: State::New,
+            },
+            Item {
+                entry: &b,
+                path: dest.path().join("b.md"),
+                state: State::UpToDate,
+            },
+        ];
+        let (applied, report) = apply_reported(
+            dest.path(),
+            &items,
+            false,
+            Mode::Live,
+            &mut |_| Ok(a_bytes.clone()),
+            &mut Manifest::default(),
+        );
+        applied.unwrap();
+        assert_eq!(report.total(), 1);
+        assert!(!report.bar_active());
+    }
+
+    #[test]
+    fn bar_cleared_on_fetch_failure() {
+        let dest = tempfile::tempdir().unwrap();
+        let (a, a_bytes) = valid("a");
+        let (b, _) = valid("b");
+        let items = [
+            Item {
+                entry: &a,
+                path: dest.path().join("a.md"),
+                state: State::New,
+            },
+            Item {
+                entry: &b,
+                path: dest.path().join("b.md"),
+                state: State::New,
+            },
+        ];
+        let mut calls = 0;
+        let (applied, report) = apply_reported(
+            dest.path(),
+            &items,
+            false,
+            Mode::Live,
+            &mut |_| {
+                calls += 1;
+                if calls == 1 {
+                    Ok(a_bytes.clone())
+                } else {
+                    Err(Error::Usage("boom".into()))
+                }
+            },
+            &mut Manifest::default(),
+        );
+        assert!(applied.is_err());
+        assert_eq!(calls, 2, "the bar was drawn for the first file");
+        assert!(!report.bar_active());
     }
 }

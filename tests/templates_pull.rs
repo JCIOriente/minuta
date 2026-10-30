@@ -1349,7 +1349,7 @@ fn plain_mode_prints_no_bar_and_same_lines() {
 }
 
 #[test]
-fn bar_cleared_on_fetch_failure() {
+fn live_mode_fetch_failure_reports_the_error_and_writes_nothing() {
     // beta is in the catalog but the server does not have its file.
     let mut routes = vec![Route::ok("/templates/index.toml", catalog_text(&ENTRIES))];
     routes.push(Route::ok("/templates/alpha.md", template_text("alpha")));
