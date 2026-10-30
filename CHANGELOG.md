@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0
+
+### Changed (breaking)
+- The config file moved from `~/.config/minuta/config.toml` to `~/.minuta/config.toml`.
+  The old file is ignored, so move it: `mv ~/.config/minuta/config.toml ~/.minuta/config.toml`.
+- User templates moved from `~/.config/minuta/templates/` to `~/.minuta/templates/`.
+  Templates in the old folder are ignored, so move them:
+  `mv ~/.config/minuta/templates ~/.minuta/templates`.
+
+### Added
+- `minuta config init [--force]` writes a commented template of every setting to the config
+  file path. An existing file is left alone unless `--force` is given.
+
 ## 0.2.0
 
 ### Changed (breaking)
