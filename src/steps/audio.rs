@@ -1,16 +1,14 @@
-//! The `audio` step: the joined file's sound as mono 16 kHz PCM WAV, which is what whisper reads.
+//! The `audio` step: the recording's sound as mono 16 kHz PCM WAV, which is what whisper reads.
 
 use std::path::PathBuf;
 
 use super::join::joined_path;
-use crate::error::Result;
-use crate::job::{write_atomic, Ctx, Step, StepName};
+use crate::error::{Error, Result};
+use crate::job::{layout, write_atomic_in, Ctx, Step, StepName};
 use crate::tools::{run, RunOpts, ToolInfo};
 
-/// File name of the audio artifact inside the job folder.
-pub const AUDIO_FILE: &str = "audio.wav";
-
-/// Extracts `audio.wav` from the joined file.
+/// Extracts `assets/audio.wav` from the recording: the only source, or the joined file when
+/// there are several.
 #[derive(Debug, Clone)]
 pub struct Audio {
     ffmpeg: ToolInfo,
@@ -25,8 +23,12 @@ impl Audio {
     /// `Error::Interrupted` when `opts.interrupt` is set. The runner uses this;
     /// [`Step::run`] is the same without progress or interrupt.
     pub fn run_with(&self, ctx: &Ctx, opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<()> {
-        let input = joined_path(ctx);
-        write_atomic(&ctx.dir.join(AUDIO_FILE), |tmp| {
+        let input = match (joined_path(ctx), ctx.sources.first()) {
+            (Some(joined), _) => joined,
+            (None, Some(only)) => only.clone(),
+            (None, None) => return Err(Error::Job("no sources to extract audio from".into())),
+        };
+        write_atomic_in(&ctx.dir, &layout::audio_file(&ctx.dir), |tmp| {
             let argv = [
                 self.ffmpeg.path.as_os_str(),
                 "-hide_banner".as_ref(),
@@ -67,7 +69,7 @@ impl Step for Audio {
     }
 
     fn outputs(&self, ctx: &Ctx) -> Vec<PathBuf> {
-        vec![ctx.dir.join(AUDIO_FILE)]
+        vec![layout::audio_file(&ctx.dir)]
     }
 
     fn run(&self, ctx: &Ctx) -> Result<()> {

@@ -90,7 +90,7 @@ fn e2e_real_whisper_tiny() {
     );
     let job = String::from_utf8(out.stdout).unwrap();
     let job = std::path::Path::new(job.trim());
-    let json = fs::read_to_string(job.join("transcript.json")).unwrap();
+    let json = fs::read_to_string(job.join("assets/transcript.json")).unwrap();
     serde_json::from_str::<serde_json::Value>(&json).expect("transcript.json parses");
     assert!(job.join("captions.srt").is_file());
 }

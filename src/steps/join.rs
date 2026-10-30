@@ -1,17 +1,14 @@
-//! The `join` step: one `joined.<ext>` from the sources, in the order given.
+//! The `join` step: one `assets/joined.<ext>` from several sources, in the order given. A single
+//! source is its own recording: nothing is joined and no file is written.
 
 use std::ffi::OsString;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
 use super::probe::{read_probe, SourceProbe};
 use crate::error::{Error, Result};
-use crate::job::{layout, write_atomic, Ctx, Step, StepName};
+use crate::job::{layout, write_atomic_in, Ctx, Step, StepName};
 use crate::tools::{run, RunOpts, ToolInfo};
-
-/// File name of the concat demuxer list inside the job folder.
-const CONCAT_FILE: &str = "concat.txt";
 
 /// Extensions that keep their container when several sources share them.
 const JOIN_EXTENSIONS: [&str; 9] = [
@@ -50,37 +47,39 @@ impl Encoder {
 /// How the sources become one file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// One source: hard link, or a copy where linking is impossible.
-    Link,
     /// Several sources with matching streams: concat demuxer with `-c copy`.
     StreamCopy,
     /// Several sources that differ: decode and encode again.
     Reencode,
 }
 
-/// Decides the [`Mode`] from the probe results. Streams match when codec, resolution and
+/// Decides the [`Mode`] from the probe results, or `None` for fewer than two sources: there is
+/// nothing to join. Streams match when codec, resolution and
 /// frame rate agree, and so do the audio codec, sample rate and channel count, which stream
 /// copy needs as much as the video parameters.
-pub fn plan_join(probes: &[SourceProbe]) -> Mode {
+pub fn plan_join(probes: &[SourceProbe]) -> Option<Mode> {
     match probes {
-        [] | [_] => Mode::Link,
+        [] | [_] => None,
         [first, rest @ ..] => {
             if rest
                 .iter()
                 .all(|p| p.video == first.video && p.audio == first.audio)
             {
-                Mode::StreamCopy
+                Some(Mode::StreamCopy)
             } else {
-                Mode::Reencode
+                Some(Mode::Reencode)
             }
         }
     }
 }
 
-/// Where the joined file goes: `joined.<ext>` in the job folder. One source keeps its own
-/// extension. Several keep the extension they share when it is a known container, else
-/// the result is `joined.mkv`, which holds any stream.
-pub fn joined_path(ctx: &Ctx) -> PathBuf {
+/// Where the joined file goes: `assets/joined.<ext>`, or `None` for fewer than two sources,
+/// which are not joined. The sources keep the extension they share when it is a known
+/// container, else the result is `joined.mkv`, which holds any stream.
+pub fn joined_path(ctx: &Ctx) -> Option<PathBuf> {
+    if ctx.sources.len() < 2 {
+        return None;
+    }
     let exts: Vec<String> = ctx
         .sources
         .iter()
@@ -91,7 +90,6 @@ pub fn joined_path(ctx: &Ctx) -> PathBuf {
         })
         .collect();
     let ext = match exts.as_slice() {
-        [one] if !one.is_empty() => one.as_str(),
         [first, rest @ ..] if rest.iter().all(|e| e == first) => JOIN_EXTENSIONS
             .iter()
             .find(|j| **j == first)
@@ -99,7 +97,7 @@ pub fn joined_path(ctx: &Ctx) -> PathBuf {
             .unwrap_or("mkv"),
         _ => "mkv",
     };
-    ctx.dir.join(format!("joined.{ext}"))
+    Some(layout::joined_file(&ctx.dir, ext))
 }
 
 /// The ffmpeg muxer for an output extension; unknown extensions get matroska.
@@ -192,19 +190,19 @@ impl Join {
         on_line: &mut dyn FnMut(&str),
     ) -> Result<()> {
         let list_text = concat_list(&ctx.sources)?;
-        let list = ctx.dir.join(CONCAT_FILE);
-        write_atomic(&list, |t| {
+        let list = layout::concat_list(&ctx.dir);
+        write_atomic_in(&ctx.dir, &list, |t| {
             fs::write(t, &list_text)?;
             Ok(())
         })?;
-        self.ffmpeg(
+        let result = self.ffmpeg(
             vec![
                 "-f".into(),
                 "concat".into(),
                 "-safe".into(),
                 "0".into(),
                 "-i".into(),
-                list.into_os_string(),
+                list.clone().into_os_string(),
                 "-c".into(),
                 "copy".into(),
                 "-f".into(),
@@ -213,7 +211,9 @@ impl Join {
             ],
             opts,
             on_line,
-        )
+        );
+        let _ = fs::remove_file(&list);
+        result
     }
 
     fn reencode(
@@ -304,11 +304,14 @@ impl Join {
 
     /// Joins the sources, passing every ffmpeg line to `on_line` and stopping with
     /// `Error::Interrupted` when `opts.interrupt` is set. No `joined.<ext>` is left behind
-    /// on failure. An empty source list is an `Error::Job`. The runner uses this;
+    /// on failure. An empty source list is an `Error::Job`. One source writes nothing. The runner uses this;
     /// [`Step::run`] is the same without progress or interrupt.
     pub fn run_with(&self, ctx: &Ctx, opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<()> {
-        let Some(first_source) = ctx.sources.first() else {
+        if ctx.sources.is_empty() {
             return Err(Error::Job("no sources to join".into()));
+        }
+        let Some(out) = joined_path(ctx) else {
+            return Ok(());
         };
         let probes = read_probe(&ctx.dir)?;
         if probes.len() != ctx.sources.len() {
@@ -319,11 +322,9 @@ impl Join {
                 ctx.sources.len()
             )));
         }
-        let out = joined_path(ctx);
-        write_atomic(&out, |tmp| match plan_join(&probes) {
-            Mode::Link => link_or_copy(first_source, tmp, |s, d| fs::hard_link(s, d)),
-            Mode::StreamCopy => self.stream_copy(ctx, &out, tmp, &opts, on_line),
-            Mode::Reencode => self.reencode(&probes, &ctx.sources, &out, tmp, &opts, on_line),
+        write_atomic_in(&ctx.dir, &out, |tmp| match plan_join(&probes) {
+            Some(Mode::StreamCopy) => self.stream_copy(ctx, &out, tmp, &opts, on_line),
+            _ => self.reencode(&probes, &ctx.sources, &out, tmp, &opts, on_line),
         })
     }
 }
@@ -349,23 +350,6 @@ fn concat_list(sources: &[PathBuf]) -> Result<String> {
     Ok(list)
 }
 
-/// Hard-links `src` to `dst` with `link`, copying when that fails (across file systems, for
-/// example). `dst` is replaced if it exists.
-fn link_or_copy(
-    src: &Path,
-    dst: &Path,
-    link: impl FnOnce(&Path, &Path) -> io::Result<()>,
-) -> Result<()> {
-    match fs::remove_file(dst) {
-        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e.into()),
-        _ => {}
-    }
-    if link(src, dst).is_err() {
-        fs::copy(src, dst)?;
-    }
-    Ok(())
-}
-
 impl Step for Join {
     const NAME: StepName = StepName::Join;
 
@@ -382,7 +366,7 @@ impl Step for Join {
     }
 
     fn outputs(&self, ctx: &Ctx) -> Vec<PathBuf> {
-        vec![joined_path(ctx)]
+        joined_path(ctx).into_iter().collect()
     }
 
     fn run(&self, ctx: &Ctx) -> Result<()> {
@@ -394,18 +378,6 @@ impl Step for Join {
 mod tests {
     use super::*;
     use crate::steps::probe::{AudioStream, VideoStream};
-
-    #[test]
-    fn link_failure_falls_back_to_copy() {
-        let dir = tempfile::tempdir().unwrap();
-        let (src, dst) = (dir.path().join("a.mp4"), dir.path().join("b.mp4"));
-        fs::write(&src, "media").unwrap();
-        fs::write(&dst, "stale").unwrap();
-
-        link_or_copy(&src, &dst, |_, _| Err(io::Error::other("cross-device"))).unwrap();
-
-        assert_eq!(fs::read_to_string(&dst).unwrap(), "media");
-    }
 
     #[test]
     fn concat_list_escapes_single_quotes() {
@@ -469,10 +441,16 @@ mod tests {
     }
 
     #[test]
+    fn plan_join_has_nothing_to_join_for_fewer_than_two_sources() {
+        assert_eq!(plan_join(&[]), None);
+        assert_eq!(plan_join(&[source(48000, 2)]), None);
+    }
+
+    #[test]
     fn plan_join_matching_streams_stream_copy() {
         assert_eq!(
             plan_join(&[source(48000, 2), source(48000, 2)]),
-            Mode::StreamCopy
+            Some(Mode::StreamCopy)
         );
     }
 
@@ -480,7 +458,7 @@ mod tests {
     fn plan_join_differing_sample_rate_reencodes() {
         assert_eq!(
             plan_join(&[source(48000, 2), source(44100, 2)]),
-            Mode::Reencode
+            Some(Mode::Reencode)
         );
     }
 
@@ -488,7 +466,7 @@ mod tests {
     fn plan_join_differing_channels_reencodes() {
         assert_eq!(
             plan_join(&[source(48000, 2), source(48000, 1)]),
-            Mode::Reencode
+            Some(Mode::Reencode)
         );
     }
 
@@ -496,6 +474,6 @@ mod tests {
     fn plan_join_differing_audio_codec_reencodes() {
         let mut mp3 = source(48000, 2);
         mp3.audio.codec = "mp3".into();
-        assert_eq!(plan_join(&[source(48000, 2), mp3]), Mode::Reencode);
+        assert_eq!(plan_join(&[source(48000, 2), mp3]), Some(Mode::Reencode));
     }
 }

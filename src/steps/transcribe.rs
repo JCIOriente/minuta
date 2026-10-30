@@ -7,16 +7,13 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use crate::error::{Error, Result};
-use crate::job::{write_atomic, Ctx, Step, StepName};
+use crate::job::{layout, write_atomic_in, Ctx, Step, StepName};
 use crate::tools::{run, RunOpts, ToolInfo};
 use crate::transcript::{from_whisper_json, Transcript};
 
-/// Input produced by the audio step.
-pub const AUDIO_FILE: &str = "audio.wav";
-/// Artifact written by this step.
-pub const TRANSCRIPT_FILE: &str = "transcript.json";
-/// Output prefix handed to whisper's `-of`; whisper writes `<prefix>.json`.
-const RAW_PREFIX: &str = "whisper-raw";
+/// Artifact written by this step, relative to the job folder. Prefer
+/// [`layout::transcript_json`]; this stays for callers that join it to the job folder.
+pub const TRANSCRIPT_FILE: &str = "assets/transcript.json";
 
 /// What a successful transcription reports besides its artifact.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -61,14 +58,18 @@ impl Transcribe {
         opts: RunOpts,
         on_line: &mut dyn FnMut(&str),
     ) -> Result<TranscribeOutcome> {
-        let prefix = ctx.dir.join(RAW_PREFIX);
-        let raw = ctx.dir.join(format!("{RAW_PREFIX}.json"));
+        let raw = layout::raw_whisper(&ctx.dir);
+        // whisper-cli appends `.json` to its output prefix.
+        let prefix = raw.with_extension("");
+        if let Some(parent) = raw.parent() {
+            fs::create_dir_all(parent)?;
+        }
         let _ = fs::remove_file(&raw);
         let result = self.transcribe(ctx, &prefix, &raw, opts, on_line);
         let _ = fs::remove_file(&raw);
         let transcript = result?;
 
-        write_atomic(&ctx.dir.join(TRANSCRIPT_FILE), |tmp| {
+        write_atomic_in(&ctx.dir, &layout::transcript_json(&ctx.dir), |tmp| {
             let json = serde_json::to_string_pretty(&transcript)
                 .map_err(|e| crate::error::Error::Parse(e.to_string()))?;
             fs::write(tmp, json)?;
@@ -97,7 +98,7 @@ impl Transcribe {
             "-m".into(),
             self.model.clone().into(),
             "-f".into(),
-            ctx.dir.join(AUDIO_FILE).into(),
+            layout::audio_file(&ctx.dir).into(),
             "-l".into(),
             self.lang.clone().into(),
             "-oj".into(),
@@ -162,7 +163,7 @@ impl Step for Transcribe {
     }
 
     fn outputs(&self, ctx: &Ctx) -> Vec<PathBuf> {
-        vec![ctx.dir.join(TRANSCRIPT_FILE)]
+        vec![layout::transcript_json(&ctx.dir)]
     }
 
     /// Runs without progress output or interrupt; warnings are dropped. The runner uses

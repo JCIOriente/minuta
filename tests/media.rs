@@ -213,27 +213,95 @@ fn is_blue(c: [u8; 3]) -> bool {
     c[2] > c[0].saturating_add(100)
 }
 
+/// Every file under `dir`, relative to it and sorted.
+fn tree(dir: &Path) -> Vec<String> {
+    fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(root, &path, out);
+            } else {
+                out.push(path.strip_prefix(root).unwrap().display().to_string());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, &mut out);
+    out.sort();
+    out
+}
+
 #[test]
-fn single_source_links() {
-    use std::os::unix::fs::MetadataExt;
+fn single_source_has_no_joined_file() {
     let Some(t) = ffmpeg_available() else { return };
     let tmp = tempfile::tempdir().unwrap();
+    let job = tmp.path().join("job");
+    fs::create_dir(&job).unwrap();
     let a = clip(&t, tmp.path(), "a.mp4", "red", "160x120", 1);
-    let ctx = probe_all(&t, tmp.path(), std::slice::from_ref(&a));
+    let ctx = probe_all(&t, &job, std::slice::from_ref(&a));
 
     let step = Join::new(t.ffmpeg.clone(), Encoder::X264);
     step.run(&ctx).unwrap();
 
-    let joined = tmp.path().join("joined.mp4");
-    assert_eq!(step.outputs(&ctx), vec![joined.clone()]);
-    assert_eq!(joined_path(&ctx), joined);
-    let (src, dst) = (fs::metadata(&a).unwrap(), fs::metadata(&joined).unwrap());
-    assert_eq!(
-        (src.dev(), src.ino()),
-        (dst.dev(), dst.ino()),
-        "not a hard link"
+    assert_eq!(step.outputs(&ctx), Vec::<PathBuf>::new());
+    assert_eq!(joined_path(&ctx), None);
+    assert!(
+        tree(&job).iter().all(|f| !f.contains("joined")),
+        "{:?}",
+        tree(&job)
     );
-    assert!(!tmp.path().join("joined.mp4.tmp").exists());
+}
+
+#[test]
+fn several_sources_join_into_assets() {
+    let Some(t) = ffmpeg_available() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let job = tmp.path().join("job");
+    fs::create_dir(&job).unwrap();
+    let a = clip(&t, tmp.path(), "a.mp4", "red", "160x120", 1);
+    let b = clip(&t, tmp.path(), "b.mp4", "blue", "160x120", 1);
+    let ctx = probe_all(&t, &job, &[a, b]);
+
+    let step = Join::new(t.ffmpeg.clone(), Encoder::X264);
+    step.run(&ctx).unwrap();
+
+    let joined = job.join("assets/joined.mp4");
+    assert_eq!(step.outputs(&ctx), vec![joined.clone()]);
+    assert_eq!(joined_path(&ctx), Some(joined));
+    let files: Vec<String> = tree(&job)
+        .into_iter()
+        .filter(|f| f.contains("joined"))
+        .collect();
+    assert_eq!(files, ["assets/joined.mp4"]);
+    assert_eq!(
+        tree(&job),
+        [".minuta/probe.json", "assets/joined.mp4"],
+        "the concat list is removed after the join"
+    );
+}
+
+#[test]
+fn audio_is_extracted_from_the_original_for_one_source() {
+    let Some(t) = ffmpeg_available() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let job = tmp.path().join("job");
+    fs::create_dir(&job).unwrap();
+    let a = clip(&t, tmp.path(), "a.mp4", "red", "160x120", 2);
+    let ctx = probe_all(&t, &job, &[a]);
+
+    // No join step ran: the audio comes straight from the source.
+    let step = Audio::new(t.ffmpeg.clone());
+    step.run(&ctx).unwrap();
+
+    let wav = job.join("assets/audio.wav");
+    assert_eq!(step.outputs(&ctx), vec![wav.clone()]);
+    let probed = describe(&t, &wav);
+    assert_eq!(
+        (probed.audio.channels, probed.audio.sample_rate),
+        (1, 16000)
+    );
+    assert!((probed.duration - 2.0).abs() < 0.3, "{}", probed.duration);
+    assert_eq!(tree(&job), [".minuta/probe.json", "assets/audio.wav"]);
 }
 
 #[test]
@@ -245,7 +313,7 @@ fn matching_sources_stream_copy() {
     let ctx = probe_all(&t, tmp.path(), &[a, b]);
     assert_eq!(
         plan_join(&read_probe(tmp.path()).unwrap()),
-        Mode::StreamCopy
+        Some(Mode::StreamCopy)
     );
 
     Join::new(t.ffmpeg.clone(), Encoder::X264)
@@ -253,10 +321,10 @@ fn matching_sources_stream_copy() {
         .unwrap();
 
     // Re-encoding would turn mpeg4 into h264, so mpeg4 proves the streams were copied.
-    let joined = describe(&t, &tmp.path().join("joined.mp4"));
+    let joined = describe(&t, &tmp.path().join("assets/joined.mp4"));
     assert_eq!(joined.video.unwrap().codec, "mpeg4");
     assert!((joined.duration - 2.0).abs() < 0.3, "{}", joined.duration);
-    assert!(!tmp.path().join("joined.mp4.tmp").exists());
+    assert!(!tmp.path().join("assets/joined.mp4.tmp").exists());
 }
 
 #[test]
@@ -272,11 +340,14 @@ fn mismatched_sources_reencode() {
         let a = clip(&t, tmp.path(), "a.mp4", "red", "320x240", 1);
         let b = clip(&t, tmp.path(), "b.mp4", "blue", "640x480", 1);
         let ctx = probe_all(&t, tmp.path(), &[a, b]);
-        assert_eq!(plan_join(&read_probe(tmp.path()).unwrap()), Mode::Reencode);
+        assert_eq!(
+            plan_join(&read_probe(tmp.path()).unwrap()),
+            Some(Mode::Reencode)
+        );
 
         Join::new(t.ffmpeg.clone(), encoder).run(&ctx).unwrap();
 
-        let joined = describe(&t, &tmp.path().join("joined.mp4"));
+        let joined = describe(&t, &tmp.path().join("assets/joined.mp4"));
         let video = joined.video.unwrap();
         assert_eq!(video.codec, "h264", "{}", encoder.name());
         assert_eq!((video.width, video.height), (320, 240));
@@ -299,16 +370,13 @@ fn join_preserves_order() {
             .run(&ctx)
             .unwrap();
 
-        let joined = dir.join("joined.mp4");
+        let joined = dir.join("assets/joined.mp4");
         let (first, last) = (colour(&t, &joined, false), colour(&t, &joined, true));
         if first_is_red {
             assert!(is_red(first) && is_blue(last), "{first:?} {last:?}");
         } else {
             assert!(is_blue(first) && is_red(last), "{first:?} {last:?}");
         }
-        let list = fs::read_to_string(dir.join("concat.txt")).unwrap();
-        let names: Vec<_> = list.lines().collect();
-        assert!(names[0].contains(order[0].file_name().unwrap().to_str().unwrap()));
     }
 }
 
@@ -328,13 +396,13 @@ fn reencode_preserves_order() {
         let dir = tmp.path().join(name);
         fs::create_dir(&dir).unwrap();
         let ctx = probe_all(&t, &dir, &[order[0].clone(), order[1].clone()]);
-        assert_eq!(plan_join(&read_probe(&dir).unwrap()), Mode::Reencode);
+        assert_eq!(plan_join(&read_probe(&dir).unwrap()), Some(Mode::Reencode));
 
         Join::new(t.ffmpeg.clone(), Encoder::X264)
             .run(&ctx)
             .unwrap();
 
-        let joined = dir.join("joined.mp4");
+        let joined = dir.join("assets/joined.mp4");
         let (first, last) = (colour(&t, &joined, false), colour(&t, &joined, true));
         if first_is_red {
             assert!(is_red(first) && is_blue(last), "{name}: {first:?} {last:?}");
@@ -388,14 +456,14 @@ fn differing_audio_forces_reencode() {
         (probes[0].audio.sample_rate, probes[1].audio.sample_rate),
         (44100, 22050)
     );
-    assert_eq!(plan_join(&probes), Mode::Reencode);
+    assert_eq!(plan_join(&probes), Some(Mode::Reencode));
 
     Join::new(t.ffmpeg.clone(), Encoder::X264)
         .run(&ctx)
         .unwrap();
 
     // Stream copy would keep mpeg4 and 44100 Hz; the re-encode gives h264 at 48000 Hz.
-    let joined = describe(&t, &tmp.path().join("joined.mp4"));
+    let joined = describe(&t, &tmp.path().join("assets/joined.mp4"));
     assert_eq!(joined.video.unwrap().codec, "h264");
     assert_eq!(
         (joined.audio.codec.as_str(), joined.audio.sample_rate),
@@ -485,11 +553,14 @@ fn join_params_change_with_inputs() {
 // ---- audio ----
 
 #[test]
-fn audio_is_mono_16k() {
+fn audio_of_several_sources_comes_from_the_joined_file() {
     let Some(t) = ffmpeg_available() else { return };
     let tmp = tempfile::tempdir().unwrap();
-    let a = clip(&t, tmp.path(), "a.mp4", "red", "160x120", 2);
-    let ctx = probe_all(&t, tmp.path(), &[a]);
+    let job = tmp.path().join("job");
+    fs::create_dir(&job).unwrap();
+    let a = clip(&t, tmp.path(), "a.mp4", "red", "160x120", 1);
+    let b = clip(&t, tmp.path(), "b.mp4", "blue", "160x120", 1);
+    let ctx = probe_all(&t, &job, &[a, b]);
     Join::new(t.ffmpeg.clone(), Encoder::X264)
         .run(&ctx)
         .unwrap();
@@ -497,8 +568,7 @@ fn audio_is_mono_16k() {
     let step = Audio::new(t.ffmpeg.clone());
     step.run(&ctx).unwrap();
 
-    let wav = tmp.path().join("audio.wav");
-    assert_eq!(step.outputs(&ctx), vec![wav.clone()]);
+    let wav = job.join("assets/audio.wav");
     let probed = describe(&t, &wav);
     assert!(probed.video.is_none());
     assert_eq!(probed.audio.codec, "pcm_s16le");
@@ -507,7 +577,7 @@ fn audio_is_mono_16k() {
         (1, 16000)
     );
     assert!((probed.duration - 2.0).abs() < 0.3, "{}", probed.duration);
-    assert!(!tmp.path().join("audio.wav.tmp").exists());
+    assert!(!job.join("assets/audio.wav.tmp").exists());
 }
 
 #[test]
@@ -544,13 +614,16 @@ fn audio_only_sources_reencode_to_wav() {
     let a = tone(&t, tmp.path(), "a.wav", 8000);
     let b = tone(&t, tmp.path(), "b.wav", 16000);
     let ctx = probe_all(&t, tmp.path(), &[a, b]);
-    assert_eq!(plan_join(&read_probe(tmp.path()).unwrap()), Mode::Reencode);
+    assert_eq!(
+        plan_join(&read_probe(tmp.path()).unwrap()),
+        Some(Mode::Reencode)
+    );
 
     Join::new(t.ffmpeg.clone(), Encoder::X264)
         .run(&ctx)
         .unwrap();
 
-    let joined = describe(&t, &tmp.path().join("joined.wav"));
+    let joined = describe(&t, &tmp.path().join("assets/joined.wav"));
     assert!(joined.video.is_none());
     assert_eq!(joined.audio.codec, "pcm_s16le");
     assert!((joined.duration - 2.0).abs() < 0.3, "{}", joined.duration);
@@ -572,7 +645,7 @@ fn audio_only_and_video_sources_rejected() {
         matches!(&err, Error::Job(m) if m == "cannot join audio-only and video sources"),
         "{err}"
     );
-    assert!(!tmp.path().join("joined.mkv").exists());
+    assert!(!tmp.path().join("assets/joined.mkv").exists());
 }
 
 #[test]
@@ -614,7 +687,7 @@ fn webm_sources_keep_their_container() {
         .run(&ctx)
         .unwrap();
 
-    let joined = describe(&t, &tmp.path().join("joined.webm"));
+    let joined = describe(&t, &tmp.path().join("assets/joined.webm"));
     assert_eq!(joined.video.unwrap().codec, "vp8");
     assert_eq!(joined.audio.codec, "opus");
     assert!((joined.duration - 2.0).abs() < 0.3, "{}", joined.duration);
@@ -688,8 +761,8 @@ fn interrupt_stops_join_and_leaves_no_output() {
 
     assert!(matches!(res, Err(Error::Interrupted)), "{res:?}");
     assert!(started.elapsed() < Duration::from_secs(10));
-    assert!(!tmp.path().join("joined.m4a").exists());
-    assert!(!tmp.path().join("joined.m4a.tmp").exists());
+    assert!(!tmp.path().join("assets/joined.m4a").exists());
+    assert!(!tmp.path().join("assets/joined.m4a.tmp").exists());
 }
 
 #[test]
@@ -792,8 +865,8 @@ fn audio_ffmpeg_argv_asks_for_stats_and_forwards_updates() {
         .run_with(&ctx, RunOpts::default(), &mut |l| lines.push(l.to_string()))
         .unwrap();
 
-    let input = tmp.path().join("joined.mp4");
-    let tmp_out = tmp.path().join("audio.wav.tmp");
+    let input = PathBuf::from("/rec/a.mp4");
+    let tmp_out = tmp.path().join("assets/audio.wav.tmp");
     let mut expected: Vec<String> = ["-hide_banner", "-nostdin", "-y", "-stats", "-i"]
         .map(String::from)
         .to_vec();
@@ -813,7 +886,7 @@ fn audio_ffmpeg_argv_asks_for_stats_and_forwards_updates() {
         .map(String::from),
     );
     expected.extend(as_strings(&[&tmp_out]));
-    assert_eq!(lines_of(&tmp.path().join("audio.wav")), expected);
+    assert_eq!(lines_of(&tmp.path().join("assets/audio.wav")), expected);
     assert_eq!(lines, FAKE_STATS);
 }
 
@@ -827,8 +900,8 @@ fn join_stream_copy_argv_asks_for_stats_and_forwards_updates() {
         .run_with(&ctx, RunOpts::default(), &mut |l| lines.push(l.to_string()))
         .unwrap();
 
-    let list = tmp.path().join("concat.txt");
-    let tmp_out = tmp.path().join("joined.m4a.tmp");
+    let list = tmp.path().join(".minuta/concat.txt");
+    let tmp_out = tmp.path().join("assets/joined.m4a.tmp");
     let mut expected: Vec<String> = [
         "-hide_banner",
         "-nostdin",
@@ -845,7 +918,7 @@ fn join_stream_copy_argv_asks_for_stats_and_forwards_updates() {
     expected.extend(as_strings(&[&list]));
     expected.extend(["-c", "copy", "-f", "ipod"].map(String::from));
     expected.extend(as_strings(&[&tmp_out]));
-    assert_eq!(lines_of(&tmp.path().join("joined.m4a")), expected);
+    assert_eq!(lines_of(&tmp.path().join("assets/joined.m4a")), expected);
     assert_eq!(lines, FAKE_STATS);
 }
 
@@ -858,7 +931,7 @@ fn join_reencode_argv_asks_for_stats() {
         .run_with(&ctx, RunOpts::default(), &mut |_| {})
         .unwrap();
 
-    let tmp_out = tmp.path().join("joined.m4a.tmp");
+    let tmp_out = tmp.path().join("assets/joined.m4a.tmp");
     let mut expected: Vec<String> = ["-hide_banner", "-nostdin", "-y", "-stats", "-i"]
         .map(String::from)
         .to_vec();
@@ -883,7 +956,7 @@ fn join_reencode_argv_asks_for_stats() {
         .map(String::from),
     );
     expected.extend(as_strings(&[&tmp_out]));
-    assert_eq!(lines_of(&tmp.path().join("joined.m4a")), expected);
+    assert_eq!(lines_of(&tmp.path().join("assets/joined.m4a")), expected);
 }
 
 #[cfg(unix)]
@@ -893,7 +966,8 @@ fn whisper_argv_asks_for_progress_and_forwards_it() {
     let tmp = tempfile::tempdir().unwrap();
     let model = tmp.path().join("ggml-tiny.bin");
     fs::write(&model, b"model").unwrap();
-    fs::write(tmp.path().join("audio.wav"), b"RIFF").unwrap();
+    fs::create_dir(tmp.path().join("assets")).unwrap();
+    fs::write(tmp.path().join("assets/audio.wav"), b"RIFF").unwrap();
     let ctx = Ctx {
         dir: tmp.path().to_path_buf(),
         sources: vec![],
@@ -904,8 +978,8 @@ fn whisper_argv_asks_for_progress_and_forwards_it() {
         .run_with(&ctx, RunOpts::default(), &mut |l| lines.push(l.to_string()))
         .unwrap();
 
-    let prefix = tmp.path().join("whisper-raw");
-    let audio = tmp.path().join("audio.wav");
+    let prefix = tmp.path().join(".minuta/whisper-raw");
+    let audio = tmp.path().join("assets/audio.wav");
     let mut expected = vec!["-m".to_string()];
     expected.extend(as_strings(&[&model]));
     expected.push("-f".into());
@@ -913,7 +987,10 @@ fn whisper_argv_asks_for_progress_and_forwards_it() {
     expected.extend(["-l", "en", "-oj", "-of"].map(String::from));
     expected.extend(as_strings(&[&prefix]));
     expected.push("-pp".into());
-    assert_eq!(lines_of(&tmp.path().join("whisper-raw.args")), expected);
+    assert_eq!(
+        lines_of(&tmp.path().join(".minuta/whisper-raw.args")),
+        expected
+    );
     assert_eq!(
         lines,
         vec!["whisper_print_progress_callback: progress =  50%"]
@@ -966,11 +1043,14 @@ fn reencode_reads_moved_sources() {
         .run(&ctx(&job, &moved))
         .unwrap();
 
-    let joined = describe(&t, &job.join("joined.mp4"));
+    let joined = describe(&t, &job.join("assets/joined.mp4"));
     assert!((joined.duration - 2.0).abs() < 0.3, "{}", joined.duration);
 
     let err = Join::new(t.ffmpeg.clone(), Encoder::X264)
-        .run(&ctx(&job, &moved[..1]))
+        .run(&ctx(
+            &job,
+            &[moved[0].clone(), moved[0].clone(), moved[1].clone()],
+        ))
         .unwrap_err();
     assert!(matches!(err, Error::Job(_)), "{err}");
 }
