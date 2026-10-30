@@ -1713,16 +1713,30 @@ fn derived_copy_that_cannot_be_read_is_an_error() {
     );
 }
 
+/// Replaces `assets/` with a symlink to a new folder that holds the transcript; returns it.
+#[cfg(unix)]
+fn symlink_assets(dir: &Path) -> TempDir {
+    let outside = TempDir::new().unwrap();
+    let assets = dir.join("assets");
+    fs::rename(
+        assets.join("transcript.json"),
+        outside.path().join("transcript.json"),
+    )
+    .unwrap();
+    fs::remove_dir_all(&assets).unwrap();
+    std::os::unix::fs::symlink(outside.path(), &assets).unwrap();
+    outside
+}
+
 #[cfg(unix)]
 #[test]
 fn outputs_refuse_a_symlinked_assets_folder() {
     let (dir, _) = job();
-    let outside = TempDir::new().unwrap();
-    std::os::unix::fs::symlink(outside.path(), dir.path().join("assets")).unwrap();
+    let outside = symlink_assets(dir.path());
     let t = tpl("social", FIELDS);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
     assert!(execute(&run(&t, &b, "es"), dir.path()).is_err());
-    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
+    assert_eq!(files_under(outside.path()), ["transcript.json"]);
     assert!(!dir.path().join("social.md").try_exists().unwrap());
 }
 
@@ -1733,8 +1747,7 @@ fn moving_derived_files_refuses_a_symlinked_assets_folder() {
     let t = tpl("social", FIELDS);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
     execute(&run_implicit(&t, &b, true, &[]), dir.path()).unwrap();
-    let outside = TempDir::new().unwrap();
-    std::os::unix::fs::symlink(outside.path(), dir.path().join("assets")).unwrap();
+    let outside = symlink_assets(dir.path());
     assert!(run(&t, &b, "es").move_derived(&ctx(dir.path())).is_err());
-    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
+    assert_eq!(files_under(outside.path()), ["transcript.json"]);
 }
