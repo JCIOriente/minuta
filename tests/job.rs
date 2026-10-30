@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 
 use minuta::error::Error;
 use minuta::job::{
-    derive_name, fingerprint, plan_stale, source_record, step_fingerprint, template_reason,
+    derive_name, fingerprint, layout, plan_stale, source_record, step_fingerprint, template_reason,
     write_atomic, Ctx, Force, Job, Reason, Source, Status, Step, StepName,
 };
 use tempfile::TempDir;
@@ -260,7 +260,7 @@ fn job_json_has_version_1() {
     let (_root, out, source) = setup();
     let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
     assert_eq!(job.dir, fs::canonicalize(out.join("clase-4")).unwrap());
-    let json = read_json(&job.dir.join("job.json"));
+    let json = read_json(&layout::state_file(&job.dir));
     assert_eq!(json["version"], 1);
     assert_eq!(json["name"], "clase-4");
     let recorded = &json["sources"][0];
@@ -277,7 +277,7 @@ fn job_json_has_version_1() {
 fn unknown_version_rejected() {
     let (_root, out, source) = setup();
     let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
-    let file = job.dir.join("job.json");
+    let file = layout::state_file(&job.dir);
     let mut json = read_json(&file);
     json["version"] = 2.into();
     let written = serde_json::to_vec(&json).unwrap();
@@ -299,12 +299,12 @@ fn tmp_cleaned_on_open() {
     let (_root, out, source) = setup();
     let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
     fs::write(job.dir.join("audio.wav.tmp"), b"partial").unwrap();
-    fs::write(job.dir.join("job.json.tmp"), b"partial").unwrap();
+    fs::write(job.dir.join(".minuta").join("job.json.tmp"), b"partial").unwrap();
     fs::write(job.dir.join("audio.wav"), b"good").unwrap();
 
     let job = Job::open(&out, "clase-4", &[source], false).unwrap();
     assert!(!job.dir.join("audio.wav.tmp").exists());
-    assert!(!job.dir.join("job.json.tmp").exists());
+    assert!(!job.dir.join(".minuta").join("job.json.tmp").exists());
     assert!(job.dir.join("audio.wav").exists());
 }
 
@@ -399,7 +399,7 @@ fn tmp_cleanup_spares_other_names() {
 fn missing_version_rejected() {
     let (_root, out, source) = setup();
     let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
-    let file = job.dir.join("job.json");
+    let file = layout::state_file(&job.dir);
     let mut json = read_json(&file);
     json.as_object_mut().unwrap().remove("version");
     let written = serde_json::to_vec(&json).unwrap();
@@ -416,7 +416,7 @@ fn missing_version_rejected() {
 fn invalid_job_json_rejected() {
     let (_root, out, source) = setup();
     let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
-    let file = job.dir.join("job.json");
+    let file = layout::state_file(&job.dir);
     fs::write(&file, b"{ not json").unwrap();
 
     match Job::open(&out, "clase-4", &[source], false) {
@@ -434,11 +434,11 @@ fn failed_open_touches_nothing() {
     let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
     let leftover = job.dir.join("audio.wav.tmp");
     fs::write(&leftover, b"another run").unwrap();
-    let before = fs::read(job.dir.join("job.json")).unwrap();
+    let before = fs::read(layout::state_file(&job.dir)).unwrap();
 
     assert!(Job::open(&out, "clase-4", &[other], false).is_err());
     assert!(leftover.exists(), "a refused open must not clean tmp files");
-    assert_eq!(fs::read(job.dir.join("job.json")).unwrap(), before);
+    assert_eq!(fs::read(layout::state_file(&job.dir)).unwrap(), before);
 
     let missing = root.path().join("missing.mp4");
     assert!(Job::open(&out, "missing", &[missing], false).is_err());
@@ -551,7 +551,7 @@ fn changed_fingerprint_marks_stale() {
     );
 
     job.mark_stale(&plan).unwrap();
-    let json = read_json(&job.dir.join("job.json"));
+    let json = read_json(&layout::state_file(&job.dir));
     assert_eq!(json["steps"]["audio"]["status"], "stale");
     assert_eq!(json["steps"]["audio"]["reason"], "fingerprint changed");
     assert_eq!(
@@ -632,12 +632,12 @@ fn done_requires_all_artifacts() {
         other => panic!("expected Error::Job, got {other:?}"),
     }
     assert!(!job.state.steps.contains_key(&StepName::Audio));
-    let json = read_json(&job.dir.join("job.json"));
+    let json = read_json(&layout::state_file(&job.dir));
     assert_eq!(json["steps"]["audio"], serde_json::Value::Null);
 
     job.mark_done(StepName::Audio, "fp", 0.1, &[present])
         .unwrap();
-    let json = read_json(&job.dir.join("job.json"));
+    let json = read_json(&layout::state_file(&job.dir));
     assert_eq!(json["steps"]["audio"]["status"], "done");
     assert_eq!(
         json["steps"]["audio"]["artifacts"],
@@ -820,7 +820,7 @@ fn done_template_job() -> (TempDir, Job) {
 fn old_job_json_loads_without_templates() {
     let (_root, out, source) = setup();
     let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
-    let file = job.dir.join("job.json");
+    let file = layout::state_file(&job.dir);
     let mut json = read_json(&file);
     json.as_object_mut().unwrap().remove("templates");
     fs::write(&file, serde_json::to_vec(&json).unwrap()).unwrap();
@@ -897,7 +897,7 @@ fn mark_template_done_requires_artifacts() {
         .unwrap_err();
     assert!(matches!(err, Error::Job(_)));
     assert!(job.state.templates.is_empty());
-    assert!(read_json(&job.dir.join("job.json"))["templates"]
+    assert!(read_json(&layout::state_file(&job.dir))["templates"]
         .as_object()
         .unwrap()
         .is_empty());
@@ -907,7 +907,7 @@ fn mark_template_done_requires_artifacts() {
     job.mark_template_done("summary", "fp", 1.0, &[absolute])
         .unwrap();
     assert_eq!(
-        read_json(&job.dir.join("job.json"))["templates"]["summary"]["artifacts"],
+        read_json(&layout::state_file(&job.dir))["templates"]["summary"]["artifacts"],
         serde_json::json!(["summary.md"])
     );
 }
@@ -916,7 +916,7 @@ fn mark_template_done_requires_artifacts() {
 fn mark_template_stale_records_reason() {
     let (_root, mut job) = done_template_job();
     job.mark_template_stale("summary", &Reason::Forced).unwrap();
-    let saved = read_json(&job.dir.join("job.json"));
+    let saved = read_json(&layout::state_file(&job.dir));
     assert_eq!(saved["templates"]["summary"]["status"], "stale");
     assert_eq!(saved["templates"]["summary"]["reason"], "forced");
     job.mark_template_stale("new", &Reason::NotRun).unwrap();
@@ -1047,7 +1047,7 @@ fn mark_done_rejects_artifact_outside_job_dir() {
     );
     assert!(!job.state.steps.contains_key(&StepName::Audio));
     assert_eq!(
-        read_json(&job.dir.join("job.json"))["steps"],
+        read_json(&layout::state_file(&job.dir))["steps"],
         serde_json::json!({})
     );
 }
@@ -1132,7 +1132,7 @@ fn reopen_after_edit(edit: impl FnOnce(&mut serde_json::Value)) -> (String, Path
     fs::write(&artifact, b"wav").unwrap();
     job.mark_done(StepName::Audio, "fp-audio", 0.1, &[artifact])
         .unwrap();
-    let file = job.dir.join("job.json");
+    let file = layout::state_file(&job.dir);
     let mut json = read_json(&file);
     edit(&mut json);
     fs::write(&file, serde_json::to_vec(&json).unwrap()).unwrap();
@@ -1140,7 +1140,7 @@ fn reopen_after_edit(edit: impl FnOnce(&mut serde_json::Value)) -> (String, Path
     let out = root.path().join("minuta-out");
     let source = root.path().join("clase-4.mp4");
     let err = Job::open(&out, "clase-4", &[source], false).unwrap_err();
-    (err.to_string(), out.join("clase-4").join("job.json"))
+    (err.to_string(), layout::state_file(&out.join("clase-4")))
 }
 
 /// Asserts that reopening after `edit` fails with exactly `invalid <job.json>: <problem>; move
@@ -1278,5 +1278,102 @@ fn stale_name_refreshed_on_reopen() {
 
     let job = Job::open(&out, "clase-5", &[source], false).unwrap();
     assert_eq!(job.state.name, "clase-5");
-    assert_eq!(read_json(&job.dir.join("job.json"))["name"], "clase-5");
+    assert_eq!(read_json(&layout::state_file(&job.dir))["name"], "clase-5");
+}
+
+#[test]
+fn layout_paths_are_under_minuta_and_assets() {
+    let dir = Path::new("/jobs/talk");
+    assert_eq!(layout::ASSETS_DIR, "assets");
+    assert_eq!(layout::STATE_DIR, ".minuta");
+    let expected = [
+        (layout::state_file(dir), "/jobs/talk/.minuta/job.json"),
+        (layout::probe_file(dir), "/jobs/talk/.minuta/probe.json"),
+        (layout::call_cache_dir(dir), "/jobs/talk/.minuta/llm-cache"),
+        (layout::derived_dir(dir), "/jobs/talk/.minuta/derived"),
+        (
+            layout::raw_whisper(dir),
+            "/jobs/talk/.minuta/whisper-raw.json",
+        ),
+        (
+            layout::transcript_json(dir),
+            "/jobs/talk/assets/transcript.json",
+        ),
+        (layout::audio_file(dir), "/jobs/talk/assets/audio.wav"),
+        (
+            layout::joined_file(dir, "mp4"),
+            "/jobs/talk/assets/joined.mp4",
+        ),
+        (
+            layout::joined_file(dir, "mkv"),
+            "/jobs/talk/assets/joined.mkv",
+        ),
+        (
+            layout::template_json(dir, "youtube"),
+            "/jobs/talk/assets/youtube.json",
+        ),
+    ];
+    for (path, want) in expected {
+        assert_eq!(path, Path::new(want));
+    }
+}
+
+#[test]
+fn write_atomic_creates_missing_parent() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("a").join("b").join("file.txt");
+    write_atomic(&path, |tmp| Ok(fs::write(tmp, b"x")?)).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"x");
+    assert!(!path.with_extension("txt.tmp").exists());
+}
+
+#[test]
+fn open_cleans_tmp_in_all_tiers() {
+    let (_root, out, source) = setup();
+    let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
+    let assets = job.dir.join(layout::ASSETS_DIR);
+    fs::create_dir_all(&assets).unwrap();
+    let tmps = [
+        job.dir.join("transcript.txt.tmp"),
+        assets.join("audio.wav.tmp"),
+        layout::state_file(&job.dir).with_extension("json.tmp"),
+    ];
+    let keep = assets.join("audio.wav");
+    fs::write(&keep, b"good").unwrap();
+    for tmp in &tmps {
+        fs::write(tmp, b"partial").unwrap();
+    }
+
+    Job::open(&out, "clase-4", &[source], false).unwrap();
+    for tmp in &tmps {
+        assert!(!tmp.exists(), "{} should be removed", tmp.display());
+    }
+    assert!(keep.exists());
+}
+
+#[test]
+fn flat_layout_job_is_treated_as_new() {
+    let (_root, out, source) = setup();
+    let dir = out.join("clase-4");
+    fs::create_dir_all(&dir).unwrap();
+    // A job made by an earlier version, for other sources: it must not conflict.
+    let old = br#"{"version":1,"name":"clase-4","sources":[{"path":"/elsewhere.mp4","size":1,"mtime":1}],"steps":{}}"#;
+    fs::write(dir.join("job.json"), old).unwrap();
+    fs::write(dir.join("transcript.json"), b"old").unwrap();
+
+    let job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    assert!(layout::state_file(&job.dir).exists());
+    assert_eq!(fs::read(dir.join("job.json")).unwrap(), old);
+    assert_eq!(fs::read(dir.join("transcript.json")).unwrap(), b"old");
+    assert!(job.state.steps.is_empty());
+}
+
+#[test]
+fn call_cache_lives_in_minuta() {
+    let root = tempfile::tempdir().unwrap();
+    let cache = minuta::llm::call::CallCache::new(root.path());
+    assert_eq!(
+        cache.dir(),
+        root.path().join(".minuta").join("llm-cache").as_path()
+    );
 }

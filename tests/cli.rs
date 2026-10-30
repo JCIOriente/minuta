@@ -195,7 +195,8 @@ fn cached_lines(stderr: &str) -> usize {
 
 fn step_status(job: &Path, step: &str) -> Option<String> {
     let json: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(job.join("job.json")).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(minuta::job::layout::state_file(job)).unwrap())
+            .unwrap();
     json["steps"][step]["status"].as_str().map(String::from)
 }
 
@@ -243,8 +244,8 @@ fn stdout_is_only_job_path() {
     let job = env.job_dir("clase-4");
     assert_eq!(stdout(&out), format!("{}\n", job.display()));
     for artifact in [
-        "job.json",
-        "probe.json",
+        ".minuta/job.json",
+        ".minuta/probe.json",
         "joined.mp4",
         "audio.wav",
         "transcript.json",
@@ -734,14 +735,17 @@ fn different_sources_without_force_is_refused() {
         .assert()
         .success();
     let job = env.job_dir("clase-4");
-    let state = fs::read_to_string(job.join("job.json")).unwrap();
+    let state = fs::read_to_string(minuta::job::layout::state_file(&job)).unwrap();
     let calls = env.calls();
 
     let out = env.minuta(&["run", "clase-4.mp4", "other.mp4"]);
     out.clone().assert().code(1).stdout("");
     assert!(stderr(&out).contains("--force"), "{}", stderr(&out));
     assert_eq!(env.calls(), calls);
-    assert_eq!(fs::read_to_string(job.join("job.json")).unwrap(), state);
+    assert_eq!(
+        fs::read_to_string(minuta::job::layout::state_file(&job)).unwrap(),
+        state
+    );
 }
 
 #[test]
@@ -752,13 +756,14 @@ fn different_sources_with_another_name_is_a_separate_job() {
         .clone()
         .assert()
         .success();
-    let state = fs::read_to_string(env.job_dir("clase-4").join("job.json")).unwrap();
+    let state =
+        fs::read_to_string(minuta::job::layout::state_file(&env.job_dir("clase-4"))).unwrap();
 
     let out = env.minuta(&["run", "clase-4.mp4", "other.mp4", "--name", "both"]);
     out.clone().assert().success();
     assert_eq!(stdout(&out), format!("{}\n", env.job_dir("both").display()));
     assert_eq!(
-        fs::read_to_string(env.job_dir("clase-4").join("job.json")).unwrap(),
+        fs::read_to_string(minuta::job::layout::state_file(&env.job_dir("clase-4"))).unwrap(),
         state
     );
 
@@ -783,7 +788,8 @@ fn different_sources_with_force_replace_the_job() {
     let job = env.job_dir("clase-4");
     assert_eq!(stdout(&out), format!("{}\n", job.display()));
     let state: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(job.join("job.json")).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(minuta::job::layout::state_file(&job)).unwrap())
+            .unwrap();
     assert_eq!(state["sources"].as_array().unwrap().len(), 2);
     assert_eq!(step_status(&job, "outputs").as_deref(), Some("done"));
 }
@@ -994,7 +1000,8 @@ impl Env {
 
 fn template_state(job: &Path, name: &str) -> serde_json::Value {
     let json: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(job.join("job.json")).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(minuta::job::layout::state_file(job)).unwrap())
+            .unwrap();
     json["templates"][name].clone()
 }
 
@@ -1217,7 +1224,7 @@ fn run_without_templates_contacts_no_backend() {
         .assert()
         .success();
     assert!(fake.requests().is_empty());
-    assert!(!env.job_dir("clase-4").join("llm-cache").exists());
+    assert!(!env.job_dir("clase-4").join(".minuta/llm-cache").exists());
 }
 
 #[test]

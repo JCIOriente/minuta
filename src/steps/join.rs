@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::probe::{read_probe, SourceProbe, PROBE_FILE};
+use super::probe::{read_probe, SourceProbe};
 use crate::error::{Error, Result};
 use crate::job::{write_atomic, Ctx, Step, StepName};
 use crate::tools::{run, RunOpts, ToolInfo};
@@ -314,7 +314,7 @@ impl Join {
         if probes.len() != ctx.sources.len() {
             return Err(Error::Job(format!(
                 "{} lists {} sources but the job has {}; run probe again",
-                PROBE_FILE,
+                "probe.json",
                 probes.len(),
                 ctx.sources.len()
             )));

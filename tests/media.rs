@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use minuta::error::Error;
-use minuta::job::{Ctx, Step};
+use minuta::job::{write_atomic, Ctx, Step};
 use minuta::steps::audio::Audio;
 use minuta::steps::join::{joined_path, plan_join, Encoder, Join, Mode};
 use minuta::steps::probe::{read_probe, Probe, SourceProbe};
@@ -108,7 +108,10 @@ fn probe_reads_streams() {
     let step = Probe::new(t.ffprobe.clone());
     step.run(&ctx).unwrap();
 
-    assert_eq!(step.outputs(&ctx), vec![tmp.path().join("probe.json")]);
+    assert_eq!(
+        step.outputs(&ctx),
+        vec![minuta::job::layout::probe_file(tmp.path())]
+    );
     let probes: Vec<SourceProbe> = read_probe(tmp.path()).unwrap();
     assert_eq!(probes.len(), 2);
     assert_eq!(probes[0].path, ctx.sources[0]);
@@ -146,7 +149,7 @@ fn no_audio_rejected() {
         fs::canonicalize(quiet).unwrap().display()
     );
     assert!(matches!(&err, Error::Job(m) if *m == expected), "{err}");
-    assert!(!tmp.path().join("probe.json").exists());
+    assert!(!minuta::job::layout::probe_file(tmp.path()).exists());
 }
 
 #[test]
@@ -405,7 +408,10 @@ fn differing_audio_forces_reencode() {
 fn join_empty_sources_errors() {
     let tmp = tempfile::tempdir().unwrap();
     // A matching (empty) probe.json, so only the empty source list can fail.
-    fs::write(tmp.path().join("probe.json"), "[]").unwrap();
+    write_atomic(&minuta::job::layout::probe_file(tmp.path()), |t| {
+        Ok(fs::write(t, "[]")?)
+    })
+    .unwrap();
     let ctx = ctx(tmp.path(), &[]);
     let tool = ToolInfo {
         path: "ffmpeg".into(),
@@ -652,10 +658,9 @@ fn interrupt_stops_join_and_leaves_no_output() {
         },
     };
     let sources = vec![probe("a.m4a"), probe("b.m4a")];
-    fs::write(
-        tmp.path().join("probe.json"),
-        serde_json::to_string(&sources).unwrap(),
-    )
+    write_atomic(&minuta::job::layout::probe_file(tmp.path()), |t| {
+        Ok(fs::write(t, serde_json::to_string(&sources).unwrap())?)
+    })
     .unwrap();
     let ctx = Ctx {
         dir: tmp.path().to_path_buf(),
@@ -762,10 +767,9 @@ fn audio_job(dir: &Path, rates: [u32; 2]) -> Ctx {
             },
         })
         .collect();
-    fs::write(
-        dir.join("probe.json"),
-        serde_json::to_string(&sources).unwrap(),
-    )
+    write_atomic(&minuta::job::layout::probe_file(dir), |t| {
+        Ok(fs::write(t, serde_json::to_string(&sources).unwrap())?)
+    })
     .unwrap();
     Ctx {
         dir: dir.to_path_buf(),

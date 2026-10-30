@@ -1,6 +1,7 @@
 //! Job folders: naming, `job.json`, fingerprints, staleness and atomic writes.
 
 pub mod fingerprint;
+pub mod layout;
 pub mod stale;
 pub mod state;
 
@@ -40,9 +41,6 @@ pub trait Step {
     fn run(&self, ctx: &Ctx) -> Result<()>;
 }
 
-/// File name of the job state inside the job folder.
-pub const JOB_FILE: &str = "job.json";
-
 /// A job folder `<out>/<name>/` and its `job.json` state.
 #[derive(Debug)]
 pub struct Job {
@@ -67,7 +65,7 @@ impl Job {
             .map(fs::canonicalize)
             .collect::<std::io::Result<Vec<_>>>()?;
         let dir = out.join(name);
-        let file = dir.join(JOB_FILE);
+        let file = layout::state_file(&dir);
         let has_state = file
             .try_exists()
             .map_err(|e| Error::Job(format!("cannot check {}: {e}", file.display())))?;
@@ -105,7 +103,7 @@ impl Job {
 
     /// Writes `job.json` atomically.
     pub fn save(&self) -> Result<()> {
-        self.state.save(&self.dir.join(JOB_FILE))
+        self.state.save(&layout::state_file(&self.dir))
     }
 
     /// The context steps of this job run in.
@@ -217,9 +215,17 @@ impl Job {
         }
     }
 
-    /// Removes leftover `*.tmp` files from the job folder (after an interrupt, for example).
+    /// Removes leftover `*.tmp` files from the job folder, `assets/` and `.minuta/` (after an
+    /// interrupt, for example). A tier that does not exist yet has none.
     pub fn clean_tmp(&self) -> Result<()> {
-        remove_tmp_files(&self.dir)
+        remove_tmp_files(&self.dir)?;
+        for tier in [layout::ASSETS_DIR, layout::STATE_DIR] {
+            match remove_tmp_files(&self.dir.join(tier)) {
+                Err(Error::Io(e)) if e.kind() == io::ErrorKind::NotFound => {}
+                other => other?,
+            }
+        }
+        Ok(())
     }
 }
 
@@ -290,7 +296,7 @@ fn is_media_extension(ext: &str) -> bool {
     MEDIA_EXTENSIONS.iter().any(|m| ext.eq_ignore_ascii_case(m))
 }
 
-/// Writes an artifact atomically: `f` writes to `<path>.tmp`, which is synced to disk and
+/// Writes an artifact atomically, creating its parent folder when missing: `f` writes to `<path>.tmp`, which is synced to disk and
 /// renamed to `path` only if `f` succeeds. On failure the temp file is removed and `path` is
 /// left untouched.
 ///
@@ -300,6 +306,9 @@ fn is_media_extension(ext: &str) -> bool {
 /// `f` creates the file (an external tool may be the one writing it), so it is not `create_new`.
 pub fn write_atomic(path: &Path, f: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
     let tmp = tmp_path(path);
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).map_err(|e| with_path(parent, e))?;
+    }
     match fs::remove_file(&tmp) {
         Ok(()) => {}
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
