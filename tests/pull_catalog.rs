@@ -161,10 +161,7 @@ fn catalog_rejects_bad_sha() {
 
 #[test]
 fn catalog_rejects_unknown_key() {
-    let text = catalog_text(&format!(
-        "{}colour = \"red\"\n",
-        entry_text("ok", &a())
-    ));
+    let text = catalog_text(&format!("{}colour = \"red\"\n", entry_text("ok", &a())));
     let m = parse_err(&text);
     assert!(m.starts_with("template catalog: "), "{m}");
     assert!(m.contains("unknown field `colour`"), "{m}");
