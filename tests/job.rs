@@ -161,6 +161,88 @@ fn write_atomic_success_renames_tmp() {
     assert!(!dir.path().join("transcript.json.tmp").exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn write_atomic_does_not_follow_a_planted_tmp_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let victim = dir.path().join("victim.txt");
+    fs::write(&victim, b"precious").unwrap();
+    let dest = dir.path().join("summary.md");
+    fs::write(&dest, b"old").unwrap();
+    std::os::unix::fs::symlink(&victim, dir.path().join("summary.md.tmp")).unwrap();
+
+    write_atomic(&dest, |tmp| {
+        fs::write(tmp, b"new")?;
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(fs::read(&victim).unwrap(), b"precious");
+    assert_eq!(fs::read(&dest).unwrap(), b"new");
+    assert!(!dir.path().join("summary.md.tmp").exists());
+    assert!(!dir.path().join("summary.md.tmp").is_symlink());
+}
+
+#[cfg(unix)]
+#[test]
+fn write_atomic_does_not_follow_a_dangling_tmp_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("not-yet.txt");
+    let dest = dir.path().join("summary.md");
+    std::os::unix::fs::symlink(&missing, dir.path().join("summary.md.tmp")).unwrap();
+
+    write_atomic(&dest, |tmp| {
+        fs::write(tmp, b"new")?;
+        Ok(())
+    })
+    .unwrap();
+
+    assert!(!missing.exists());
+    assert_eq!(fs::read(&dest).unwrap(), b"new");
+}
+
+#[test]
+fn write_atomic_replaces_a_stale_regular_tmp() {
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("summary.md");
+    fs::write(dir.path().join("summary.md.tmp"), b"stale partial output").unwrap();
+
+    write_atomic(&dest, |tmp| {
+        assert!(!tmp.exists(), "the callback must find no temp entry");
+        fs::write(tmp, b"new")?;
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(fs::read(&dest).unwrap(), b"new");
+    assert!(!dir.path().join("summary.md.tmp").exists());
+}
+
+#[test]
+fn write_atomic_reports_an_unremovable_tmp_by_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("summary.md");
+    let tmp = dir.path().join("summary.md.tmp");
+    fs::create_dir(&tmp).unwrap();
+    fs::write(tmp.join("inside"), b"x").unwrap();
+
+    let mut called = false;
+    let err = write_atomic(&dest, |_| {
+        called = true;
+        Ok(())
+    })
+    .unwrap_err();
+
+    assert!(!called, "the callback must not run");
+    assert!(matches!(err, Error::Io(_)), "{err:?}");
+    assert!(
+        err.to_string().contains(&tmp.display().to_string()),
+        "{err}"
+    );
+    assert!(tmp.join("inside").exists());
+    assert!(!dest.exists());
+}
+
 #[test]
 fn step_names_parse_in_pipeline_order() {
     let names: Vec<StepName> = ["probe", "join", "audio", "transcribe", "outputs"]
@@ -224,6 +306,81 @@ fn tmp_cleaned_on_open() {
     assert!(!job.dir.join("audio.wav.tmp").exists());
     assert!(!job.dir.join("job.json.tmp").exists());
     assert!(job.dir.join("audio.wav").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn tmp_cleanup_removes_symlinks_without_following_them() {
+    let (_root, out, source) = setup();
+    let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
+    let victim_dir = tempfile::tempdir().unwrap();
+    let victim = victim_dir.path().join("victim.txt");
+    fs::write(&victim, b"precious").unwrap();
+    let victim_subdir = victim_dir.path().join("subdir");
+    fs::create_dir(&victim_subdir).unwrap();
+    fs::write(victim_subdir.join("inside"), b"keep").unwrap();
+    let dangling = victim_dir.path().join("missing");
+    std::os::unix::fs::symlink(&victim, job.dir.join("summary.md.tmp")).unwrap();
+    std::os::unix::fs::symlink(&victim_subdir, job.dir.join("dir.tmp")).unwrap();
+    std::os::unix::fs::symlink(&dangling, job.dir.join("dangling.tmp")).unwrap();
+    fs::write(job.dir.join("audio.wav.tmp"), b"stale").unwrap();
+    fs::write(job.dir.join("summary.md"), b"good").unwrap();
+    std::os::unix::fs::symlink(&victim, job.dir.join("link-not-tmp")).unwrap();
+
+    job.clean_tmp().unwrap();
+
+    for name in ["summary.md.tmp", "dir.tmp", "dangling.tmp", "audio.wav.tmp"] {
+        assert!(
+            fs::symlink_metadata(job.dir.join(name)).is_err(),
+            "{name} should be gone"
+        );
+    }
+    assert_eq!(fs::read(&victim).unwrap(), b"precious");
+    assert_eq!(fs::read(victim_subdir.join("inside")).unwrap(), b"keep");
+    assert_eq!(fs::read(job.dir.join("summary.md")).unwrap(), b"good");
+    assert!(job.dir.join("link-not-tmp").is_symlink());
+}
+
+#[cfg(unix)]
+#[test]
+fn tmp_cleanup_reports_an_unremovable_entry_by_path() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_root, out, source) = setup();
+    let job = Job::open(&out, "clase-4", &[source], false).unwrap();
+    let planted = job.dir.join("summary.md.tmp");
+    std::os::unix::fs::symlink("victim", &planted).unwrap();
+    fs::set_permissions(&job.dir, fs::Permissions::from_mode(0o555)).unwrap();
+    let result = job.clean_tmp();
+    // Running as root: the permission bits do not stop the removal, so there is no error.
+    let enforced = fs::File::create(job.dir.join("probe-writable")).is_err();
+    fs::set_permissions(&job.dir, fs::Permissions::from_mode(0o755)).unwrap();
+    if !enforced {
+        return;
+    }
+    let err = result.unwrap_err();
+    assert!(matches!(err, Error::Io(_)), "{err:?}");
+    assert!(
+        err.to_string().contains(&planted.display().to_string()),
+        "{err}"
+    );
+    assert!(planted.is_symlink());
+}
+
+#[cfg(unix)]
+#[test]
+fn tmp_cleaned_on_open_removes_a_planted_symlink() {
+    let (_root, out, source) = setup();
+    let job = Job::open(&out, "clase-4", std::slice::from_ref(&source), false).unwrap();
+    let victim_dir = tempfile::tempdir().unwrap();
+    let victim = victim_dir.path().join("victim.txt");
+    fs::write(&victim, b"precious").unwrap();
+    std::os::unix::fs::symlink(&victim, job.dir.join("summary.md.tmp")).unwrap();
+
+    Job::open(&out, "clase-4", &[source], false).unwrap();
+
+    assert!(fs::symlink_metadata(job.dir.join("summary.md.tmp")).is_err());
+    assert_eq!(fs::read(&victim).unwrap(), b"precious");
 }
 
 #[test]

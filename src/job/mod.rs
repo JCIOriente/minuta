@@ -7,6 +7,7 @@ pub mod state;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs::{self, File};
+use std::io;
 use std::path::{Path, PathBuf, MAIN_SEPARATOR};
 
 use crate::error::{Error, Result};
@@ -239,8 +240,10 @@ fn remove_tmp_files(dir: &Path) -> Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().is_some_and(|e| e == "tmp") && entry.file_type()?.is_file() {
-            fs::remove_file(path)?;
+        // `DirEntry::file_type` does not follow symlinks, so a planted link is removed itself and
+        // a directory named `*.tmp` is left alone.
+        if path.extension().is_some_and(|e| e == "tmp") && !entry.file_type()?.is_dir() {
+            fs::remove_file(&path).map_err(|e| with_path(&path, e))?;
         }
     }
     Ok(())
@@ -290,8 +293,18 @@ fn is_media_extension(ext: &str) -> bool {
 /// Writes an artifact atomically: `f` writes to `<path>.tmp`, which is synced to disk and
 /// renamed to `path` only if `f` succeeds. On failure the temp file is removed and `path` is
 /// left untouched.
+///
+/// Whatever already sits at the temp path is removed first and `f` is not called if that fails.
+/// A job folder can come from elsewhere, and a symlink planted at `<path>.tmp` would otherwise
+/// make `f` write through it to the link's target. `remove_file` removes the link itself.
+/// `f` creates the file (an external tool may be the one writing it), so it is not `create_new`.
 pub fn write_atomic(path: &Path, f: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
     let tmp = tmp_path(path);
+    match fs::remove_file(&tmp) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(with_path(&tmp, e)),
+    }
     let result = f(&tmp).and_then(|()| {
         File::open(&tmp)?.sync_all()?;
         fs::rename(&tmp, path)?;
@@ -306,6 +319,10 @@ pub fn write_atomic(path: &Path, f: impl FnOnce(&Path) -> Result<()>) -> Result<
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
     let _ = File::open(parent.unwrap_or(Path::new("."))).and_then(|d| d.sync_all());
     Ok(())
+}
+
+fn with_path(path: &Path, e: io::Error) -> Error {
+    Error::Io(io::Error::new(e.kind(), format!("{}: {e}", path.display())))
 }
 
 fn tmp_path(path: &Path) -> PathBuf {
