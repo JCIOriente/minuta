@@ -4,6 +4,7 @@ pub mod catalog;
 pub mod discover;
 pub mod graph;
 pub mod pull;
+pub mod pull_cmd;
 
 use std::path::PathBuf;
 
