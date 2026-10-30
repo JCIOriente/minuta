@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use minuta::error::Error;
 use minuta::template::catalog::{sha256_hex, Catalog};
@@ -12,15 +12,17 @@ use tempfile::TempDir;
 const VALID: &str = "---\ndescription: A valid template\n---\nbody\n";
 const OTHER: &str = "---\ndescription: Another valid template\n---\nother body\n";
 
-/// Checks that `dir/index.toml` and the `dir/*.md` files agree. Returns every problem found.
+/// Checks that `dir/index.toml` and the `dir/*.md` files agree. Returns every problem found:
+/// entries in catalog order, then files without an entry by sorted stem.
 fn check_catalog_dir(dir: &Path) -> Result<(), Vec<String>> {
     let index = dir.join("index.toml");
     let text = fs::read_to_string(&index)
         .map_err(|e| vec![format!("cannot read {}: {e}", index.display())])?;
     let catalog = Catalog::parse(&text).map_err(|e| vec![e.to_string()])?;
 
-    // Every `*.md` directly in the folder, by stem, with its hash.
-    let mut files: BTreeMap<String, String> = BTreeMap::new();
+    let mut problems = Vec::new();
+    // Every `*.md` directly in the folder, read once, by stem.
+    let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let listing =
         fs::read_dir(dir).map_err(|e| vec![format!("cannot list {}: {e}", dir.display())])?;
     for item in listing {
@@ -30,29 +32,28 @@ fn check_catalog_dir(dir: &Path) -> Result<(), Vec<String>> {
             continue;
         }
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-            return Err(vec![format!("{} has a non UTF-8 name", path.display())]);
+            problems.push(format!(
+                "templates/{} has a non UTF-8 name",
+                item.file_name().to_string_lossy()
+            ));
+            continue;
         };
         let bytes =
             fs::read(&path).map_err(|e| vec![format!("cannot read {}: {e}", path.display())])?;
-        files.insert(stem.to_string(), sha256_hex(&bytes));
+        files.insert(stem.to_string(), bytes);
     }
 
     let listed: BTreeSet<&str> = catalog.entries.iter().map(|e| e.name.as_str()).collect();
-    let mut problems = Vec::new();
-    let mut renamed: BTreeSet<String> = BTreeSet::new();
+    let mut renamed: BTreeSet<&str> = BTreeSet::new();
     for entry in &catalog.entries {
         let name = &entry.name;
-        let path = dir.join(format!("{name}.md"));
-        let exists = path
-            .try_exists()
-            .map_err(|e| vec![format!("cannot check {}: {e}", path.display())])?;
-        if !exists {
+        let Some(bytes) = files.get(name) else {
             // The same bytes under another stem: the name was changed in only one place.
-            let other = files
-                .iter()
-                .find(|(stem, hash)| !listed.contains(stem.as_str()) && **hash == entry.sha256);
+            let other = files.iter().find(|(stem, bytes)| {
+                !listed.contains(stem.as_str()) && sha256_hex(bytes) == entry.sha256
+            });
             if let Some((stem, _)) = other {
-                renamed.insert(stem.clone());
+                renamed.insert(stem);
                 problems.push(format!(
                     "template \"{name}\": name differs from the file stem: templates/{stem}.md has its sha256"
                 ));
@@ -62,20 +63,19 @@ fn check_catalog_dir(dir: &Path) -> Result<(), Vec<String>> {
                 ));
             }
             continue;
-        }
-        let bytes =
-            fs::read(&path).map_err(|e| vec![format!("cannot read {}: {e}", path.display())])?;
-        let actual = sha256_hex(&bytes);
+        };
+        let actual = sha256_hex(bytes);
         if actual != entry.sha256 {
             problems.push(format!(
                 "template \"{name}\": sha256 mismatch: index.toml has {}, templates/{name}.md has {actual}; run: shasum -a 256 templates/{name}.md",
                 entry.sha256
             ));
         }
-        let parsed = std::str::from_utf8(&bytes)
+        let path = PathBuf::from(format!("templates/{name}.md"));
+        let parsed = std::str::from_utf8(bytes)
             .map_err(|e| e.to_string())
             .and_then(|text| {
-                Template::parse(name, Layer::Project, None, text).map_err(|e| match e {
+                Template::parse(name, Layer::Project, Some(path), text).map_err(|e| match e {
                     Error::Usage(message) => message,
                     other => other.to_string(),
                 })
@@ -87,7 +87,7 @@ fn check_catalog_dir(dir: &Path) -> Result<(), Vec<String>> {
         }
     }
     for stem in files.keys() {
-        if !listed.contains(stem.as_str()) && !renamed.contains(stem) {
+        if !listed.contains(stem.as_str()) && !renamed.contains(stem.as_str()) {
             problems.push(format!(
                 "templates/{stem}.md has no entry in templates/index.toml"
             ));
@@ -179,7 +179,7 @@ fn catalog_check_flags_unparsable_template() {
     let dir = folder(&entries, &[("one.md", VALID), ("two.md", broken)]);
     assert_eq!(
         problems(&dir),
-        vec!["template \"two\": templates/two.md does not parse: template two: built-in: frontmatter is not closed (expected a closing '---' line)".to_string()]
+        vec!["template \"two\": templates/two.md does not parse: template two: templates/two.md: frontmatter is not closed (expected a closing '---' line)".to_string()]
     );
 }
 
@@ -206,5 +206,94 @@ fn catalog_check_flags_file_without_entry() {
     assert_eq!(
         problems(&dir),
         vec!["templates/extra.md has no entry in templates/index.toml".to_string()]
+    );
+}
+
+#[test]
+fn catalog_check_reports_every_problem_in_order() {
+    let broken = "---\nbody without a closing delimiter\n";
+    let entries = [
+        entry_text("a-missing", VALID),
+        entry_text("b-stale", VALID),
+        entry_text("c-broken", broken),
+        entry_text("d-ok", VALID),
+        entry_text("e-stale", OTHER),
+        entry_text("f-missing", OTHER),
+    ]
+    .concat();
+    let stale_b = format!("{VALID}edited\n");
+    let stale_e = format!("{OTHER}edited\n");
+    let dir = folder(
+        &entries,
+        &[
+            ("b-stale.md", &stale_b),
+            ("c-broken.md", broken),
+            ("d-ok.md", VALID),
+            ("e-stale.md", &stale_e),
+            ("y-extra.md", "---\n---\ny\n"),
+            ("z-extra.md", "---\n---\nz\n"),
+        ],
+    );
+    assert_eq!(
+        problems(&dir),
+        vec![
+            "template \"a-missing\": templates/a-missing.md is missing".to_string(),
+            format!(
+                "template \"b-stale\": sha256 mismatch: index.toml has {}, templates/b-stale.md has {}; run: shasum -a 256 templates/b-stale.md",
+                sha256_hex(VALID.as_bytes()),
+                sha256_hex(stale_b.as_bytes())
+            ),
+            "template \"c-broken\": templates/c-broken.md does not parse: template c-broken: templates/c-broken.md: frontmatter is not closed (expected a closing '---' line)".to_string(),
+            format!(
+                "template \"e-stale\": sha256 mismatch: index.toml has {}, templates/e-stale.md has {}; run: shasum -a 256 templates/e-stale.md",
+                sha256_hex(OTHER.as_bytes()),
+                sha256_hex(stale_e.as_bytes())
+            ),
+            "template \"f-missing\": templates/f-missing.md is missing".to_string(),
+            "templates/y-extra.md has no entry in templates/index.toml".to_string(),
+            "templates/z-extra.md has no entry in templates/index.toml".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn catalog_check_matches_names_exactly() {
+    // Entry `one` is not satisfied by `One.md`, and `One.md` is not listed by `one`.
+    let dir = folder(&entry_text("one", VALID), &[("One.md", OTHER)]);
+    assert_eq!(
+        problems(&dir),
+        vec![
+            "template \"one\": templates/one.md is missing".to_string(),
+            "templates/One.md has no entry in templates/index.toml".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn catalog_check_ignores_files_that_are_not_md() {
+    let dir = folder(
+        &entry_text("one", VALID),
+        &[("one.md", VALID), ("notes.txt", "not a template\n")],
+    );
+    assert_eq!(check_catalog_dir(dir.path()), Ok(()));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn catalog_check_flags_non_utf8_name_and_keeps_going() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let dir = folder(
+        &format!("{}{}", entry_text("one", VALID), entry_text("two", OTHER)),
+        &[("one.md", VALID)],
+    );
+    fs::write(dir.path().join(OsStr::from_bytes(b"bad\xff.md")), VALID).unwrap();
+    assert_eq!(
+        problems(&dir),
+        vec![
+            "template \"two\": templates/two.md is missing".to_string(),
+            "templates/bad\u{FFFD}.md has a non UTF-8 name".to_string(),
+        ]
     );
 }
