@@ -4,7 +4,7 @@
 //! The flow is `fetch_catalog`, select (see `catalog::select`), `read_manifest`, `plan`, then
 //! `apply`, which fetches only what it will write.
 
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -24,9 +24,12 @@ pub const LOCAL_CAP: u64 = 1024 * 1024;
 const GITHUB: &str = "https://raw.githubusercontent.com/JCIOriente/minuta";
 const MANIFEST_FILE: &str = ".pulled.toml";
 
-/// How long to wait for a connection and for each read, like `models.rs`.
+/// How long to wait for a connection and for each read, like `models.rs`, plus a bound on the
+/// whole request: unlike a model, a template or the catalog is small, so a server that drips
+/// one byte per read must not hold the command open.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
+const TOTAL_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Where the catalog and the template files are downloaded from: a folder URL that holds
 /// `index.toml` and `<name>.md`.
@@ -108,6 +111,33 @@ fn io_other(message: String) -> Error {
     Error::Io(io::Error::other(message))
 }
 
+/// An I/O error with a message that names what failed, keeping the original kind so a
+/// caller can still tell a permission problem from a full disk.
+fn io_at(source: &io::Error, message: String) -> Error {
+    Error::Io(io::Error::new(source.kind(), message))
+}
+
+fn cannot_read(path: &Path, source: &io::Error) -> Error {
+    io_at(source, format!("cannot read {}: {source}", path.display()))
+}
+
+/// Reads a local file of at most `LOCAL_CAP` bytes. A planted multi-gigabyte file in an
+/// untrusted folder must not be pulled into memory just to be hashed.
+fn read_capped(path: &Path) -> Result<Vec<u8>> {
+    let file = File::open(path).map_err(|e| cannot_read(path, &e))?;
+    let mut bytes = Vec::new();
+    file.take(LOCAL_CAP + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| cannot_read(path, &e))?;
+    if bytes.len() as u64 > LOCAL_CAP {
+        return Err(io_other(format!(
+            "{} is larger than {LOCAL_CAP} bytes",
+            path.display()
+        )));
+    }
+    Ok(bytes)
+}
+
 fn symlink_error(path: &Path) -> Error {
     io_other(format!(
         "{} is a symlink; refusing to use it",
@@ -120,6 +150,7 @@ fn get(url: &str, cap: u64) -> Result<Vec<u8>> {
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(CONNECT_TIMEOUT)
         .timeout_read(READ_TIMEOUT)
+        .timeout(TOTAL_TIMEOUT)
         .redirects(0)
         .build();
     let failed = |reason: String| io_other(format!("download of {url} failed: {reason}"));
@@ -171,14 +202,13 @@ fn check_name(name: &str) -> Result<()> {
 /// cannot be read, or a symlink, is an error.
 pub fn read_manifest(dest: &Path) -> Result<(Manifest, Option<String>)> {
     let path = dest.join(MANIFEST_FILE);
-    let cannot_read = |e: io::Error| io_other(format!("cannot read {}: {e}", path.display()));
     match fs::symlink_metadata(&path) {
         Ok(meta) if meta.file_type().is_symlink() => return Err(symlink_error(&path)),
         Ok(_) => {}
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok((Manifest::default(), None)),
-        Err(e) => return Err(cannot_read(e)),
+        Err(e) => return Err(cannot_read(&path, &e)),
     }
-    let bytes = fs::read(&path).map_err(cannot_read)?;
+    let bytes = read_capped(&path)?;
     // Bytes that are not UTF-8 are not TOML either; the replacement characters make
     // `Manifest::parse` reject the text and give the usual warning.
     Ok(Manifest::parse(&String::from_utf8_lossy(&bytes)))
@@ -211,7 +241,7 @@ pub fn plan<'a>(
         }
         Ok(_) => {}
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-        Err(e) => return Err(io_other(format!("cannot read {}: {e}", dest.display()))),
+        Err(e) => return Err(cannot_read(dest, &e)),
     }
     let mut items = Vec::with_capacity(selection.len());
     for &entry in selection {
@@ -226,16 +256,15 @@ pub fn plan<'a>(
 
 /// The hash of the file at `path`, or None when there is none.
 fn local_hash(path: &Path) -> Result<Option<String>> {
-    let cannot_read = |e: io::Error| io_other(format!("cannot read {}: {e}", path.display()));
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => Err(symlink_error(path)),
         Ok(meta) if !meta.is_file() => Err(io_other(format!(
             "{} is not a regular file",
             path.display()
         ))),
-        Ok(_) => Ok(Some(sha256_hex(&fs::read(path).map_err(cannot_read)?))),
+        Ok(_) => Ok(Some(sha256_hex(&read_capped(path)?))),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(cannot_read(e)),
+        Err(e) => Err(cannot_read(path, &e)),
     }
 }
 
@@ -293,51 +322,72 @@ pub fn apply(
 
     for (item, _) in fetched.iter().filter(|(i, _)| i.state == State::Modified) {
         let bak = backup_path(&item.path);
-        let old = fs::read(&item.path)
-            .map_err(|e| io_other(format!("cannot read {}: {e}", item.path.display())))?;
-        write_file(&bak, &old)
-            .map_err(|e| io_other(format!("cannot save a backup to {}: {e}", bak.display())))?;
+        let old = read_capped(&item.path)?;
+        write_file(&bak, &old).map_err(|e| {
+            io_at(
+                &e,
+                format!("cannot save a backup to {}: {e}", bak.display()),
+            )
+        })?;
     }
 
     fs::create_dir_all(dest)
-        .map_err(|e| io_other(format!("cannot create {}: {e}", dest.display())))?;
-    let mut written = 0usize;
-    let mut failure = None;
+        .map_err(|e| io_at(&e, format!("cannot create {}: {e}", dest.display())))?;
+    let mut written: Vec<&str> = Vec::new();
+    let mut write_failure: Option<(io::ErrorKind, String)> = None;
     for (item, bytes) in &fetched {
         match write_file(&item.path, bytes) {
             Ok(()) => {
                 manifest.set(&item.entry.name, &item.entry.sha256);
-                written += 1;
+                written.push(&item.entry.name);
             }
             Err(e) => {
-                failure = Some(io_other(format!(
-                    "cannot write {}: {e}",
-                    item.path.display()
-                )));
+                let message = format!("cannot write {}: {e}", item.path.display());
+                write_failure = Some((e.kind(), message));
                 break;
             }
         }
     }
     // Record what did land, even when a later write failed, so the manifest stays true.
-    if written > 0 {
-        let path = dest.join(MANIFEST_FILE);
-        if let Err(e) = write_file(&path, manifest.to_toml().as_bytes()) {
-            failure
-                .get_or_insert_with(|| io_other(format!("cannot write {}: {e}", path.display())));
+    let manifest_path = dest.join(MANIFEST_FILE);
+    let manifest_failure = if written.is_empty() {
+        None
+    } else {
+        write_file(&manifest_path, manifest.to_toml().as_bytes()).err()
+    };
+    let with_written = |message: String| {
+        if written.is_empty() {
+            message
+        } else {
+            format!("{message}; files written: {}", written.join(", "))
         }
-    }
-    if let Some(e) = failure {
-        return Err(e);
-    }
-
-    Ok(items
-        .iter()
-        .map(|item| Done {
-            name: item.entry.name.clone(),
-            path: item.path.clone(),
-            outcome: outcome(item),
-        })
-        .collect())
+    };
+    let (kind, message) = match (write_failure, manifest_failure) {
+        (None, None) => {
+            return Ok(items
+                .iter()
+                .map(|item| Done {
+                    name: item.entry.name.clone(),
+                    path: item.path.clone(),
+                    outcome: outcome(item),
+                })
+                .collect())
+        }
+        (Some((kind, message)), None) => (kind, with_written(message)),
+        (None, Some(e)) => (
+            e.kind(),
+            with_written(format!("cannot write {}: {e}", manifest_path.display())),
+        ),
+        (Some((kind, message)), Some(e)) => (
+            kind,
+            format!(
+                "{}; also cannot update {}: {e}",
+                with_written(message),
+                manifest_path.display()
+            ),
+        ),
+    };
+    Err(Error::Io(io::Error::new(kind, message)))
 }
 
 /// Checks a downloaded file before anything is written.
