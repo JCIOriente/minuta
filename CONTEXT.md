@@ -8,7 +8,7 @@ code, specs and issues. When a term is ambiguous or keeps needing explanation, a
 | Source | One or more media files given to a run. Several are joined into one. | A job: the source is the input, the job is the folder of work |
 | Transcript | Timestamped segments `{start, end, text}` in seconds, plus the detected speech language. minuta's own schema. | whisper.cpp's raw JSON, which is only parsed into it |
 | Job | One run over one source: a folder `./minuta-out/<name>/` with documents at the top, results in `assets/` and its state in `.minuta/job.json`. | A process; a job persists across runs |
-| Step | One fixed stage of the pipeline (`probe`, `join`, `audio`, `transcribe`, `outputs`) with declared inputs and outputs. | A template step, which is user-defined and recorded under `templates` in `job.json` |
+| Step | One fixed stage of the pipeline (`probe`, `join`, `audio`, `transcribe`, `outputs`) with declared inputs and outputs. | A template step, which is user-defined and recorded under `templates` in `.minuta/job.json` |
 | Artifact | A file a step produces and stores in the job folder. | |
 | Assets folder | `assets/` in the job folder: machine-readable results and media (`transcript.json`, `<template>.json`, `audio.wav`, `joined.<ext>` with several sources). Visible on purpose, for scripts and reuse. | The State folder, and the documents at the root |
 | State folder | `.minuta/` in the job folder (hidden): `job.json`, `probe.json`, `llm-cache/`, `derived/`. Minuta's own bookkeeping. | The Assets folder; the Home folder `~/.minuta/` |
