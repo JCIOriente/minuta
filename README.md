@@ -414,7 +414,8 @@ Any other `{{...}}` is an error that lists these.
 A `fields` template writes `<name>.json` for scripts and `<name>.md` for
 reading. Fields come from a fixed set:
 
-- Text: `title`, `body`, `thumbnail_text`
+- Text: `title`, `body`, `thumbnail_text`, `notes` (for the person publishing,
+  not part of the published text)
 - Lists: `tags`, `hashtags`
 - `chapters`: filled in from the `chapters` template's result, not written by
   the model
