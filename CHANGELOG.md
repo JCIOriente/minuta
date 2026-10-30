@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.5.0
+
+### Changed (breaking)
+- The job folder is reorganized so a plain `ls` shows only documents.
+  - `<template>.md`, `transcript.txt` and `captions.srt` stay at the top of `<out>/<name>/`.
+  - `transcript.json`, every `<template>.json`, `audio.wav` and `joined.<ext>` moved to `assets/`.
+  - `job.json`, `probe.json` and `llm-cache/` moved to the hidden `.minuta/` folder.
+  - Scripts that read the old paths must change.
+- A single recording no longer gets a `joined.<ext>` copy: the original file is used as it is.
+  Several recordings still produce `assets/joined.<ext>`.
+- Job folders from earlier versions are not migrated. The next run in one rebuilds it in the
+  new layout (transcription and model calls run again); the old files stay and can be deleted.
+- The built-in `linkedin`, `instagram` and `youtube` templates read the transcript instead of
+  `summary`, so `summary.md` is only produced by `-t summary`. Curated templates in the
+  catalog changed the same way; pull them again with `--force` to update.
+
+### Added
+- A template that runs only because another needs it (for example `chapters` under `youtube`)
+  writes its files to `.minuta/derived/`. Asking for it with `-t` moves them to the normal
+  places.
+- `minuta templates pull` shows a progress bar (files done of total) on an interactive
+  terminal. Output piped or redirected is unchanged and stdout still carries only the paths.
+- The built-in `youtube` template fills a `notes` field and hashtags.
+
+### Fixed
+- Writing job files no longer follows a planted temporary-file symlink.
+
 ## 0.4.0
 
 ### Added
