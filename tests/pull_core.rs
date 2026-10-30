@@ -6,7 +6,7 @@ use minuta::error::{Error, Result};
 use minuta::template::catalog::{sha256_hex, Catalog, Entry, Manifest, State};
 use minuta::template::pull::{
     apply, fetch_catalog, fetch_file, plan, read_manifest, Done, Origin, Outcome, CATALOG_CAP,
-    FILE_CAP,
+    FILE_CAP, LOCAL_CAP,
 };
 use tempfile::TempDir;
 
@@ -877,6 +877,11 @@ fn apply_unparsable_template_writes_nothing() {
         "{text}"
     );
     assert!(text.contains("bogus"), "{text}");
+    // The reason is the parse error without its own "template beta: " prefix.
+    assert!(
+        !text.contains("from the catalog: template beta:"),
+        "doubled prefix: {text}"
+    );
     assert!(
         text.ends_with("; if it uses a newer format, upgrade minuta"),
         "{text}"
@@ -1022,6 +1027,7 @@ fn apply_write_failure_keeps_the_manifest_truthful() {
         )),
         "{text}"
     );
+    assert!(text.ends_with("; files written: first"), "{text}");
     assert_eq!(fs::read_to_string(dir.join("first.md")).unwrap(), first);
     assert!(!dir.join("second.md").exists());
     assert_eq!(manifest, manifest_with(&[("first", &first)]));
@@ -1143,4 +1149,255 @@ fn pull_end_to_end_against_a_server() {
     let outcomes: Vec<Outcome> = done.iter().map(|x| x.outcome).collect();
     assert_eq!(outcomes, [Outcome::KeptUpToDate, Outcome::KeptUpToDate]);
     assert_eq!(server.requests().len(), 3);
+}
+
+// ---- review follow-ups ----
+
+#[test]
+fn apply_force_backs_up_every_modified_file() {
+    let d = Dest::new();
+    let pulled = template_text("pulled");
+    let (edit_a, edit_b) = (template_text("edited alpha"), template_text("edited beta"));
+    let (new_a, new_b) = (template_text("new alpha"), template_text("new beta"));
+    d.write("alpha.md", &edit_a);
+    d.write("beta.md", &edit_b);
+    let a = entry("alpha", &new_a);
+    let b = entry("beta", &new_b);
+    let mut f = Fetcher::new(&[("alpha", new_a.as_bytes()), ("beta", new_b.as_bytes())]);
+    let mut manifest = manifest_with(&[("alpha", &pulled), ("beta", &pulled)]);
+    run(&d.dir(), &[&a, &b], true, &mut f, &mut manifest).unwrap();
+    assert_eq!(
+        fs::read_to_string(d.dir().join("alpha.md.bak")).unwrap(),
+        edit_a
+    );
+    assert_eq!(
+        fs::read_to_string(d.dir().join("beta.md.bak")).unwrap(),
+        edit_b
+    );
+    assert_eq!(fs::read_to_string(d.dir().join("alpha.md")).unwrap(), new_a);
+    assert_eq!(fs::read_to_string(d.dir().join("beta.md")).unwrap(), new_b);
+}
+
+#[test]
+fn apply_force_backup_failure_on_the_second_item_writes_nothing() {
+    let d = Dest::new();
+    let (edit_a, edit_b) = (template_text("edited alpha"), template_text("edited beta"));
+    d.write("alpha.md", &edit_a);
+    d.write("beta.md", &edit_b);
+    let bak = d.dir().join("beta.md.bak");
+    fs::create_dir(&bak).unwrap();
+    let (new_a, new_b) = (template_text("new alpha"), template_text("new beta"));
+    let a = entry("alpha", &new_a);
+    let b = entry("beta", &new_b);
+    let mut f = Fetcher::new(&[("alpha", new_a.as_bytes()), ("beta", new_b.as_bytes())]);
+    let mut manifest = Manifest::default();
+    let text = err_text(run(&d.dir(), &[&a, &b], true, &mut f, &mut manifest));
+    assert!(
+        text.starts_with(&format!(
+            "I/O error: cannot save a backup to {}: ",
+            bak.display()
+        )),
+        "{text}"
+    );
+    assert_eq!(
+        fs::read_to_string(d.dir().join("alpha.md")).unwrap(),
+        edit_a
+    );
+    assert_eq!(fs::read_to_string(d.dir().join("beta.md")).unwrap(), edit_b);
+    assert!(!d.dir().join(".pulled.toml").exists());
+    assert_eq!(manifest, Manifest::default());
+}
+
+#[test]
+fn apply_verification_failure_with_force_leaves_backups_alone() {
+    let d = Dest::new();
+    let edited = template_text("edited");
+    d.write("alpha.md", &edited);
+    d.write("alpha.md.bak", "an older backup");
+    let new_a = template_text("new alpha");
+    let a = entry("alpha", &new_a);
+    let b = entry("beta", &template_text("expected"));
+    let mut f = Fetcher::new(&[
+        ("alpha", new_a.as_bytes()),
+        ("beta", template_text("tampered").as_bytes()),
+    ]);
+    let text = err_text(run(
+        &d.dir(),
+        &[&a, &b],
+        true,
+        &mut f,
+        &mut Manifest::default(),
+    ));
+    assert!(
+        text.starts_with("template beta: downloaded file does not match the catalog checksum"),
+        "{text}"
+    );
+    assert_eq!(
+        fs::read_to_string(d.dir().join("alpha.md")).unwrap(),
+        edited
+    );
+    assert_eq!(
+        fs::read_to_string(d.dir().join("alpha.md.bak")).unwrap(),
+        "an older backup"
+    );
+}
+
+#[test]
+fn apply_fetch_error_with_force_leaves_backups_alone() {
+    let d = Dest::new();
+    let edited = template_text("edited");
+    d.write("alpha.md", &edited);
+    d.write("alpha.md.bak", "an older backup");
+    let new_a = template_text("new alpha");
+    let a = entry("alpha", &new_a);
+    let b = entry("beta", &template_text("beta"));
+    let mut f = Fetcher::new(&[("alpha", new_a.as_bytes())]); // beta has no file
+    let text = err_text(run(
+        &d.dir(),
+        &[&a, &b],
+        true,
+        &mut f,
+        &mut Manifest::default(),
+    ));
+    assert_eq!(text, "I/O error: no fake file for beta");
+    assert_eq!(
+        fs::read_to_string(d.dir().join("alpha.md")).unwrap(),
+        edited
+    );
+    assert_eq!(
+        fs::read_to_string(d.dir().join("alpha.md.bak")).unwrap(),
+        "an older backup"
+    );
+}
+
+#[test]
+fn plan_rejects_an_invalid_entry_name() {
+    let d = Dest::new();
+    let good = entry("alpha", &template_text("a"));
+    let mut bad = entry("beta", &template_text("b"));
+    bad.name = "../x".to_string();
+    match plan(&d.dir(), &[&good, &bad], &Manifest::default()) {
+        Err(Error::Usage(m)) => assert_eq!(
+            m,
+            "invalid template name \"../x\" (use lowercase letters, digits, '-' and '_', starting with a letter or digit)"
+        ),
+        other => panic!("expected usage error, got {other:?}"),
+    }
+}
+
+#[test]
+fn apply_manifest_write_failure_is_an_error() {
+    let d = Dest::new();
+    let dir = d.create();
+    let manifest_tmp = dir.join(".pulled.toml.tmp");
+    fs::create_dir(&manifest_tmp).unwrap();
+    let text = template_text("a");
+    let a = entry("alpha", &text);
+    let mut f = Fetcher::new(&[("alpha", text.as_bytes())]);
+    let msg = err_text(run(&dir, &[&a], false, &mut f, &mut Manifest::default()));
+    assert!(
+        msg.starts_with(&format!(
+            "I/O error: cannot write {}: ",
+            dir.join(".pulled.toml").display()
+        )),
+        "{msg}"
+    );
+    assert!(msg.ends_with("; files written: alpha"), "{msg}");
+    assert_eq!(fs::read_to_string(dir.join("alpha.md")).unwrap(), text);
+}
+
+#[test]
+fn apply_write_failure_stops_at_the_first_failure() {
+    let d = Dest::new();
+    let dir = d.create();
+    let (t1, t2, t3) = (template_text("1"), template_text("2"), template_text("3"));
+    fs::create_dir(dir.join("second.md.tmp")).unwrap();
+    let e1 = entry("first", &t1);
+    let e2 = entry("second", &t2);
+    let e3 = entry("third", &t3);
+    let mut f = Fetcher::new(&[
+        ("first", t1.as_bytes()),
+        ("second", t2.as_bytes()),
+        ("third", t3.as_bytes()),
+    ]);
+    let mut manifest = Manifest::default();
+    err_text(run(&dir, &[&e1, &e2, &e3], false, &mut f, &mut manifest));
+    assert!(dir.join("first.md").is_file());
+    assert!(!dir.join("second.md").exists());
+    assert!(!dir.join("third.md").exists());
+    assert_eq!(manifest, manifest_with(&[("first", &t1)]));
+}
+
+#[test]
+fn apply_reports_both_failures_when_the_manifest_write_also_fails() {
+    let d = Dest::new();
+    let dir = d.create();
+    let (t1, t2) = (template_text("1"), template_text("2"));
+    fs::create_dir(dir.join("second.md.tmp")).unwrap();
+    fs::create_dir(dir.join(".pulled.toml.tmp")).unwrap();
+    let e1 = entry("first", &t1);
+    let e2 = entry("second", &t2);
+    let mut f = Fetcher::new(&[("first", t1.as_bytes()), ("second", t2.as_bytes())]);
+    let msg = err_text(run(
+        &dir,
+        &[&e1, &e2],
+        false,
+        &mut f,
+        &mut Manifest::default(),
+    ));
+    assert!(
+        msg.starts_with(&format!(
+            "I/O error: cannot write {}: ",
+            dir.join("second.md").display()
+        )),
+        "{msg}"
+    );
+    assert!(
+        msg.contains(&format!(
+            "; files written: first; also cannot update {}: ",
+            dir.join(".pulled.toml").display()
+        )),
+        "{msg}"
+    );
+}
+
+#[test]
+fn read_manifest_io_error_keeps_the_error_kind() {
+    let d = Dest::new();
+    let dir = d.create();
+    fs::create_dir(dir.join(".pulled.toml")).unwrap();
+    match read_manifest(&dir) {
+        Err(Error::Io(e)) => assert_ne!(e.kind(), std::io::ErrorKind::Other, "{e}"),
+        other => panic!("expected an I/O error, got {other:?}"),
+    }
+}
+
+#[test]
+fn plan_template_over_the_local_cap_is_an_error() {
+    let d = Dest::new();
+    let path = d.write("alpha.md", &"a".repeat(LOCAL_CAP as usize + 1));
+    let a = entry("alpha", &template_text("a"));
+    assert_eq!(
+        err_text(plan(&d.dir(), &[&a], &Manifest::default())),
+        format!("I/O error: {} is larger than 1048576 bytes", path.display())
+    );
+}
+
+#[test]
+fn plan_template_of_exactly_the_local_cap_is_read() {
+    let d = Dest::new();
+    d.write("alpha.md", &"a".repeat(LOCAL_CAP as usize));
+    let a = entry("alpha", &template_text("a"));
+    let items = plan(&d.dir(), &[&a], &Manifest::default()).unwrap();
+    assert_eq!(items[0].state, State::Modified);
+}
+
+#[test]
+fn read_manifest_over_the_local_cap_is_an_error() {
+    let d = Dest::new();
+    let path = d.write(".pulled.toml", &"#".repeat(LOCAL_CAP as usize + 1));
+    assert_eq!(
+        err_text(read_manifest(&d.dir())),
+        format!("I/O error: {} is larger than 1048576 bytes", path.display())
+    );
 }
