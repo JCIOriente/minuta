@@ -11,27 +11,32 @@ use crate::error::{Error, Result};
 /// Where user and project templates live.
 #[derive(Debug, Clone)]
 pub struct Dirs {
-    /// `<home>/.config/minuta/templates`; `None` when the home directory is unknown.
+    /// `<home>/.minuta/templates`; `None` when the home directory is unknown.
     pub user: Option<PathBuf>,
     pub project: PathBuf,
 }
 
 impl Dirs {
-    /// The real locations: the user's config folder and `./templates`.
+    /// The real locations: the user's `~/.minuta/templates` and `./templates`.
     pub fn standard() -> Result<Dirs> {
-        let user =
-            directories::BaseDirs::new().map(|d| d.home_dir().join(".config/minuta/templates"));
-        Ok(Dirs {
-            user,
-            project: std::env::current_dir()
-                .map_err(|e| {
-                    Error::Io(io::Error::new(
-                        e.kind(),
-                        format!("cannot determine the current directory: {e}"),
-                    ))
-                })?
-                .join("templates"),
-        })
+        let cwd = std::env::current_dir().map_err(|e| {
+            Error::Io(io::Error::new(
+                e.kind(),
+                format!("cannot determine the current directory: {e}"),
+            ))
+        })?;
+        let mut dirs = Dirs::for_home(Path::new(""), &cwd);
+        dirs.user =
+            directories::BaseDirs::new().and_then(|d| Dirs::for_home(d.home_dir(), &cwd).user);
+        Ok(dirs)
+    }
+
+    /// The locations for a given home directory and working directory.
+    pub fn for_home(home: &Path, cwd: &Path) -> Dirs {
+        Dirs {
+            user: Some(home.join(".minuta/templates")),
+            project: cwd.join("templates"),
+        }
     }
 }
 

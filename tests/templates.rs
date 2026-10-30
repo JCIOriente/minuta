@@ -1161,3 +1161,41 @@ mod hard_links {
         assert!(c.invalid.is_empty());
     }
 }
+
+#[test]
+fn user_templates_dir_is_under_home_minuta() {
+    let tmp = TempDir::new().unwrap();
+    let dirs = Dirs::for_home(&tmp.path().join("home"), &tmp.path().join("cwd"));
+    assert_eq!(dirs.user, Some(tmp.path().join("home/.minuta/templates")));
+    assert_eq!(dirs.project, tmp.path().join("cwd/templates"));
+}
+
+#[test]
+fn old_user_templates_dir_is_ignored() {
+    let tmp = TempDir::new().unwrap();
+    let home = tmp.path().join("home");
+    let old = home.join(".config/minuta/templates");
+    fs::create_dir_all(&old).unwrap();
+    fs::write(old.join("legacy.md"), "---\n---\nold body\n").unwrap();
+    let c = discover(&Dirs::for_home(&home, &tmp.path().join("cwd"))).unwrap();
+    assert!(!c.templates.contains_key("legacy"));
+    assert!(c.invalid.is_empty());
+}
+
+#[test]
+fn user_layer_overridden_by_project_layer() {
+    let tmp = TempDir::new().unwrap();
+    let home = tmp.path().join("home");
+    let cwd = tmp.path().join("cwd");
+    let user = home.join(".minuta/templates");
+    let project = cwd.join("templates");
+    fs::create_dir_all(&user).unwrap();
+    fs::create_dir_all(&project).unwrap();
+    fs::write(user.join("x.md"), "---\n---\nuser body\n").unwrap();
+    let c = discover(&Dirs::for_home(&home, &cwd)).unwrap();
+    assert_eq!(c.get("x").unwrap().layer, Layer::User);
+    fs::write(project.join("x.md"), "---\n---\nproject body\n").unwrap();
+    let c = discover(&Dirs::for_home(&home, &cwd)).unwrap();
+    assert_eq!(c.get("x").unwrap().body, "project body\n");
+    assert_eq!(c.get("x").unwrap().layer, Layer::Project);
+}
