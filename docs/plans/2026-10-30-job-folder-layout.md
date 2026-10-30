@@ -2,7 +2,7 @@
 
 - Spec: docs/specs/2026-10-30-job-folder-layout.md
 - Date: 2026-10-30
-- Status: approved
+- Status: in backlog
 
 ## Overview
 One shared foundation first: a layout module that owns every path in the job folder, plus the move of minuta's own bookkeeping into `.minuta/` (T1). Then two parallel tasks build on it: media and transcript files into `assets/` with no single-source join (T2), and template outputs into `assets/` and `.minuta/derived/` (T3). T4 is independent: the social templates read the transcript instead of the summary. T5 updates the docs and adds the end-to-end listing test once the rest has merged.
@@ -26,7 +26,7 @@ Can start immediately in parallel: T1, T4. After T1: T2, T3 in parallel.
 
 ## Tasks
 
-### T1: Layout module and `.minuta/` bookkeeping
+### T1: Layout module and `.minuta/` bookkeeping  (#185)
 - Priority: 0
 - Depends on: none
 - Owns: `src/job/**`, `src/llm/call.rs`, `src/steps/probe.rs`, `tests/job.rs`
@@ -42,7 +42,7 @@ Can start immediately in parallel: T1, T4. After T1: T2, T3 in parallel.
 - Tests first: `layout_paths_are_under_minuta_and_assets`, `write_atomic_creates_missing_parent`, `open_cleans_tmp_in_all_tiers`, `flat_layout_job_is_treated_as_new`, `call_cache_lives_in_minuta`
 - Notes: the constants `JOB_FILE`, `PROBE_FILE` are replaced by layout functions. Do not change step logic beyond path lookups.
 
-### T2: Media and transcript files in `assets/`, no single-source join
+### T2: Media and transcript files in `assets/`, no single-source join  (#187)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/steps/join.rs`, `src/steps/audio.rs`, `src/steps/transcribe.rs`, `src/steps/outputs.rs`, `tests/transcribe.rs`, `tests/media.rs`
@@ -58,7 +58,7 @@ Can start immediately in parallel: T1, T4. After T1: T2, T3 in parallel.
 - Tests first: `single_source_has_no_joined_file`, `several_sources_join_into_assets`, `audio_is_extracted_from_the_original_for_one_source`, `second_run_skips_all_steps`, `transcript_txt_and_srt_stay_at_root`
 - Notes: `Mode::Link` and `link_or_copy` are removed with their tests. The fingerprint of the audio step must still change when the source changes.
 
-### T3: Template outputs in `assets/` and implicit outputs in `.minuta/derived/`
+### T3: Template outputs in `assets/` and implicit outputs in `.minuta/derived/`  (#188)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/generate.rs`, `src/chapters/mod.rs`, `src/fields/mod.rs`, `tests/generate.rs`, `tests/integration/fields.rs`, `tests/integration/chapters.rs`, `tests/integration/templates.rs`
@@ -73,7 +73,7 @@ Can start immediately in parallel: T1, T4. After T1: T2, T3 in parallel.
 - Tests first: `requested_template_writes_md_at_root_and_json_in_assets`, `implicit_dependency_writes_to_derived`, `requesting_a_derived_template_moves_its_outputs`, `youtube_run_leaves_no_chapters_at_root`, `unchanged_templates_are_skipped_after_move`
 - Notes: output paths are declared in `src/generate.rs:117`. Keep `<name>.md` rendering unchanged.
 
-### T4: Social templates read the transcript
+### T4: Social templates read the transcript  (#186)
 - Priority: 2
 - Depends on: none
 - Owns: `src/template/builtin/linkedin.md`, `src/template/builtin/instagram.md`, `src/template/builtin/youtube.md`, `templates/*.md`, `templates/index.toml`, `tests/templates.rs`, `tests/templates_catalog.rs`, `tests/pull_catalog.rs`
@@ -87,7 +87,7 @@ Can start immediately in parallel: T1, T4. After T1: T2, T3 in parallel.
 - Tests first: `social_builtins_read_transcript`, `catalog_templates_declare_transcript_input`, `catalog_hashes_match_files`, `social_run_creates_no_summary`
 - Notes: `docs/template-briefs/` describe the intended inputs; update the briefs that say summary. Check the catalog hash test for how hashes are computed before editing the index.
 
-### T5: Docs and end-to-end layout test
+### T5: Docs and end-to-end layout test  (#189)
 - Priority: 2
 - Depends on: T2, T3, T4
 - Owns: `README.md`, `CONTEXT.md`, `docs/common-issues.md`, `tests/integration/layout.rs`
