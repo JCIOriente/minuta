@@ -196,13 +196,9 @@ fn chapters_youtube_runs_in_order_then_cached() {
     assert_eq!(
         outcome,
         (
-            vec![
-                "summary".to_string(),
-                "chapters".to_string(),
-                "youtube".to_string()
-            ],
+            vec!["chapters".to_string(), "youtube".to_string()],
             VALID_YOUTUBE_MD.to_string(),
-            3,
+            2,
             0,
         ),
         "{}",
@@ -312,7 +308,7 @@ fn chapters_always_broken_fails_and_rerun_asks_again() {
         outcome,
         (
             (Some(1), message.clone(), false, false, false, false),
-            [3, 1, 2, 1, 2, 0],
+            [0, 0, 2, 1, 2, 0],
             Some(1),
             message,
             vec!["chapters final", "chapters repair", "chapters repair"],
@@ -427,7 +423,7 @@ fn chapters_force_reruns_chapters_and_youtube_not_summary() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
         (first, roles(&fake, first)),
-        (3, vec!["chapters final", "youtube"]),
+        (2, vec!["chapters final", "youtube"]),
         "{}",
         stderr(&out)
     );
@@ -480,8 +476,8 @@ fn chapters_regenerated_identical_keeps_youtube_cached() {
         runs,
         [
             (
-                vec!["text", "chapters final", "youtube"],
-                strings(&["summary", "chapters", "youtube"]),
+                vec!["chapters final", "youtube"],
+                strings(&["chapters", "youtube"]),
                 VALID_YOUTUBE_MD.to_string()
             ),
             (

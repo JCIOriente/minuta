@@ -75,10 +75,6 @@ fn fields_run_then_cached() {
     let out = run_class(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     let job = env.job_dir("a");
-    assert_eq!(
-        fs::read_to_string(job.join("summary.md")).unwrap(),
-        "the summary\n"
-    );
     assert_eq!(read_json(job.join("youtube.json")), valid_youtube_json());
     assert_eq!(
         fs::read_to_string(job.join("youtube.md")).unwrap(),
@@ -90,11 +86,11 @@ fn fields_run_then_cached() {
         state["templates"]["youtube"]["artifacts"],
         serde_json::json!(["youtube.json", "youtube.md"])
     );
-    assert_eq!(fake.chat_count(), 3, "summary, chapters and youtube");
+    assert_eq!(fake.chat_count(), 2, "chapters and youtube");
 
     let out = run_class(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
-    assert_eq!(fake.chat_count(), 3, "the second run makes no chat request");
+    assert_eq!(fake.chat_count(), 2, "the second run makes no chat request");
     let cached = cached_steps(&stderr(&out));
     assert_eq!(
         cached,
@@ -104,7 +100,6 @@ fn fields_run_then_cached() {
             "audio",
             "transcribe",
             "outputs",
-            "summary",
             "chapters",
             "youtube"
         ],
@@ -130,11 +125,7 @@ fn fields_repair_request() {
     assert!(out.status.success(), "{}", stderr(&out));
     let sent = chats(&fake);
     let youtube: Vec<_> = sent.iter().filter(|r| is_youtube(r)).collect();
-    assert_eq!(
-        sent.len(),
-        4,
-        "summary, chapters, the final request and one repair"
-    );
+    assert_eq!(sent.len(), 3, "chapters, the final request and one repair");
     assert_eq!(youtube.len(), 2, "the final request and one repair");
     assert!(!is_repair(youtube[0]));
     assert!(is_repair(youtube[1]));
@@ -173,23 +164,19 @@ fn fields_repairs_exhausted() {
     assert!(!job.join("youtube.md").exists());
     assert_eq!(
         fake.chat_count(),
-        5,
-        "summary, chapters, the final request, two repairs"
+        4,
+        "chapters, the final request, two repairs"
     );
 
     let out = run_class(&env, &args, &fake);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     let sent = chats(&fake);
-    assert_eq!(
-        sent.len(),
-        8,
-        "summary and chapters stay cached; youtube asks again"
-    );
+    assert_eq!(sent.len(), 7, "chapters stays cached; youtube asks again");
     assert!(
-        !is_repair(&sent[5]),
+        !is_repair(&sent[4]),
         "the rerun starts with a new final request"
     );
-    assert!(is_repair(&sent[6]) && is_repair(&sent[7]));
+    assert!(is_repair(&sent[5]) && is_repair(&sent[6]));
 }
 
 #[test]
@@ -207,11 +194,7 @@ fn fields_invalid_json_repaired() {
     assert!(out.status.success(), "{}", stderr(&out));
     let sent = chats(&fake);
     let youtube: Vec<_> = sent.iter().filter(|r| is_youtube(r)).collect();
-    assert_eq!(
-        sent.len(),
-        4,
-        "summary, chapters, the final request and one repair"
-    );
+    assert_eq!(sent.len(), 3, "chapters, the final request and one repair");
     assert_eq!(youtube.len(), 2);
     assert!(
         message(youtube[1], 1).contains("the answer is not a JSON object"),
@@ -352,7 +335,7 @@ fn fields_chained_reads_md() {
         .iter()
         .filter(|r| message(r, 0).contains("Write the post."))
         .collect();
-    assert_eq!(sent.len(), 4, "summary, chapters, youtube and post");
+    assert_eq!(sent.len(), 3, "chapters, youtube and post");
     assert_eq!(post.len(), 1);
     assert_eq!(message(post[0], 1).trim_end(), youtube_md.trim_end());
     assert_eq!(
@@ -445,9 +428,15 @@ fn templates_list_output_column() {
         "{header}"
     );
     let rows = [
-        ("youtube", ["built-in", "summary", "fields", "(default)"]),
-        ("linkedin", ["built-in", "summary", "fields", "(default)"]),
-        ("instagram", ["built-in", "summary", "fields", "(default)"]),
+        ("youtube", ["built-in", "transcript", "fields", "(default)"]),
+        (
+            "linkedin",
+            ["built-in", "transcript", "fields", "(default)"],
+        ),
+        (
+            "instagram",
+            ["built-in", "transcript", "fields", "(default)"],
+        ),
         (
             "summary",
             ["built-in", "transcript", "markdown", "(default)"],
