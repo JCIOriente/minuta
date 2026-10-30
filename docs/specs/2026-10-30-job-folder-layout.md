@@ -92,7 +92,7 @@ No CLI change. Internal changes:
 - A job folder from an earlier version has `job.json` at the root and no `.minuta/job.json`. `Job::open` sees no state and treats the folder as new: the sources conflict check does not apply, old files are left in place, new ones are written beside them. Stale old files are harmless and the user can delete them.
 - The step fingerprint cache compares recorded outputs by path. Paths in `job.json` are relative to the job folder, so they gain the `assets/` prefix. A `job.json` written by this version always has the new paths.
 - A user who deletes `assets/` loses `audio.wav` and the joined recording: the next run sees the missing outputs and rebuilds them, the same as deleting them today.
-- `--force` replaces the job: it removes `.minuta/` and `assets/` and the documents it owns, as it removes the flat files today.
+- `--force` marks every step stale and rewrites state (now `.minuta/job.json`); it deletes no files, as today. Outputs are overwritten in their new locations.
 - The `--name` clash rule (different sources, same name) reads `.minuta/job.json`.
 
 ## Implicit dependencies

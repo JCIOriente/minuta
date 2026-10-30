@@ -37,7 +37,7 @@ Can start immediately in parallel: T1, T4. After T1: T2, T3 in parallel.
   - [ ] `write_atomic` creates a missing parent directory.
   - [ ] `Job::open` removes leftover `*.tmp` in the root, `assets/` and `.minuta/`.
   - [ ] A folder with a flat-layout `job.json` and no `.minuta/job.json` is treated as a new job and the run succeeds; the old files are left untouched.
-  - [ ] `--force` removes `.minuta/` state together with the job's other artifacts.
+  - [ ] `--force` still redoes every step, and its state is written to `.minuta/job.json`.
   - [ ] `make ci` passes.
 - Tests first: `layout_paths_are_under_minuta_and_assets`, `write_atomic_creates_missing_parent`, `open_cleans_tmp_in_all_tiers`, `flat_layout_job_is_treated_as_new`, `call_cache_lives_in_minuta`
 - Notes: the constants `JOB_FILE`, `PROBE_FILE` are replaced by layout functions. Do not change step logic beyond path lookups.
