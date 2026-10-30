@@ -1,6 +1,6 @@
 # Pull curated templates from the repo — Spec
 
-- Status: draft
+- Status: approved
 - Date: 2026-10-30
 - Owner: Arnold Gandarillas Castillo
 - Related: ADR-0004 (template file format), `src/template/discover.rs`, `src/cli.rs` (`templates` commands), `src/models.rs` (download code), `src/config_init.rs` (safe write)
@@ -10,6 +10,7 @@
 - `minuta templates pull` downloads the ones the user picks into `./templates` (or `--to DIR`). Pulled files are ordinary project templates and win over `~/.minuta/templates` and the built-ins.
 - Before any network access or write, minuta shows the host, ref, files and destination and asks for confirmation (`--yes` skips it; a non-interactive run without `--yes` refuses).
 - Every file is checked against the catalog SHA-256 and parsed as a template before it is written.
+- A small manifest `templates/.pulled.toml` records the hash of each file at pull time, so `pull` tells *new*, *up to date*, *update available* and *modified* (edited by you) apart, and never overwrites your edits without `--force`.
 - Lookup order does not change: `./templates` already comes first. The 5 built-ins stay as the offline fallback.
 - The first curated set is written with Codex at high reasoning effort, one specialist persona per platform, then reviewed (see Curated content).
 
@@ -18,20 +19,21 @@
 $ cd ~/Downloads/vids
 $ minuta templates pull --list
 templates from github.com/JCIOriente/minuta @ main
-NAME          PLATFORM   DESCRIPTION
-instagram     instagram  Reel/post caption with a hook in the first 125 characters
-youtube       youtube    Title, description, tags and thumbnail text
-...
+NAME       PLATFORM   STATE             DESCRIPTION
+instagram  instagram  new               Reel/post caption with a hook in the first 125 characters
+youtube    youtube    update available  Title, description, tags and thumbnail text
+linkedin   linkedin   modified          Post with a hook and a closing question
+summary    -          up to date        ...
 
 $ minuta templates pull instagram youtube
 minuta will download from:
   https://raw.githubusercontent.com/JCIOriente/minuta/main/templates/
   instagram.md  (new)
-  youtube.md    (exists, will be skipped; use --force to overwrite)
+  youtube.md    (update available)
 into /Users/you/Downloads/vids/templates
 Continue? [y/N] y
 instagram.md  written
-youtube.md    skipped (exists)
+youtube.md    updated
 
 $ minuta templates list      # instagram now shows layer "project"
 ```
@@ -49,9 +51,18 @@ wins) already exists; what is missing is a way to fill it.
 - `templates pull --list` prints the catalog without writing anything.
 - `templates pull NAME...`, `--all` and `--filter TEXT` select templates; with a terminal and no selection a checklist opens.
 - Default destination is `./templates` (created if missing); `--to DIR` overrides it.
-- A confirmation prompt names the host, ref, each file with its state (new, exists), and the destination. No bytes are fetched before it is answered, except the catalog needed to build it.
+- A confirmation prompt names the host, ref, each file with its state (new, update available), and the destination. No bytes are fetched before it is answered, except the catalog needed to build it.
 - Without a terminal and without `--yes`, the command exits with a usage error and writes nothing.
-- An existing file is skipped unless `--force`.
+- Each template in the destination has one state, computed from three hashes (local file, manifest entry, catalog entry):
+
+  | Local file | vs manifest | vs catalog | State | `pull` does |
+  |---|---|---|---|---|
+  | missing | - | - | **new** | downloads |
+  | present | equal | equal | **up to date** | nothing |
+  | present | equal | differs | **update available** | downloads, no `--force` needed |
+  | present | differs, or no manifest entry | any | **modified** | skips and says so; with `--force` saves the old file as `NAME.md.bak`, then overwrites |
+
+  A file minuta did not write has no manifest entry, so it counts as *modified*. Minuta never overwrites a file it did not write unless `--force`.
 - A file whose SHA-256 differs from the catalog, or that fails `Template::parse`, is not written and the command exits non-zero naming the file. Other selected files are not written either (all or nothing).
 - Adding a template to the repo needs a new `templates/<name>.md` and one catalog entry. No Rust change.
 - A repo test fails if `templates/index.toml` and the files disagree (missing file, wrong hash, file not parsable, name not matching the file stem).
@@ -59,7 +70,7 @@ wins) already exists; what is missing is a way to fill it.
 
 ## Non-goals
 - Removing or replacing the 5 built-ins.
-- Updating or diffing already pulled templates (`--force` re-downloads). No `templates remove`; users delete the file.
+- Merging or diffing local edits with upstream changes. The user keeps their copy or takes the new one, and the `.bak` file lets them diff by hand. No `templates remove`; users delete the file.
 - Signature verification. The SHA-256 detects corruption and a mismatched catalog, not a compromised repo (see Behavior).
 - Mirrors, private repos, auth tokens, or catalogs other than this repo (a `--ref` override is the only knob).
 - Walking up parent folders for `./templates`, or a `.minuta/templates` project folder.
@@ -78,7 +89,8 @@ chooses its output language through minuta's existing `output_lang` handling, no
 ## Domain model
 - **Catalog**: `templates/index.toml` at a ref: `version = 1` and one `[[template]]` table per Entry. Minuta reads it fresh on every `pull`, so templates added to the repo show up without a new release or tag.
 - **Entry**: `name` (matches `valid_stem`), `description`, `platform`, `tags[]`, `input` (the template's `input:` chain, informational), `sha256` of the file bytes.
-- **Pulled template**: a file `<dest>/<name>.md`. After writing it is an ordinary project-layer template; minuta keeps no record that it was pulled.
+- **Pulled template**: a file `<dest>/<name>.md`. After writing it is an ordinary project-layer template.
+- **Manifest**: `<dest>/.pulled.toml`, `version = 1` and one `[[file]]` table per pulled template with `name` and `sha256` (hash of the bytes written). Written after the files, via temp file + rename, and only entries for files written in this run change. A missing, unreadable or invalid manifest is treated as empty with a warning, so everything present reads as *modified* and nothing is overwritten. The template loader reads only `*.md`, so it ignores the manifest.
 - Invariants: a written file's bytes hash to the catalog value and parse as a template; entry name equals file stem.
 
 ## Curated content
@@ -108,10 +120,11 @@ minuta templates pull [NAME...] [--all] [--filter TEXT] [--list]
 - Reused: `ureq` agent setup from `src/models.rs:206`, `valid_stem` and `Template::parse` from `src/template/mod.rs`, the `create_new`/`--force`/`Written` pattern from `src/config_init.rs:67`, `sanitize` from `src/cli.rs`.
 
 ## Behavior & edge cases
-- Order: fetch catalog -> select -> build the plan (new/exists per file) -> prompt -> fetch files -> verify all -> write all. Verification finishes before the first write.
+- Order: fetch catalog -> read manifest -> select -> build the plan (state per file) -> prompt -> fetch files -> verify all -> write all. Verification finishes before the first write.
 - Unknown NAME: usage error listing available names. `--filter` with no match: usage error, nothing fetched beyond the catalog.
 - Empty selection from the checklist: exit 0, "nothing selected".
-- Files that all exist and no `--force`: no prompt, "nothing to do", exit 0.
+- When every selected file is *up to date* or *modified* (without `--force`): no prompt, a line per file with its state, exit 0.
+- `--force` on an *up to date* file does nothing. `--force` on a *modified* file writes `NAME.md.bak` (replacing an older `.bak`) before overwriting; if the backup cannot be written, the file is not overwritten.
 - Write is temp file + rename in the destination, so a failure leaves no half file. If the destination exists as a symlink or is not a directory, error naming the path (`try_exists`, not `exists`, per `docs/conventions.md`).
 - Catalog or file parse failure from the remote (invalid TOML, `version` != 1, name not `valid_stem`, duplicate name) is a hard error that shows the sanitized reason. Remote strings are passed through `sanitize` before printing.
 - A pulled template whose `input:` names a template minuta cannot find is still written; `templates list` shows the existing invalid-state output. Pull prints a note listing the missing name.
@@ -120,11 +133,11 @@ minuta templates pull [NAME...] [--all] [--filter TEXT] [--list]
 - Network failure: error naming the URL (without query), nothing written.
 
 ## Data & migrations
-None. No config key. The `templates/` folder and `index.toml` are new repo content; `index.toml` has `version = 1`. Packaging (`cargo package`/release) must not need these files, since nothing embeds them.
+None. No config key. The only new on-disk state is `.pulled.toml` in the destination folder. The `templates/` folder and `index.toml` are new repo content; `index.toml` has `version = 1`. Packaging (`cargo package`/release) must not need these files, since nothing embeds them.
 
 ## Testing strategy
 - Unit: catalog parsing (valid, bad version, duplicate, bad name, oversized), selection (names, `--all`, `--filter` on name/platform/tag), plan states, hash check, parse check.
-- Integration against a local fake HTTP server (pattern: `tests/support/fake_ollama.rs`, `tests/config_init.rs`): `--list`, pull by name, `--all`, `--filter`, existing file skipped, `--force` overwrites, `--to`, hash mismatch rejects and writes nothing, unparsable file rejects all, non-TTY without `--yes` refuses, stdout contains only paths, stale half file never appears after a mid-download failure.
+- Integration against a local fake HTTP server (pattern: `tests/support/fake_ollama.rs`, `tests/config_init.rs`): `--list`, pull by name, `--all`, `--filter`, each of the four states (including no manifest and invalid manifest), update applied without `--force`, modified file skipped, `--force` writes `.bak` then overwrites, manifest updated only for written files, `--to`, hash mismatch rejects and writes nothing, unparsable file rejects all, non-TTY without `--yes` refuses, stdout contains only paths, stale half file never appears after a mid-download failure.
 - The source URL base is injectable (env var `MINUTA_TEMPLATES_URL`, undocumented, used by tests) so no test touches GitHub.
 - Repo consistency test: every `templates/index.toml` entry has a file whose hash matches, parses with `Template::parse`, and has `name == stem`; every `templates/*.md` has an entry.
 - Permission-denial: destination not writable gives an error naming the path and exit non-zero.
@@ -151,7 +164,7 @@ It catches truncated or mismatched downloads and lets the repo test guard the ca
 A half-installed set is hard to reason about. Verifying every file first costs nothing extra since all must be fetched anyway.
 
 ## Open questions
-None at approval time. For review: confirm default `--ref main` and the 256 KiB / 1 MiB size caps.
+None. Approved by the owner with default `--ref main` and the 256 KiB / 1 MiB size caps.
 
 ## Implementation status
 - [ ] ADR-0011
