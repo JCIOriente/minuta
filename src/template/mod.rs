@@ -3,6 +3,7 @@
 pub mod catalog;
 pub mod discover;
 pub mod graph;
+pub mod pull;
 
 use std::path::PathBuf;
 
