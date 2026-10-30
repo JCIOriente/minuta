@@ -19,7 +19,8 @@ code, specs and issues. When a term is ambiguous or keeps needing explanation, a
 | Home folder | `~/.minuta/`: where minuta keeps user files that persist across jobs: the config file (`config.toml`), the models (`models/`) and user templates (`templates/`). | The job folder, and the old `~/.config/minuta/` |
 | Template step | Running one template in a job: produces `<name>.md` (and `<name>.json` for a fields template), recorded in `job.json` under `templates`. | A pipeline step |
 | Fields template | A template with `output: fields`: the model returns a JSON object with the fields it declares, except filled fields. | A `markdown` template, whose output is free text |
-| Field | One named value from the shared set (`title`, `body`, `chapters`, `tags`, `hashtags`, `thumbnail_text`). Kind text, list or chapters. | A frontmatter key |
+| Field | One named value from the shared set (`title`, `body`, `chapters`, `tags`, `hashtags`, `thumbnail_text`, `notes`). Kind text, list or chapters. | A frontmatter key |
+| Notes | The `notes` field: short labeled lines for the person publishing, such as a pinned comment or alt text. Never part of the published text. | `body`, which is the published text; chunk notes, the map-call results |
 | Filled field | A field minuta fills from another artifact instead of asking the model. Only `chapters`, filled from `chapters.json`; declaring it makes the template depend on `chapters`. | A field the model writes |
 | Limit | A per-field bound in `limits`: `max_chars` (length of the field as rendered) or `max` (list items). | The context budget |
 | Violation | One way an answer fails validation: not JSON, missing key, wrong type, empty, over a limit, or (for `chapters`) a broken chapter rule. | A transient call failure, which is retried without telling the model |
