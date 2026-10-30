@@ -305,9 +305,10 @@ does not change.
 
 With nothing chosen, on a terminal, `pull` opens a numbered list to pick from.
 Before downloading it shows the source URL, each file with its state and the
-destination, and asks `Continue? [y/N]`. Without a terminal it refuses unless
-you pass `--yes`. The prompt and messages go to stderr; stdout carries only the
-paths written.
+destination, and asks `Continue? [y/N]`. Without a terminal, name the templates
+(or use `--all` or `--filter`) and pass `--yes`; otherwise it refuses before
+downloading anything. The prompt and messages go to stderr; stdout carries only
+the paths written.
 
 Each template in the destination folder is in one of four states:
 

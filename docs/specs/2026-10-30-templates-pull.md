@@ -132,7 +132,7 @@ minuta templates pull [NAME...] [--all] [--filter TEXT] [--list]
 - Trust: the SHA-256 comes from the same repo ref as the file, so it protects against truncation and mismatched files, not against a malicious commit. The confirmation prompt, the all-parse check, and the project-layer protections already in `discover.rs` (symlink and hard-link refusal) are the controls. A user who wants stability passes `--ref v0.3.0` or a commit.
 - Network failure: error naming the URL (without query), nothing written.
 - An empty catalog prints `the catalog has no templates` (for `--all` and the numbered list).
-- If minuta cannot look up which templates it already has (for example `./templates` is a regular file), that is a warning, and the missing-input note is skipped instead of blocking the pull.
+- If minuta cannot look up which templates it already has (for example `./templates` is a regular file while pulling with `--to` another folder), that is a warning, and the missing-input note is skipped instead of blocking the pull.
 - Local files that pull reads (a template in the destination, the manifest) are capped at 1 MiB.
 - Each request has an overall timeout of 120 s, besides the connect and read timeouts.
 
