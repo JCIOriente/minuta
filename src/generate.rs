@@ -484,7 +484,7 @@ impl TemplateRun<'_> {
 
     fn read_input(&self, ctx: &Ctx) -> Result<Vec<u8>> {
         let path = match &self.template.input {
-            Input::Transcript => ctx.dir.join(TRANSCRIPT_FILE),
+            Input::Transcript => layout::transcript_json(&ctx.dir),
             Input::Template(dep) => md_path(&ctx.dir, dep, self.is_implicit_input(dep)),
         };
         self.read_job_file(&path, &self.input_file())
@@ -561,7 +561,7 @@ fn exists(path: &Path) -> Result<bool> {
 }
 
 fn read_transcript(dir: &Path) -> Result<Transcript> {
-    let path = dir.join(TRANSCRIPT_FILE);
+    let path = layout::transcript_json(dir);
     let json = fs::read_to_string(&path).map_err(|e| io_error(&path, e))?;
     serde_json::from_str(&json).map_err(|e| Error::Parse(format!("{TRANSCRIPT_FILE}: {e}")))
 }
