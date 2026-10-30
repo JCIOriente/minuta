@@ -103,8 +103,7 @@ what the publisher will post, so these pieces have no place to go.
   per post, so a post can still exceed 280.
 - Labels added by minuta in `<name>.md`, a `preview` field, or a `min_version` in the catalog.
 - `threads`, Facebook and Reddit templates.
-- Clip suggestions in `instagram` and `tiktok`, which read the summary and have no reliable times.
-  `youtube-shorts` covers this.
+- Clip suggestions in `instagram` and `tiktok`. `youtube-shorts` covers this.
 - Channel boilerplate in YouTube descriptions. YouTube's default description holds it; `notes`
   reminds the user to add links.
 - An AI-use disclosure line in `blog-post`.
@@ -130,19 +129,21 @@ publishing" reminder for human-supplied items. This is the one allowed mention o
 
 | Template | Input | Output | Fields | Limits that change | `notes` holds |
 |---|---|---|---|---|---|
-| youtube | summary | fields, plain | title, body, chapters, hashtags, tags, thumbnail_text, notes | see nutshell | pinned comment, 2 alternative titles, 2 alternative thumbnails, reminder |
+| youtube | transcript | fields, plain | title, body, chapters, hashtags, tags, thumbnail_text, notes | see nutshell | pinned comment, 2 alternative titles, 2 alternative thumbnails, reminder |
 | youtube-shorts (new) | transcript | fields, plain | title, body, hashtags, notes | title 100, body 500, hashtags max 3, notes 500 | clip start and end from transcript stamps, on-screen hook |
-| instagram | summary | fields, plain | body, hashtags, thumbnail_text, notes | hashtags max 5, thumbnail_text 40, notes 500 | alt text, on-screen hook |
-| instagram-carousel (new) | summary | fields, plain | thumbnail_text, notes, body, hashtags | hashtags max 5, notes 2500 | one line per slide, 5-10 slides; cover in `thumbnail_text`, caption in `body` |
-| tiktok | summary | fields, plain | body, hashtags, thumbnail_text, notes | body 500, hashtags max 5, notes 300 | on-screen hook |
-| linkedin | summary | fields, plain | body, hashtags, notes | hashtags max 3 and 80 chars, notes 500 | first comment, reminder |
-| x-thread | summary | Markdown | n/a | target 240 per post | n/a |
-| newsletter | summary | fields, Markdown | title, body, notes | notes 300 | preview text, alternative subject |
-| blog-post | summary | fields, Markdown | title, body, tags, notes | tags max 5, notes 500 | meta description, slug, image alt text |
-| podcast-notes | summary | fields, plain | title, body, chapters, tags, notes | body 2400, tags max 8 and 200 chars, notes 300 | alternative title, reminder |
+| instagram | transcript | fields, plain | body, hashtags, thumbnail_text, notes | hashtags max 5, thumbnail_text 40, notes 500 | alt text, on-screen hook |
+| instagram-carousel (new) | transcript | fields, plain | thumbnail_text, notes, body, hashtags | hashtags max 5, notes 2500 | one line per slide, 5-10 slides; cover in `thumbnail_text`, caption in `body` |
+| tiktok | transcript | fields, plain | body, hashtags, thumbnail_text, notes | body 500, hashtags max 5, notes 300 | on-screen hook |
+| linkedin | transcript | fields, plain | body, hashtags, notes | hashtags max 3 and 80 chars, notes 500 | first comment, reminder |
+| x-thread | transcript | Markdown | n/a | target 240 per post | n/a |
+| newsletter | transcript | fields, Markdown | title, body, notes | notes 300 | preview text, alternative subject |
+| blog-post | transcript | fields, Markdown | title, body, tags, notes | tags max 5, notes 500 | meta description, slug, image alt text |
+| podcast-notes | transcript | fields, plain | title, body, chapters, tags, notes | body 2400, tags max 8 and 200 chars, notes 300 | alternative title, reminder |
 | meeting-minutes | transcript | Markdown | n/a | n/a | n/a |
 | action-items | transcript | Markdown | n/a | n/a | n/a |
 | lesson (new) | transcript | Markdown | n/a | n/a | n/a |
+
+No template task may declare `input: summary`: every template above reads the transcript (the job folder layout work, ADR-0013, removed `summary` as the input of the social built-ins).
 
 Other template rules:
 - `youtube`: body is a two-line hook, "what you'll learn" bullets, who it is for, and one call to

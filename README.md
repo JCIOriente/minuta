@@ -14,9 +14,12 @@ running the same command again only redoes what changed.
 $ minuta run standup.mp4 -t summary -t youtube
 /Users/you/talks/minuta-out/standup
 $ ls /Users/you/talks/minuta-out/standup
-audio.wav      chapters.json  job.json    llm-cache   summary.md       transcript.txt  youtube.md
-captions.srt   chapters.md    joined.mp4  probe.json  transcript.json  youtube.json
+assets  captions.srt  summary.md  transcript.txt  youtube.md
 ```
+
+Documents sit at the top. JSON results and audio are in `assets/`, and
+minuta's own bookkeeping is in a hidden `.minuta/` folder
+([details](#the-job-folder)).
 
 - **Local by default.** Transcription always runs on your machine. Documents
   stay local with a local Ollama, and leave the machine only if you choose
@@ -101,8 +104,9 @@ backend is reachable, but does not change the exit status.
    minuta transcribe meeting.mp4
    ```
 
-   This writes `transcript.txt`, `captions.srt` and `transcript.json` to
-   `./minuta-out/meeting/` and prints that folder's path.
+   This writes `transcript.txt` and `captions.srt` to
+   `./minuta-out/meeting/`, and `transcript.json` to its `assets/` folder. It
+   prints the job folder's path.
 
 3. **Generate documents.**
 
@@ -230,12 +234,16 @@ depend on run first.
 | Name | Input | Writes |
 | --- | --- | --- |
 | `summary` | transcript | `summary.md`: overview, key points, decisions, action items, open questions |
-| `chapters` | transcript | `chapters.json` and `chapters.md`: timestamped chapters that follow YouTube's rules |
-| `youtube` | `summary` | `youtube.json` and `youtube.md`: title, description, chapters, hashtags, tags and thumbnail text |
-| `linkedin` | `summary` | `linkedin.json` and `linkedin.md`: post body and hashtags |
-| `instagram` | `summary` | `instagram.json` and `instagram.md`: caption and hashtags |
+| `chapters` | transcript | `chapters.md` and `assets/chapters.json`: timestamped chapters that follow YouTube's rules |
+| `youtube` | transcript | `youtube.md` and `assets/youtube.json`: title, description, chapters, hashtags, tags and thumbnail text |
+| `linkedin` | transcript | `linkedin.md` and `assets/linkedin.json`: post body and hashtags |
+| `instagram` | transcript | `instagram.md` and `assets/instagram.json`: caption and hashtags |
 
-For example, `-t youtube` also runs `summary` and `chapters`.
+For example, `-t youtube` also runs `chapters`, because `youtube` fills its
+chapters field from it. A template that runs only because another one needs it
+writes its files under `.minuta/derived/`, so `chapters.*` shows up at the top
+and in `assets/` only when you ask for `-t chapters`. `summary` runs only on
+`-t summary`.
 
 ### Where templates come from
 
@@ -413,8 +421,8 @@ Any other `{{...}}` is an error that lists these.
 
 #### Structured output (`fields`)
 
-A `fields` template writes `<name>.json` for scripts and `<name>.md` for
-reading. Fields come from a fixed set:
+A `fields` template writes `assets/<name>.json` for scripts and `<name>.md`
+for reading. Fields come from a fixed set:
 
 - Text: `title`, `body`, `thumbnail_text`, `notes` (for the person publishing,
   not part of the published text)
@@ -430,7 +438,7 @@ times (default 2). If the field still breaks the limit, the template fails.
 ```markdown
 ---
 description: Short post for our team channel
-input: summary
+input: transcript
 output: fields
 fields: [title, body, hashtags]
 limits:
@@ -438,7 +446,7 @@ limits:
   body: { max_chars: 600 }
   hashtags: { max: 3 }
 ---
-Write a short post about "{{job_name}}" from the summary in the input.
+Write a short post about "{{job_name}}" from the transcript in the input.
 ```
 
 ### LLM backends
@@ -469,16 +477,38 @@ model's own limit.
 Each run works in a job folder, `<out>/<name>/`. By default that is
 `./minuta-out/<first file's name without its extension>/`.
 
+Three tiers: documents at the top, reusable machine files in `assets/`, and
+minuta's bookkeeping in a hidden `.minuta/` folder.
+
 | File | Contents |
 | --- | --- |
 | `transcript.txt` | Readable transcript with timestamps |
 | `captions.srt` | Subtitles |
-| `transcript.json` | Timestamped segments and the detected language |
-| `<template>.md` | Each generated document |
-| `<template>.json` | The structured result of a `fields` or `chapters` template |
-| `joined.<ext>` | The joined recording. With one source, a hard link to it (or a copy) |
-| `audio.wav` | 16 kHz mono audio given to whisper |
-| `probe.json`, `job.json`, `llm-cache/` | minuta's bookkeeping and cache |
+| `<template>.md` | Each template you asked for |
+| `assets/transcript.json` | Timestamped segments and the detected language |
+| `assets/<template>.json` | The structured result of a `fields` or `chapters` template |
+| `assets/audio.wav` | 16 kHz mono audio given to whisper |
+| `assets/joined.<ext>` | The joined recording. Only with several sources; with one, the original file is used as it is |
+| `.minuta/job.json`, `.minuta/probe.json` | What each step used and found; minuta reads them to skip finished work |
+| `.minuta/llm-cache/` | One file per LLM call |
+| `.minuta/derived/` | Output of templates that ran only because another needed them (for example `chapters` under `youtube`) |
+
+For example, after `minuta run standup.mp4 -t linkedin -t youtube -t instagram`:
+
+```console
+$ ls minuta-out/standup
+assets  captions.srt  instagram.md  linkedin.md  transcript.txt  youtube.md
+$ ls minuta-out/standup/assets
+audio.wav  instagram.json  linkedin.json  transcript.json  youtube.json
+$ ls -A minuta-out/standup/.minuta
+derived  job.json  llm-cache  probe.json
+$ ls minuta-out/standup/.minuta/derived
+chapters.json  chapters.md
+```
+
+Job folders made by an earlier version are not migrated: the next run in one
+starts fresh and redoes the work once. The old files stay where they are, and
+you can delete them.
 
 A job folder belongs to the recordings that created it. If you run different
 files with a name that is already taken, minuta stops instead of overwriting.

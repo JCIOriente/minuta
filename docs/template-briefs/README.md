@@ -17,11 +17,11 @@ One brief per template, named after the template: `instagram.md` -> `templates/i
 - **Good and bad**: two good/bad pairs, each on a different aspect (for example the opening and the closing), so the agent can tell the difference.
 
 ## What minuta lets a template do
-- `output: fields` returns JSON and renders `<name>.md`. The only fields are `title`, `body`, `tags`, `hashtags` and `thumbnail_text`. (`chapters` is reserved for the template named `chapters`.) `limits:` enforces `max_chars` and `max` per field, and minuta repairs answers that break them. Use it when the platform has hard limits.
+- `output: fields` returns JSON, writes it to `assets/<name>.json` and renders `<name>.md`. The fields are `title`, `body`, `tags`, `hashtags`, `thumbnail_text`, `chapters` and `notes`. `chapters` is filled by minuta from the `chapters` template, not written by the model, and `notes` holds lines for the person publishing, not published text. (The template named `chapters` is the only one with `output: chapters`.) `limits:` enforces `max_chars` and `max` per field, and minuta repairs answers that break them. Use it when the platform has hard limits.
 - Markdown output (the default) is free text written to `<name>.md`. Limits cannot be enforced there, so the brief must say what the model has to respect.
 - Minuta appends the field list, the limits and the output-language sentence itself. Do not write `{{output_lang}}` into a template.
 - Body variables: `{{job_name}}`, `{{duration}}`, `{{speech_lang}}`, `{{output_lang}}`, `{{output_lang_code}}`.
-- `input:` is `transcript` (default), `summary`, or another template's name.
+- `input:` is `transcript` (default) or another template's name. Do not recommend `summary` as an input: the social templates read the transcript, and `summary` runs only when someone asks for it.
 
 ## Using a brief with Codex
 ```console
