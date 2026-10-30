@@ -548,6 +548,11 @@ fn join_params_change_with_inputs() {
         Join::new(upgraded, Encoder::X264).params(&one)
     );
     assert_ne!(base.params(&one), base.params(&reordered));
+    let fewer = Ctx {
+        sources: vec!["/a.mp4".into()],
+        ..one.clone()
+    };
+    assert_ne!(base.params(&one), base.params(&fewer));
 }
 
 // ---- audio ----
@@ -578,6 +583,22 @@ fn audio_of_several_sources_comes_from_the_joined_file() {
     );
     assert!((probed.duration - 2.0).abs() < 0.3, "{}", probed.duration);
     assert!(!job.join("assets/audio.wav.tmp").exists());
+}
+
+#[test]
+fn audio_without_sources_errors() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tool = ToolInfo {
+        path: "ffmpeg".into(),
+        version: "ffmpeg version 1".into(),
+    };
+
+    let err = Audio::new(tool).run(&ctx(tmp.path(), &[])).unwrap_err();
+
+    assert!(
+        matches!(&err, Error::Job(m) if m == "no sources to extract audio from"),
+        "{err}"
+    );
 }
 
 #[test]

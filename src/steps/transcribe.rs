@@ -62,6 +62,7 @@ impl Transcribe {
         // whisper-cli appends `.json` to its output prefix.
         let prefix = raw.with_extension("");
         if let Some(parent) = raw.parent() {
+            crate::job::reject_symlinked_tier(parent)?;
             fs::create_dir_all(parent)?;
         }
         let _ = fs::remove_file(&raw);

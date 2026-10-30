@@ -212,6 +212,7 @@ impl Join {
             opts,
             on_line,
         );
+        // Best effort: the list is rewritten by the next join.
         let _ = fs::remove_file(&list);
         result
     }
@@ -324,7 +325,8 @@ impl Join {
         }
         write_atomic_in(&ctx.dir, &out, |tmp| match plan_join(&probes) {
             Some(Mode::StreamCopy) => self.stream_copy(ctx, &out, tmp, &opts, on_line),
-            _ => self.reencode(&probes, &ctx.sources, &out, tmp, &opts, on_line),
+            Some(Mode::Reencode) => self.reencode(&probes, &ctx.sources, &out, tmp, &opts, on_line),
+            None => Err(Error::Job("nothing to join".into())),
         })
     }
 }

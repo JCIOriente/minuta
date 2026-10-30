@@ -26,9 +26,10 @@ impl Step for Outputs {
     }
 
     fn run(&self, ctx: &Ctx) -> Result<()> {
-        let json = fs::read_to_string(layout::transcript_json(&ctx.dir))?;
+        let path = layout::transcript_json(&ctx.dir);
+        let json = fs::read_to_string(&path)?;
         let transcript: Transcript = serde_json::from_str(&json)
-            .map_err(|e| Error::Parse(format!("transcript.json: {e}")))?;
+            .map_err(|e| Error::Parse(format!("{}: {e}", path.display())))?;
         for (name, text) in [
             (TXT_FILE, to_txt(&transcript)),
             (SRT_FILE, to_srt(&transcript)),
