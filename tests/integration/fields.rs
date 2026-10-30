@@ -77,7 +77,10 @@ fn fields_run_then_cached() {
     let out = run_class(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     let job = env.job_dir("a");
-    assert_eq!(read_json(job.join("youtube.json")), valid_youtube_json());
+    assert_eq!(
+        read_json(minuta::job::layout::template_json(&job, "youtube")),
+        valid_youtube_json()
+    );
     assert_eq!(
         fs::read_to_string(job.join("youtube.md")).unwrap(),
         VALID_YOUTUBE_MD
@@ -86,7 +89,7 @@ fn fields_run_then_cached() {
     assert_eq!(state["templates"]["youtube"]["status"], "done");
     assert_eq!(
         state["templates"]["youtube"]["artifacts"],
-        serde_json::json!(["youtube.json", "youtube.md"])
+        serde_json::json!(["assets/youtube.json", "youtube.md"])
     );
     assert_eq!(fake.chat_count(), 2, "chapters and youtube");
 
@@ -139,7 +142,10 @@ fn fields_repair_request() {
     );
     assert!(message(youtube[1], 0).starts_with("You correct a JSON object."));
     let job = env.job_dir("a");
-    assert_eq!(read_json(job.join("youtube.json")), valid_youtube_json());
+    assert_eq!(
+        read_json(minuta::job::layout::template_json(&job, "youtube")),
+        valid_youtube_json()
+    );
     assert_eq!(
         fs::read_to_string(job.join("youtube.md")).unwrap(),
         VALID_YOUTUBE_MD
@@ -175,7 +181,10 @@ fn notes_over_limit_gets_a_repair_call() {
         fs::read_to_string(job.join("post.md")).unwrap(),
         "Text\n\nShort\n"
     );
-    assert_eq!(read_json(job.join("post.json"))["fields"]["notes"], "Short");
+    assert_eq!(
+        read_json(minuta::job::layout::template_json(&job, "post"))["fields"]["notes"],
+        "Short"
+    );
 }
 
 #[test]
@@ -203,7 +212,7 @@ fn notes_follow_filled_chapters_and_hashtags() {
         "A class.\n\n0:00 Introducción\n0:32 La propiedad\n1:47 Movimientos y copias\n3:25 Préstamos\n4:40 Ejercicios\n\n#rust\n\nPinned comment: Which part was hardest?\n"
     );
     assert_eq!(
-        read_json(job.join("post.json")),
+        read_json(minuta::job::layout::template_json(&job, "post")),
         serde_json::json!({
             "version": 1,
             "template": "post",
@@ -240,7 +249,7 @@ fn fields_repairs_exhausted() {
         "{err}"
     );
     let job = env.job_dir("a");
-    assert!(!job.join("youtube.json").exists());
+    assert!(!minuta::job::layout::template_json(&job, "youtube").exists());
     assert!(!job.join("youtube.md").exists());
     assert_eq!(
         fake.chat_count(),
@@ -283,7 +292,10 @@ fn fields_invalid_json_repaired() {
     );
     assert!(message(youtube[1], 1).contains("Sure! Here is your copy."));
     let job = env.job_dir("a");
-    assert_eq!(read_json(job.join("youtube.json")), valid_youtube_json());
+    assert_eq!(
+        read_json(minuta::job::layout::template_json(&job, "youtube")),
+        valid_youtube_json()
+    );
     assert_eq!(
         fs::read_to_string(job.join("youtube.md")).unwrap(),
         VALID_YOUTUBE_MD
@@ -339,7 +351,10 @@ fn fields_chunked_format_only_final() {
     assert_eq!(consolidations[0].body["format"], schema);
     assert_eq!(repairs[0].body["format"], schema);
     assert_eq!(
-        read_json(env.job_dir("a").join("headline.json"))["fields"]["title"],
+        read_json(minuta::job::layout::template_json(
+            &env.job_dir("a"),
+            "headline"
+        ))["fields"]["title"],
         "Short"
     );
 }
@@ -374,7 +389,7 @@ fn fields_on_claude() {
     assert!(after_flag.contains("\"tags\" (array of strings)"), "{args}");
     let job = env.job_dir("a");
     assert_eq!(
-        read_json(job.join("post.json"))["fields"],
+        read_json(minuta::job::layout::template_json(&job, "post"))["fields"],
         serde_json::json!({"title": "From claude", "tags": ["a", "b"]})
     );
     assert_eq!(
@@ -407,9 +422,15 @@ fn fields_chained_reads_md() {
     let out = run_class(&env, &["run", "a.mp4", "-t", "post"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     let job = env.job_dir("a");
-    let youtube_md = fs::read_to_string(job.join("youtube.md")).unwrap();
+    // youtube ran only because post reads it: its files are in `.minuta/derived/`.
+    let derived = minuta::job::layout::derived_dir(&job);
+    assert!(!job.join("youtube.md").exists());
+    let youtube_md = fs::read_to_string(derived.join("youtube.md")).unwrap();
     assert_eq!(youtube_md, VALID_YOUTUBE_MD);
-    assert_eq!(read_json(job.join("youtube.json")), valid_youtube_json());
+    assert_eq!(
+        read_json(derived.join("youtube.json")),
+        valid_youtube_json()
+    );
     let sent = chats(&fake);
     let post: Vec<_> = sent
         .iter()
@@ -472,7 +493,8 @@ fn fields_limit_edit_reruns() {
     cached.sort();
     assert_eq!(cached, ["other", "summary"], "{}", stderr(&out));
     assert_eq!(
-        read_json(env.job_dir("a").join("youtube.json"))["fields"]["title"],
+        read_json(minuta::job::layout::derived_dir(&env.job_dir("a")).join("youtube.json"))
+            ["fields"]["title"],
         "Title 90"
     );
 }
