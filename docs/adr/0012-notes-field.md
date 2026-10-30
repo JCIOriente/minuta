@@ -1,6 +1,6 @@
 # ADR-0012: `notes` joins the shared field set
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-30
 - Deciders: Arnold Gandarillas Castillo
 - Related: docs/specs/2026-10-30-templates-strategy.md, ADR-0006, ADR-0007
