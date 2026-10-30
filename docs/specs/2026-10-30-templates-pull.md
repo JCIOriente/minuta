@@ -90,7 +90,7 @@ chooses its output language through minuta's existing `output_lang` handling, no
 - **Catalog**: `templates/index.toml` at a ref: `version = 1` and one `[[template]]` table per Entry. Minuta reads it fresh on every `pull`, so templates added to the repo show up without a new release or tag.
 - **Entry**: `name` (matches `valid_stem`), `description`, `platform`, `tags[]`, `input` (the template's `input:` chain, informational), `sha256` of the file bytes.
 - **Pulled template**: a file `<dest>/<name>.md`. After writing it is an ordinary project-layer template.
-- **Manifest**: `<dest>/.pulled.toml`, `version = 1` and one `[[file]]` table per pulled template with `name` and `sha256` (hash of the bytes written). Written after the files, via temp file + rename, and only entries for files written in this run change. A missing, unreadable or invalid manifest is treated as empty with a warning, so everything present reads as *modified* and nothing is overwritten. The template loader reads only `*.md`, so it ignores the manifest.
+- **Manifest**: `<dest>/.pulled.toml`, `version = 1` and one `[[file]]` table per pulled template with `name` and `sha256` (hash of the bytes written). Written after the files, via temp file + rename, and only entries for files written in this run change. A missing manifest is empty. An invalid or non-UTF-8 manifest is treated as empty with a warning, so everything present reads as *modified* and nothing is overwritten. An unreadable manifest is an error naming the path, not an empty one (`docs/conventions.md`). The template loader reads only `*.md`, so it ignores the manifest.
 - Invariants: a written file's bytes hash to the catalog value and parse as a template; entry name equals file stem.
 
 ## Curated content
@@ -131,6 +131,10 @@ minuta templates pull [NAME...] [--all] [--filter TEXT] [--list]
 - A template using frontmatter an older binary does not know fails `Template::parse` (`deny_unknown_fields`). It is rejected at pull time with the parse error and a hint to upgrade minuta, instead of failing later during a run.
 - Trust: the SHA-256 comes from the same repo ref as the file, so it protects against truncation and mismatched files, not against a malicious commit. The confirmation prompt, the all-parse check, and the project-layer protections already in `discover.rs` (symlink and hard-link refusal) are the controls. A user who wants stability passes `--ref v0.3.0` or a commit.
 - Network failure: error naming the URL (without query), nothing written.
+- An empty catalog prints `the catalog has no templates` (for `--all` and the numbered list).
+- If minuta cannot look up which templates it already has (for example `./templates` is a regular file while pulling with `--to` another folder), that is a warning, and the missing-input note is skipped instead of blocking the pull.
+- Local files that pull reads (a template in the destination, the manifest) are capped at 1 MiB.
+- Each request has an overall timeout of 120 s, besides the connect and read timeouts.
 
 ## Data & migrations
 None. No config key. The only new on-disk state is `.pulled.toml` in the destination folder. The `templates/` folder and `index.toml` are new repo content; `index.toml` has `version = 1`. Packaging (`cargo package`/release) must not need these files, since nothing embeds them.
@@ -169,10 +173,10 @@ None. Approved by the owner with default `--ref main` and the 256 KiB / 1 MiB si
 ## Implementation status
 - [x] ADR-0011 (proposed, PR #159)
 - [x] Plan: `docs/plans/2026-10-30-templates-pull.md`
-- [x] #160 catalog, manifest and states (PR #167, in review)
-- [ ] #161 fetch, plan, verify, write
-- [ ] #162 CLI command
-- [ ] #163 repo catalog and consistency test
-- [ ] #164 persona briefs
+- [x] #160 catalog, manifest and states (PR #167)
+- [x] #161 fetch, plan, verify, write
+- [x] #162 CLI command
+- [x] #163 repo catalog and consistency test
+- [x] #164 persona briefs
 - [ ] #166 curated templates
 - [ ] #165 docs

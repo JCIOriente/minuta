@@ -140,6 +140,7 @@ cat "$(minuta run talk.mp4 -t linkedin -q)/linkedin.md"
 | `minuta models pull NAME` | Download a model and verify its checksum |
 | `minuta templates list` | Show every template with its layer, input, output and backend, then any invalid files |
 | `minuta templates show NAME` | Print the file that defines a template (its path goes to stderr) |
+| `minuta templates pull [NAME]...` | Download curated templates from the repository into `./templates`, after asking (see [Downloading templates](#downloading-templates)) |
 | `minuta config path` | Print the config file path |
 | `minuta config show` | Print every setting, its value and where it came from |
 | `minuta config init [--force]` | Write a commented template of every setting to the config file path; an existing file is left alone unless `--force` is given |
@@ -245,7 +246,8 @@ later place replaces the earlier one:
 2. Your user templates: `~/.minuta/templates/*.md`
 3. Project templates: `./templates/*.md` in the current directory
 
-To customize a built-in template, copy it and edit the copy:
+To customize a built-in template, copy it and edit the copy (to get more
+templates instead, see [Downloading templates](#downloading-templates)):
 
 ```sh
 mkdir -p ~/.minuta/templates
@@ -255,6 +257,99 @@ minuta templates show summary > ~/.minuta/templates/summary.md
 > **Security:** templates in `./templates` are read from whatever directory you
 > run minuta in. Review the templates of a repository you cloned before running
 > minuta in it, the same as you would review its scripts.
+
+### Downloading templates
+
+Curated templates are plain files in the repository's
+[`templates`](https://github.com/JCIOriente/minuta/tree/main/templates) folder,
+listed in `templates/index.toml` (the catalog). They are not built in, so
+anyone can add one and it needs no release. `minuta templates pull` downloads
+the ones you choose into `./templates`:
+
+```console
+$ minuta templates pull --list
+templates from https://raw.githubusercontent.com/JCIOriente/minuta/main/templates/
+NAME       PLATFORM   STATE             DESCRIPTION
+instagram  instagram  new               Caption with a hook in the first 125 characters
+youtube    youtube    update available  Title, description, tags and thumbnail text
+linkedin   linkedin   modified          Post with a hook and a closing question
+
+$ minuta templates pull instagram youtube
+minuta will download from:
+  https://raw.githubusercontent.com/JCIOriente/minuta/main/templates/
+  instagram.md  (new)
+  youtube.md    (update available)
+into /Users/you/Downloads/vids/templates
+Continue? [y/N] y
+instagram.md  written
+youtube.md    updated
+```
+
+The names above are examples; `--list` shows what the catalog has now. It is
+fetched fresh each time, so a new template shows up without a new minuta
+release. A pulled file is an ordinary project template: `minuta templates list`
+shows it with the layer `project`, and it replaces a user or built-in template
+of the same name. The 5 built-in templates stay in the binary, so offline use
+does not change.
+
+| Option | What it does |
+| --- | --- |
+| `NAME...` | Download these templates |
+| `--all` | Download every template in the catalog |
+| `--filter TEXT` | Download the templates whose name, platform or tag contains `TEXT` |
+| `--list` | Show the catalog with the state of each template and download nothing |
+| `--to DIR` | Put the files in `DIR` instead of `./templates`. `--to ~/.minuta/templates` makes them available in every folder |
+| `--force` | Replace templates you edited. The old file is saved as `NAME.md.bak` first |
+| `--yes` | Do not ask for confirmation |
+| `--ref REF` | Branch, tag or commit to download from (default `main`) |
+
+With nothing chosen, on a terminal, `pull` opens a numbered list to pick from.
+Before downloading it shows the source URL, each file with its state and the
+destination, and asks `Continue? [y/N]`. Without a terminal, name the templates
+(or use `--all` or `--filter`) and pass `--yes`; otherwise it refuses before
+downloading anything. The prompt and messages go to stderr; stdout carries only
+the paths written.
+
+Each template in the destination folder is in one of four states:
+
+| State | Meaning | `pull` does |
+| --- | --- | --- |
+| new | The file is not there | Downloads it |
+| up to date | The file is the same as the repository's | Nothing |
+| update available | The file is as minuta wrote it and the repository has a newer version | Updates it |
+| modified | You edited the file, or minuta did not write it | Skips it. With `--force`, saves it as `NAME.md.bak`, then replaces it |
+
+minuta remembers what it wrote in `.pulled.toml` in the destination folder: the
+hash of each pulled file. That is how it tells your edits from a newer upstream
+version. If you delete `.pulled.toml`, or it is invalid, every file reads as
+modified and nothing is overwritten. Nothing else needs cleaning up: delete any
+template file you do not want.
+
+Before writing anything, minuta checks that every file matches the SHA-256 in
+the catalog and is a valid template, and writes none of them if one is not.
+Downloads use HTTPS only, and a symlinked destination, `.pulled.toml` or
+template is refused. The hash comes from the same repository version as the
+file, so it catches corrupted downloads, not a malicious change to the
+repository. To get fixed content, pin a tag or commit with
+`--ref v0.3.0`. If a pulled template reads another template that you do not
+have, minuta prints a `note:` naming it.
+
+### Contributing a template
+
+A template is added to the repository, not to minuta's code:
+
+1. Write `templates/NAME.md` in the [format below](#writing-a-template). The
+   briefs in [`docs/template-briefs`](https://github.com/JCIOriente/minuta/tree/main/docs/template-briefs)
+   show how to describe what a good template for a platform looks like.
+2. Add an entry to `templates/index.toml` with its `name`, `description`
+   and `sha256`, and optionally `platform`, `tags` and `input`.
+3. Get the `sha256` with `shasum -a 256 templates/NAME.md`. The consistency
+   test `tests/templates_catalog.rs` prints this command when a hash is wrong.
+4. Run `make ci`. The test fails if an entry has no file, a hash differs, a
+   file is not a valid template, a name differs from its file name, or a
+   `templates/*.md` file has no entry.
+
+Change the hash again whenever you edit the file.
 
 ### Writing a template
 
