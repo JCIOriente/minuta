@@ -6,5 +6,6 @@
 mod chapters;
 mod common;
 mod fields;
+mod layout;
 mod pipeline;
 mod templates;
