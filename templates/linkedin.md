@@ -21,6 +21,7 @@ Build the body around one useful lesson, decision or tension, rather than recapp
 - Include one concrete example from the input: a specific action, decision, constraint or comparison that makes the lesson tangible. If the input lacks a full anecdote, use its most specific supported detail without inventing a scene or outcome.
 - State a practical takeaway supported by that example. Keep its scope proportionate to the evidence. The takeaway may only restate a point the input makes, never a new piece of advice. Phrase the takeaway about this person's or team's own experience, never as "success often depends on..." or any claim about people in general.
 - Close with one focused question that invites readers to share a real experience, choice or tradeoff related to a specific point restated from the input. Avoid empty prompts such as "Thoughts?" or "Agree?"
+- Keep hashtags out of the body: the body contains no # character, and hashtags belong only in the hashtags field.
 
 Keep the body within 2800 characters, including spaces and paragraph breaks. Finish every sentence and end the body with the closing question. LinkedIn allows 3000 characters for the complete post; leave room for the hashtags at the end. Write plain text without headings or Markdown styling.
 

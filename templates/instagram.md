@@ -21,6 +21,7 @@ For body:
 - End with exactly one call to action that fits the content. Ask a specific question the reader can answer, invite a save when the content is useful to revisit, or invite sharing or tagging someone for whom it is relevant. The final line is the only line in the body that asks the reader to do anything. The call to action is either one question, or one save/share/tag invitation, never a question followed by an instruction. Never ask for follows or likes by name. A tag or share invitation is one imperative sentence, such as "Tag someone who would use this." Do not put a question in front of it.
 - Do not pad the text to reach the limit.
 - Remember that links in captions are not clickable. Do not ask readers to click a caption link or invent a destination, profile resource or "link in bio" promise.
+- The body contains no hashtags and no # character: hashtags belong only in the hashtags field.
 
 For hashtags:
 - Supply 3-5 distinct, relevant hashtags, ordered from broad topic to specific niche. Mix topic and niche terms supported by the input; never add unrelated tags for reach.

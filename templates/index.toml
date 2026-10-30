@@ -20,7 +20,7 @@ description = "Instagram caption with a hook and focused hashtags"
 platform = "instagram"
 tags = ["social", "short-form", "hashtags"]
 input = "summary -> transcript"
-sha256 = "32e99a5507cd05a15dd18d0c75637a02f612f61cc5c8154a1216e4d35010caa8"
+sha256 = "6ce3445f95f5af71c826217034806ba5a05f99eb34b69118817a4bac6b6152d8"
 
 [[template]]
 name = "linkedin"
@@ -28,7 +28,7 @@ description = "Specific, useful LinkedIn post from the recording"
 platform = "linkedin"
 tags = ["social", "professional"]
 input = "summary -> transcript"
-sha256 = "5d2aef4b55b02c5b16d03d62939bca5fbc7761f3f90131c15daa1927dc39a083"
+sha256 = "082283f68c9d10b73567098c2cbec50b4bf2b6d4b7de86f38dfea3d4a0080cba"
 
 [[template]]
 name = "meeting-minutes"
@@ -59,7 +59,7 @@ description = "TikTok caption with a conversation hook and focused hashtags"
 platform = "tiktok"
 tags = ["social", "short-form", "hashtags"]
 input = "summary -> transcript"
-sha256 = "940b794f770a6e217e1c2829207811b8e55e5d49adb22beee6265d5f272179db"
+sha256 = "9e3fddee4f9cb23aae20c5fcdc7e1d907b2a5f12482f99d055f75c629f26c85a"
 
 [[template]]
 name = "x-thread"
