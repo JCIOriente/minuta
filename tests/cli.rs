@@ -246,18 +246,20 @@ fn stdout_is_only_job_path() {
     for artifact in [
         ".minuta/job.json",
         ".minuta/probe.json",
-        "joined.mp4",
-        "audio.wav",
-        "transcript.json",
+        "assets/audio.wav",
+        "assets/transcript.json",
         "transcript.txt",
         "captions.srt",
     ] {
         assert!(job.join(artifact).is_file(), "missing {artifact}");
     }
+    assert!(!job.join("assets/joined.mp4").exists());
+    assert!(!job.join("joined.mp4").exists());
+    assert!(!job.join(".minuta/whisper-raw.json").exists());
     assert_eq!(
         env.tools_called(),
         ["ffprobe", "ffmpeg", "whisper-cli"],
-        "probe, audio and transcribe run their tool; a single source is linked"
+        "probe, audio and transcribe run their tool; a single source needs no join"
     );
     // Progress, with a step counter and timing, goes to stderr.
     let err = stderr(&out);
@@ -307,14 +309,33 @@ fn second_run_all_cached() {
     );
 }
 
+#[test]
+fn second_run_skips_all_steps() {
+    let env = Env::new();
+    fs::write(env.path("clase-5.mp4"), "more media").unwrap();
+    let args = ["run", "clase-4.mp4", "clase-5.mp4", "-n", "both"];
+    env.minuta(&args).assert().success();
+    let job = env.job_dir("both");
+    assert!(job.join("assets/joined.mp4").is_file());
+    assert!(!job.join("joined.mp4").exists());
+    assert!(!job.join("concat.txt").exists());
+    let calls = env.calls();
+
+    let out = env.minuta(&args);
+    out.clone().assert().success();
+
+    assert_eq!(env.calls(), calls, "a cached run executes no step");
+    assert_eq!(cached_lines(&stderr(&out)), 5, "{}", stderr(&out));
+}
+
 /// The whisper invocation `run` makes for job `name`, with `vad` appended when given.
 fn whisper_call(env: &Env, name: &str, vad: Option<&Path>) -> String {
     let job = env.job_dir(name);
     let mut call = format!(
         "whisper-cli -m {} -f {} -l auto -oj -of {} -pp",
         env.path("ggml-test.bin").display(),
-        job.join("audio.wav").display(),
-        job.join("whisper-raw").display()
+        job.join("assets/audio.wav").display(),
+        job.join(".minuta/whisper-raw").display()
     );
     if let Some(vad) = vad {
         call.push_str(&format!(" --vad -vm {}", vad.display()));
@@ -605,7 +626,7 @@ fn tool_failure_exits_1_and_marks_step_stale() {
     let job = env.job_dir("clase-4");
     assert_eq!(step_status(&job, "audio").as_deref(), Some("done"));
     assert_eq!(step_status(&job, "transcribe").as_deref(), Some("stale"));
-    assert!(!job.join("transcript.json").exists());
+    assert!(!job.join("assets/transcript.json").exists());
 }
 
 /// Shell lines that record the tool's pid in `pid_file`, then hang.
@@ -665,11 +686,11 @@ fn interrupt_kills_child_cleans_up_and_exits_130() {
     env.ffmpeg(&hang(&pid_file));
     let (child, pid) = start_hanging_run(&env, &pid_file);
     let job = env.job_dir("clase-4");
-    assert!(job.join("audio.wav.tmp").exists());
+    assert!(job.join("assets/audio.wav.tmp").exists());
 
     interrupt(&env, child, &pid);
     assert_eq!(tmp_files(&job), Vec::<String>::new());
-    assert!(!job.join("audio.wav").exists());
+    assert!(!job.join("assets/audio.wav").exists());
     assert_eq!(step_status(&job, "join").as_deref(), Some("done"));
     for step in ["audio", "transcribe", "outputs"] {
         assert_eq!(step_status(&job, step).as_deref(), Some("stale"), "{step}");
@@ -686,7 +707,7 @@ fn interrupt_during_transcribe_exits_130_with_outputs_stale() {
     interrupt(&env, child, &pid);
     let job = env.job_dir("clase-4");
     assert_eq!(tmp_files(&job), Vec::<String>::new());
-    assert!(!job.join("transcript.json").exists());
+    assert!(!job.join("assets/transcript.json").exists());
     assert_eq!(step_status(&job, "audio").as_deref(), Some("done"));
     for step in ["transcribe", "outputs"] {
         assert_eq!(step_status(&job, step).as_deref(), Some("stale"), "{step}");
