@@ -9,6 +9,7 @@ use std::sync::Arc;
 use clap::{Args, Parser, Subcommand};
 
 use crate::config::{self, Config, Overrides, Source};
+use crate::config_init::{self, Written};
 use crate::error::{Error, Result};
 use crate::models;
 use crate::progress::{human_size, Mode, Progress, PullReport};
@@ -86,6 +87,13 @@ pub enum ConfigCommand {
     Path,
     /// Print every setting with its value and where it came from
     Show,
+    /// Write a commented template of every setting to the config file path and print the
+    /// path; an existing file is left alone
+    Init {
+        /// Replace an existing config file
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -160,6 +168,7 @@ pub fn execute(cli: Cli, interrupt: &Arc<AtomicBool>) -> Result<()> {
         Command::Models(ModelsCommand::Pull { name, quiet }) => models_pull(&name, quiet),
         Command::Config(ConfigCommand::Path) => config_path(),
         Command::Config(ConfigCommand::Show) => config_show(),
+        Command::Config(ConfigCommand::Init { force }) => config_init(force),
         Command::Templates(TemplatesCommand::List) => templates_list(),
         Command::Templates(TemplatesCommand::Show { name }) => templates_show(&name),
     }
@@ -306,6 +315,22 @@ fn config_show() -> Result<()> {
             Some(s) => println!("{key} = {} ({})", s.value, source_name(s.source)),
             None => println!("{key} = (unset)"),
         }
+    }
+    Ok(())
+}
+
+/// Writes the template without reading an existing file, so a malformed one does not block it.
+fn config_init(force: bool) -> Result<()> {
+    let env = |key: &str| std::env::var(key).ok();
+    let path = config::resolve_path(&env, config::default_path().as_deref())
+        .ok_or_else(|| Error::Config("cannot determine the config file path".into()))?;
+    match config_init::write(&path, force)? {
+        Written::Created => println!("created {}", path.display()),
+        Written::Overwrote => println!("overwrote {}", path.display()),
+        Written::Exists => println!(
+            "{} already exists; nothing changed (use --force to overwrite)",
+            path.display()
+        ),
     }
     Ok(())
 }

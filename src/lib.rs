@@ -1,6 +1,7 @@
 pub mod chapters;
 pub mod cli;
 pub mod config;
+pub mod config_init;
 pub mod error;
 pub mod fields;
 pub mod generate;
