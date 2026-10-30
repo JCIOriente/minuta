@@ -228,7 +228,7 @@ fn e2e_chapters_and_youtube_limits() {
     assert!(!text("title").is_empty());
     assert!(text("title").chars().count() <= 100, "title: {fields}");
     assert!(!text("body").is_empty());
-    assert!(text("body").chars().count() <= 3450, "body: {fields}");
+    assert!(text("body").chars().count() <= 3200, "body: {fields}");
     assert!(
         text("thumbnail_text").chars().count() <= 40,
         "thumbnail: {fields}"

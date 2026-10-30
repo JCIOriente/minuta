@@ -253,6 +253,7 @@ pub fn valid_youtube() -> String {
     serde_json::json!({
         "title": "Rust ownership",
         "body": "A class about ownership.",
+        "hashtags": ["rust", "ownership"],
         "tags": ["rust", "ownership"],
         "thumbnail_text": "Ownership",
     })
@@ -260,7 +261,7 @@ pub fn valid_youtube() -> String {
 }
 
 /// The `youtube.md` of a run that answered `valid_youtube` and `valid_chapters`.
-pub const VALID_YOUTUBE_MD: &str = "Rust ownership\n\nA class about ownership.\n\n0:00 Introducción\n0:32 La propiedad\n1:47 Movimientos y copias\n3:25 Préstamos\n4:40 Ejercicios\n\nrust, ownership\n\nOwnership\n";
+pub const VALID_YOUTUBE_MD: &str = "Rust ownership\n\nA class about ownership.\n\n0:00 Introducción\n0:32 La propiedad\n1:47 Movimientos y copias\n3:25 Préstamos\n4:40 Ejercicios\n\n#rust #ownership\n\nrust, ownership\n\nOwnership\n";
 
 pub fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
