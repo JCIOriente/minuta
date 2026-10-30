@@ -167,6 +167,12 @@ A half-installed set is hard to reason about. Verifying every file first costs n
 None. Approved by the owner with default `--ref main` and the 256 KiB / 1 MiB size caps.
 
 ## Implementation status
-- [ ] ADR-0011
-- [ ] Plan: `docs/plans/2026-10-30-templates-pull.md` (not yet written)
-- [ ] Issues (not yet created)
+- [x] ADR-0011 (proposed, PR #159)
+- [x] Plan: `docs/plans/2026-10-30-templates-pull.md`
+- [ ] #160 catalog, manifest and states
+- [ ] #161 fetch, plan, verify, write
+- [ ] #162 CLI command
+- [ ] #163 repo catalog and consistency test
+- [ ] #164 persona briefs
+- [ ] #166 curated templates
+- [ ] #165 docs

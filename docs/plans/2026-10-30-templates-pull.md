@@ -2,7 +2,7 @@
 
 - Spec: docs/specs/2026-10-30-templates-pull.md (ADR-0011)
 - Date: 2026-10-30
-- Status: approved
+- Status: in backlog
 
 ## Overview
 Cut along new files so tasks do not collide. A pure core first (catalog, manifest, states), then
@@ -33,7 +33,7 @@ Can start immediately in parallel: T1, T5.
 
 ## Tasks
 
-### T1: Catalog, manifest and states  (#issue once created)
+### T1: Catalog, manifest and states  (#160)
 - Priority: 0
 - Depends on: none
 - Owns: `src/template/catalog.rs`, `tests/pull_catalog.rs`
@@ -47,7 +47,7 @@ Can start immediately in parallel: T1, T5.
 - Tests first: `catalog_parses_valid`, `catalog_rejects_bad_version`, `catalog_rejects_duplicate_name`, `catalog_rejects_bad_name`, `catalog_rejects_bad_sha`, `catalog_rejects_unknown_key`, `catalog_empty_is_valid`, `manifest_round_trip`, `manifest_invalid_is_empty_with_warning`, `state_new`, `state_up_to_date`, `state_update_available`, `state_modified_when_local_differs`, `state_modified_when_no_manifest_entry`, `select_by_names`, `select_unknown_name_lists_available`, `select_filter_matches_name_platform_tag`
 - Notes: pure functions, no I/O, no network. Follow the parsing style of `src/config.rs` (`deny_unknown_fields`) and `valid_stem` in `src/template/mod.rs`.
 
-### T2: Fetch, plan, verify, write  (#issue once created)
+### T2: Fetch, plan, verify, write  (#161)
 - Priority: 0
 - Depends on: T1
 - Owns: `src/template/pull.rs`, `tests/pull_core.rs`, `tests/support/fake_http.rs`
@@ -62,7 +62,7 @@ Can start immediately in parallel: T1, T5.
 - Tests first: `pull_new_file_written_and_in_manifest`, `pull_update_available_applied_without_force`, `pull_modified_skipped_without_force`, `pull_force_writes_bak_then_overwrites`, `pull_force_backup_failure_keeps_file`, `pull_hash_mismatch_writes_nothing`, `pull_unparsable_file_writes_nothing`, `pull_all_or_nothing_across_files`, `pull_oversized_body_rejected`, `pull_http_error_names_url`, `pull_dest_symlink_rejected`, `pull_manifest_only_updated_for_written`, `pull_invalid_manifest_treated_as_modified`
 - Notes: reuse the `ureq` agent setup from `src/models.rs:206`, the temp+rename from `src/generate.rs`, the `Written` idea from `src/config_init.rs:67`. The fake server follows `tests/support/fake_ollama.rs`: `TcpListener`, `Connection: close`, one thread per connection, a map of path -> reply.
 
-### T3: `templates pull` command  (#issue once created)
+### T3: `templates pull` command  (#162)
 - Priority: 0
 - Depends on: T2
 - Owns: `tests/templates_pull.rs`
@@ -79,7 +79,7 @@ Can start immediately in parallel: T1, T5.
 - Tests first: `pull_list_prints_states_and_writes_nothing`, `pull_by_name_with_yes`, `pull_all`, `pull_filter`, `pull_filter_no_match_is_usage_error`, `pull_without_tty_and_yes_refuses`, `pull_to_dir`, `pull_prompt_lists_host_ref_files_dest`, `pull_prompt_no_cancels`, `pull_nothing_to_do_no_prompt`, `pull_stdout_only_paths`, `pull_then_templates_list_shows_project_layer`, `pull_conflicting_flags_rejected`, `pull_ref_flag_changes_url`
 - Notes: a pseudo-terminal is not needed; test the checklist parsing as a unit function and the TTY gate through an injectable `is_terminal` bool, as `src/progress.rs:30` does. Use `MINUTA_TEMPLATES_URL` (undocumented) for the base in tests.
 
-### T4: Repo catalog and consistency test  (#issue once created)
+### T4: Repo catalog and consistency test  (#163)
 - Priority: 1
 - Depends on: T1
 - Owns: `templates/index.toml`, `tests/templates_catalog.rs`
@@ -90,7 +90,7 @@ Can start immediately in parallel: T1, T5.
 - Tests first: `repo_catalog_parses`, `catalog_check_flags_missing_file`, `catalog_check_flags_hash_mismatch_with_hint`, `catalog_check_flags_unparsable_template`, `catalog_check_flags_name_stem_mismatch`, `catalog_check_flags_file_without_entry`
 - Notes: expose the check as a function over a directory so the fixture cases do not touch the real folder.
 
-### T5: Persona briefs  (#issue once created)
+### T5: Persona briefs  (#164)
 - Priority: 1
 - Depends on: none
 - Owns: `docs/template-briefs/**`
@@ -101,7 +101,7 @@ Can start immediately in parallel: T1, T5.
 - Tests first: none (documentation); `make ci` must stay green
 - Notes: limits must match the real platform rules and the existing built-in `limits:` in `src/template/builtin/`.
 
-### T6: Curated templates  (#issue once created)
+### T6: Curated templates  (#166)
 - Priority: 2
 - Depends on: T3, T4, T5
 - Owns: `templates/*.md`, `templates/index.toml` (entries)
@@ -114,7 +114,7 @@ Can start immediately in parallel: T1, T5.
 - Tests first: the T4 consistency test is the check; add the sample-run notes to the PR
 - Notes: one PR for the batch. Entries are append-only in `index.toml`, so drafts done in parallel by subagents merge cleanly.
 
-### T7: Docs  (#issue once created)
+### T7: Docs  (#165)
 - Priority: 2
 - Depends on: T3
 - Owns: `README.md` (templates section), `CONTEXT.md`
