@@ -377,7 +377,7 @@ fn templates_cycle_exits_2_naming_it() {
 fn templates_list_shows_built_in_user_and_project_layers() {
     let env = Env::new();
     env.template(
-        "home/.config/minuta/templates",
+        "home/.minuta/templates",
         "acta",
         "---\ndescription: Formal minutes\n---\nMinutes.",
     );
@@ -400,7 +400,7 @@ fn templates_list_shows_built_in_user_and_project_layers() {
 #[test]
 fn templates_show_prints_the_file_of_each_layer() {
     let env = Env::new();
-    env.template("home/.config/minuta/templates", "acta", "From the user.\n");
+    env.template("home/.minuta/templates", "acta", "From the user.\n");
     env.template("templates", "notes", "From the project.\n");
     let show = |name: &str| {
         let out = env.minuta(&["templates", "show", name]);

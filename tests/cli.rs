@@ -1384,7 +1384,7 @@ fn interrupt_during_template_exits_130() {
 fn templates_list_shows_layers() {
     let env = Env::new();
     env.template(
-        "home/.config/minuta/templates",
+        "home/.minuta/templates",
         "acta",
         "---\ndescription: Formal minutes\nllm: claude\n---\nMinutes.",
     );
