@@ -6,9 +6,9 @@
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-use super::catalog::{select, Entry, Selection, State};
+use super::catalog::{select, Entry, Selection};
 use super::pull::{
-    apply, fetch_catalog, fetch_file, plan, read_manifest, Done, Item, Origin, Outcome,
+    apply, fetch_catalog, fetch_file, outcome_for, plan, read_manifest, Done, Item, Origin, Outcome,
 };
 use crate::cli::sanitize;
 use crate::error::{Error, Result};
@@ -33,8 +33,9 @@ pub struct Options<'a> {
     /// Skip the confirmation.
     pub yes: bool,
     /// Names minuta can already use (built-in, user and project templates), to notice a
-    /// template whose `input:` is missing.
-    pub known: &'a [String],
+    /// template whose `input:` is missing. `None` when that could not be found out: no note
+    /// is made then.
+    pub known: Option<&'a [String]>,
 }
 
 pub struct Terminal<'a> {
@@ -143,7 +144,7 @@ pub fn run(origin: &Origin, options: &Options<'_>, term: &mut Terminal<'_>) -> R
         writeln!(
             term.stderr,
             "{:<width$}  {}",
-            format!("{}.md", item.name),
+            md(&item.name),
             result_text(item.outcome, &item.name)
         )?;
         if written(item.outcome) {
@@ -157,17 +158,18 @@ pub fn run(origin: &Origin, options: &Options<'_>, term: &mut Terminal<'_>) -> R
     Ok(())
 }
 
+/// The file of template `name`.
+fn md(name: &str) -> String {
+    format!("{name}.md")
+}
+
 fn file_name(item: &Item<'_>) -> String {
-    format!("{}.md", item.entry.name)
+    md(&item.entry.name)
 }
 
 /// Whether `apply` will download this item.
 fn will_write(item: &Item<'_>, force: bool) -> bool {
-    match item.state {
-        State::New | State::UpdateAvailable => true,
-        State::Modified => force,
-        State::UpToDate => false,
-    }
+    written(outcome_for(item.state, force))
 }
 
 fn written(outcome: Outcome) -> bool {
@@ -177,16 +179,17 @@ fn written(outcome: Outcome) -> bool {
     }
 }
 
+/// What the prompt says will happen to a file: derived from the outcome `apply` will have.
 fn prompt_note(item: &Item<'_>, force: bool) -> String {
-    match (item.state, force) {
-        (State::New, _) => "new".to_string(),
-        (State::UpdateAvailable, _) => "update available".to_string(),
-        (State::Modified, true) => format!(
+    match outcome_for(item.state, force) {
+        Outcome::Created => "new".to_string(),
+        Outcome::Updated => "update available".to_string(),
+        Outcome::Overwrote => format!(
             "modified: replaced, old file saved as {}.bak",
             file_name(item)
         ),
-        (State::Modified, false) => "modified: skipped, use --force to overwrite".to_string(),
-        (State::UpToDate, _) => "up to date: skipped".to_string(),
+        Outcome::KeptModified => "modified: skipped, use --force to overwrite".to_string(),
+        Outcome::KeptUpToDate => "up to date: skipped".to_string(),
     }
 }
 
@@ -194,7 +197,7 @@ fn result_text(outcome: Outcome, name: &str) -> String {
     match outcome {
         Outcome::Created => "written".to_string(),
         Outcome::Updated => "updated".to_string(),
-        Outcome::Overwrote => format!("overwritten (backup: {name}.md.bak)"),
+        Outcome::Overwrote => format!("overwritten (backup: {}.bak)", md(name)),
         Outcome::KeptUpToDate => "up to date".to_string(),
         Outcome::KeptModified => "skipped (modified; use --force to overwrite)".to_string(),
     }
@@ -268,9 +271,10 @@ fn numbered(items: &[Item<'_>]) -> String {
 fn missing_inputs(
     chosen: &[&Entry],
     done: &[Done],
-    known: &[String],
+    known: Option<&[String]>,
     term: &mut Terminal<'_>,
 ) -> Result<()> {
+    let Some(known) = known else { return Ok(()) };
     for item in done.iter().filter(|d| written(d.outcome)) {
         let Some(entry) = chosen.iter().find(|e| e.name == item.name) else {
             continue;

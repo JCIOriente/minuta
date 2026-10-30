@@ -489,7 +489,7 @@ fn templates_pull(args: PullArgs) -> Result<()> {
         dest,
         force: args.force,
         yes: args.yes,
-        known: &known,
+        known: Some(&known),
     };
     let stdin = std::io::stdin();
     let interactive = stdin.is_terminal() && std::io::stderr().is_terminal();

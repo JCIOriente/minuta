@@ -70,7 +70,7 @@ struct Case {
     yes: bool,
     interactive: bool,
     input: &'static str,
-    known: Vec<String>,
+    known: Option<Vec<String>>,
 }
 
 fn case(choice: Choice) -> Case {
@@ -81,7 +81,7 @@ fn case(choice: Choice) -> Case {
         yes: false,
         interactive: false,
         input: "",
-        known: vec![],
+        known: Some(vec![]),
     }
 }
 
@@ -104,7 +104,7 @@ impl Case {
             dest: dest.to_path_buf(),
             force: self.force,
             yes: self.yes,
-            known: &self.known,
+            known: self.known.as_deref(),
         };
         let mut input = Cursor::new(self.input.as_bytes().to_vec());
         let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
@@ -747,7 +747,7 @@ fn no_note_when_minuta_already_has_the_input_template() {
     let s = chain_server();
     let mut c = case(names(&["alpha"]));
     c.yes = true;
-    c.known = vec!["gamma".to_string()];
+    c.known = Some(vec!["gamma".to_string()]);
     let out = c.run(&s, &d.dir());
     assert_eq!(out.stderr, "alpha.md  written\n");
 }
