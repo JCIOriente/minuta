@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+- `minuta templates pull` downloads curated templates from the repository into `./templates`
+  (or any folder with `--to`). `--list` shows the catalog with the state of each template;
+  choose by name, with `--all` or `--filter TEXT`, or pick from a numbered list on a terminal.
+  It asks before downloading (`--yes` skips the question) and `--ref` pins a branch, tag or
+  commit. Each file is checked against the catalog's SHA-256 and parsed as a template before
+  anything is written.
+- Templates you pulled are tracked in `.pulled.toml` next to them, so a pull can tell a new
+  template, one that is up to date, one with an update available and one you edited
+  (*modified*). Edited files are skipped unless `--force` is given, which saves the old file
+  as `NAME.md.bak` first.
+- Ten curated templates in the repository's `templates/` folder: `instagram`, `youtube`,
+  `linkedin`, `tiktok`, `x-thread`, `newsletter`, `blog-post`, `podcast-notes`,
+  `meeting-minutes` and `action-items`. The five built-in templates are unchanged and keep
+  working offline. A pulled template replaces the built-in or user template of the same name
+  (`youtube`, `linkedin` and `instagram` exist in both) for that folder. New templates are added to the repository and appear in `pull --list`
+  without a new release.
+- README sections "Downloading templates" and "Contributing a template".
+
 ## 0.3.0
 
 ### Changed (breaking)
