@@ -1,5 +1,5 @@
 use minuta::config::{
-    env_snapshot, expand_tilde, resolve_path, Config, Overrides, Setting, Source,
+    default_path_in, env_snapshot, expand_tilde, resolve_path, Config, Overrides, Setting, Source,
 };
 use minuta::error::{Error, Result};
 use std::ffi::OsString;
@@ -1158,4 +1158,55 @@ fn models_dir_relative_path_is_not_expanded() {
         expand_tilde("models/here", None).unwrap(),
         PathBuf::from("models/here"),
     );
+}
+
+#[test]
+fn default_path_is_under_home_minuta() {
+    assert_eq!(
+        default_path_in(Path::new("/home/u")),
+        PathBuf::from("/home/u/.minuta/config.toml"),
+    );
+}
+
+#[test]
+fn default_path_ignores_old_config_location() {
+    let home = tempfile::tempdir().unwrap();
+    let old = home.path().join(".config/minuta");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::write(old.join("config.toml"), "out_dir = \"from-old-location\"\n").unwrap();
+    let default = default_path_in(home.path());
+    let cfg = Config::resolve(Overrides::default(), &no_env, Some(default.as_path())).unwrap();
+    assert_eq!(cfg.path, Some(home.path().join(".minuta/config.toml")));
+    assert_eq!(cfg.out_dir.value, "./minuta-out");
+    assert_eq!(cfg.out_dir.source, Source::Default);
+}
+
+#[test]
+fn resolve_path_env_beats_default() {
+    let home = tempfile::tempdir().unwrap();
+    let minuta = home.path().join(".minuta");
+    std::fs::create_dir_all(&minuta).unwrap();
+    std::fs::write(minuta.join("config.toml"), "out_dir = \"from-default\"\n").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_config(&dir, "out_dir = \"from-env-path\"\n");
+    let env = env_with("MINUTA_CONFIG", file.to_str().unwrap());
+    let default = default_path_in(home.path());
+    assert_eq!(
+        resolve_path(&env, Some(default.as_path())),
+        Some(file.clone())
+    );
+    let cfg = Config::resolve(Overrides::default(), &env, Some(default.as_path())).unwrap();
+    assert_eq!(cfg.path, Some(file));
+    assert_eq!(cfg.out_dir.value, "from-env-path");
+    assert_eq!(cfg.out_dir.source, Source::File);
+}
+
+#[test]
+fn missing_default_file_yields_defaults() {
+    let home = tempfile::tempdir().unwrap();
+    let default = default_path_in(home.path());
+    let cfg = Config::resolve(Overrides::default(), &no_env, Some(default.as_path())).unwrap();
+    assert_eq!(cfg.path, Some(home.path().join(".minuta/config.toml")));
+    assert_eq!(cfg.out_dir.value, "./minuta-out");
+    assert_eq!(cfg.out_dir.source, Source::Default);
 }
