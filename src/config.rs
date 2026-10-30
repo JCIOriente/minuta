@@ -162,9 +162,14 @@ struct BinTable {
     bin: Option<String>,
 }
 
-/// Default config location: `~/.config/minuta/config.toml`.
+/// Default config location: `~/.minuta/config.toml`.
 pub fn default_path() -> Option<PathBuf> {
-    directories::BaseDirs::new().map(|dirs| dirs.home_dir().join(".config/minuta/config.toml"))
+    directories::BaseDirs::new().map(|dirs| default_path_in(dirs.home_dir()))
+}
+
+/// The default config file under `home`: `<home>/.minuta/config.toml`.
+pub fn default_path_in(home: &Path) -> PathBuf {
+    home.join(".minuta/config.toml")
 }
 
 /// Read every `MINUTA_*` variable up front. A non-UTF-8 value is `Error::Config`
