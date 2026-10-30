@@ -14,7 +14,7 @@ One brief per template, named after the template: `instagram.md` -> `templates/i
 - **Platform rules**: numbers and behaviors that are facts about the platform.
 - **Structure**: what each field or section holds.
 - **Tone and style**, and **Must never**.
-- **Good and bad**: a short example of each, so the agent can tell the difference.
+- **Good and bad**: two good/bad pairs, each on a different aspect (for example the opening and the closing), so the agent can tell the difference.
 
 ## What minuta lets a template do
 - `output: fields` returns JSON and renders `<name>.md`. The only fields are `title`, `body`, `tags`, `hashtags` and `thumbnail_text`. (`chapters` is reserved for the template named `chapters`.) `limits:` enforces `max_chars` and `max` per field, and minuta repairs answers that break them. Use it when the platform has hard limits.

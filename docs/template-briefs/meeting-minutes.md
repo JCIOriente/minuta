@@ -33,3 +33,4 @@ Neutral and compact. No praise, no editorializing, no filler.
 
 ## Good and bad
 Good action: "- [ ] Dana: send the revised budget to finance (by Friday) [00:41:07]". Bad: "- Someone will handle the budget."
+Good decision: "- The team will move the weekly review to Thursdays, starting next week (approved by Lee) [00:18:44]". Bad decision: "- It was agreed that things would be improved."

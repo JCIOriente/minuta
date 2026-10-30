@@ -18,6 +18,7 @@ The people who left a meeting or call with things to do. The goal is a short lis
 ## Structure
 A Markdown checklist, grouped under `##` headings by owner when there are more than five items, otherwise one flat list:
 `- [ ] Owner: verb-led task (due) [timestamp]`
+Inside an owner group the `Owner:` prefix is dropped, because the heading already names the owner.
 Add a final `## Unclear` section for commitments that were mentioned but not assigned or not clear enough to act on, only when there are any.
 
 ## Tone and style
@@ -30,3 +31,4 @@ Imperative, specific, no commentary.
 
 ## Good and bad
 Good: "- [ ] Sam: share the test plan with QA (by Wednesday) [00:22:10]". Bad: "- Improve testing."
+Good unclear item: "- Someone should look into the vendor contract (no owner or date given) [00:35:02]". Bad: turning that line into "- [ ] Legal: renegotiate the vendor contract (by Friday)".

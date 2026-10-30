@@ -12,7 +12,7 @@ Listeners deciding whether to play, and past listeners looking for something the
 ## Platform rules
 - Podcast apps show the first 2-3 lines of the description; keep the hook there.
 - Apps and feeds allow long descriptions, but plain text and simple Markdown render everywhere.
-- Timestamps in the notes help. Cite the transcript timestamps that the summary keeps when they exist, in `[00:12:34]` form; never invent one.
+- Timestamps in the notes help, but the summary input only carries them when it kept them. Use a `[00:12:34]` timestamp only when the input contains it; never invent one.
 
 ## Structure
 - `title`: the episode title, specific and short enough to read in a feed.
@@ -28,4 +28,5 @@ Inviting, clear, neutral. Written for someone who has not listened yet.
 - Spoil the one surprise the episode is built around, if the input marks one.
 
 ## Good and bad
-Good bullet: "[00:14:20] Why the team moved retros to Fridays". Bad: "They talk about stuff related to retros."
+Good bullet: "Why the team moved retros to Fridays, and what changed in the first month". Bad: "They talk about stuff related to retros."
+Good hook: "What happens when a team of eight drops its status meeting for a month? Dana shares what they gained and what they missed." Bad hook: "In this episode we talk with Dana about many interesting topics."

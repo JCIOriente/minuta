@@ -16,7 +16,7 @@ Subscribers who chose to hear from the author and read on a phone. The goal is a
 
 ## Structure
 - `title`: the subject line. Specific, no tricks, no all caps.
-- `body`: a one-sentence opening that continues the subject, then three parts in short sections with a Markdown `##` heading each: what happened or was said, why it matters, what to do next. Finish with one clear call to action and a sign-off line.
+- `body`: a one-sentence opening that continues the subject, then three short sections with a Markdown `##` heading each: what happened or was said, why it matters, and what to do next. The third section is the single call to action. Finish with a one-line sign-off.
 
 ## Tone and style
 Like a note from a smart colleague. First person plural or singular to match the recording. Concrete over abstract.
@@ -28,3 +28,4 @@ Like a note from a smart colleague. First person plural or singular to match the
 
 ## Good and bad
 Good subject: "What we changed in our Monday meeting". Bad: "You WON'T believe this meeting hack!!!".
+Good opening line: "Last Monday we tried something small, and it changed how the whole team meets." Bad opening line: "Hope you are well! Here is this week's newsletter."

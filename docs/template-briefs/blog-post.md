@@ -11,7 +11,7 @@ Readers arriving from search or a share who want an answer. The goal is an artic
 
 ## Platform rules
 - A good title is 50-60 characters and has the main phrase near the start.
-- One `#` heading only (the title is a field; start the body at `##`). Subheadings every 150-250 words.
+- No `#` heading in the body: the `title` field renders as the only `#`, so the body starts at `##`. Subheadings every 150-250 words.
 - A first paragraph that states the answer or promise in two or three sentences.
 - A short closing section with the takeaway.
 
@@ -30,3 +30,4 @@ Clear, direct, in the author's voice. Remove filler words and false starts, keep
 
 ## Good and bad
 Good heading: "## Why 25-minute meetings force better decisions". Bad: "## Section 2".
+Good opening: "Shorter meetings are not about saving time. They are about forcing the decision to happen in the room." Bad opening: "In today's fast-paced business world, meetings are more important than ever."
