@@ -931,10 +931,9 @@ mod tests {
                 },
             })
             .collect();
-        fs::write(
-            dir.join(crate::steps::probe::PROBE_FILE),
-            serde_json::to_string(&sources).unwrap(),
-        )
+        crate::job::write_atomic(&crate::job::layout::probe_file(dir), |tmp| {
+            Ok(fs::write(tmp, serde_json::to_string(&sources).unwrap())?)
+        })
         .unwrap();
         Ctx {
             dir: dir.to_path_buf(),

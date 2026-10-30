@@ -7,11 +7,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::job::{write_atomic, Ctx, Step, StepName};
+use crate::job::{layout, write_atomic_in, Ctx, Step, StepName};
 use crate::tools::{run, RunOpts, ToolInfo};
-
-/// File name of the probe artifact inside the job folder.
-pub const PROBE_FILE: &str = "probe.json";
 
 /// The first video stream of a source.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,7 +41,7 @@ pub struct SourceProbe {
 
 /// Reads `probe.json` from a job folder: one entry per source, in join order.
 pub fn read_probe(dir: &Path) -> Result<Vec<SourceProbe>> {
-    let file = dir.join(PROBE_FILE);
+    let file = layout::probe_file(dir);
     let text = fs::read_to_string(&file)?;
     serde_json::from_str(&text).map_err(|e| Error::Parse(format!("{}: {e}", file.display())))
 }
@@ -97,7 +94,7 @@ impl Probe {
             .collect::<Result<Vec<_>>>()?;
         let json = serde_json::to_string_pretty(&probes)
             .map_err(|e| Error::Parse(format!("cannot encode probe results: {e}")))?;
-        write_atomic(&ctx.dir.join(PROBE_FILE), |tmp| {
+        write_atomic_in(&ctx.dir, &layout::probe_file(&ctx.dir), |tmp| {
             fs::write(tmp, json)?;
             Ok(())
         })
@@ -198,7 +195,7 @@ impl Step for Probe {
     }
 
     fn outputs(&self, ctx: &Ctx) -> Vec<PathBuf> {
-        vec![ctx.dir.join(PROBE_FILE)]
+        vec![layout::probe_file(&ctx.dir)]
     }
 
     fn run(&self, ctx: &Ctx) -> Result<()> {

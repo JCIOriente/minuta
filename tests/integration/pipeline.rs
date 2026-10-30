@@ -217,14 +217,14 @@ fn name_conflict_errors() {
         .minuta(&["run", "a.m4a", "--name", "talk"])
         .status
         .success());
-    let state = fs::read_to_string(env.job_dir("talk").join("job.json")).unwrap();
+    let state = fs::read_to_string(minuta::job::layout::state_file(&env.job_dir("talk"))).unwrap();
 
     let out = env.minuta(&["run", "b.m4a", "--name", "talk"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(stderr(&out).contains("--force"), "{}", stderr(&out));
     assert_eq!(stdout(&out), "");
     assert_eq!(
-        fs::read_to_string(env.job_dir("talk").join("job.json")).unwrap(),
+        fs::read_to_string(minuta::job::layout::state_file(&env.job_dir("talk"))).unwrap(),
         state,
         "the existing job is untouched"
     );

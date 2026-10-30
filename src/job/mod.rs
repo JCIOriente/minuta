@@ -1,6 +1,7 @@
 //! Job folders: naming, `job.json`, fingerprints, staleness and atomic writes.
 
 pub mod fingerprint;
+pub mod layout;
 pub mod stale;
 pub mod state;
 
@@ -40,9 +41,6 @@ pub trait Step {
     fn run(&self, ctx: &Ctx) -> Result<()>;
 }
 
-/// File name of the job state inside the job folder.
-pub const JOB_FILE: &str = "job.json";
-
 /// A job folder `<out>/<name>/` and its `job.json` state.
 #[derive(Debug)]
 pub struct Job {
@@ -67,7 +65,7 @@ impl Job {
             .map(fs::canonicalize)
             .collect::<std::io::Result<Vec<_>>>()?;
         let dir = out.join(name);
-        let file = dir.join(JOB_FILE);
+        let file = layout::state_file(&dir);
         let has_state = file
             .try_exists()
             .map_err(|e| Error::Job(format!("cannot check {}: {e}", file.display())))?;
@@ -105,7 +103,8 @@ impl Job {
 
     /// Writes `job.json` atomically.
     pub fn save(&self) -> Result<()> {
-        self.state.save(&self.dir.join(JOB_FILE))
+        reject_symlinked_tier(&self.dir.join(layout::STATE_DIR))?;
+        self.state.save(&layout::state_file(&self.dir))
     }
 
     /// The context steps of this job run in.
@@ -217,9 +216,19 @@ impl Job {
         }
     }
 
-    /// Removes leftover `*.tmp` files from the job folder (after an interrupt, for example).
+    /// Removes leftover `*.tmp` files from the job folder, `assets/` and `.minuta/` (after an
+    /// interrupt, for example). A tier that does not exist yet has none.
     pub fn clean_tmp(&self) -> Result<()> {
-        remove_tmp_files(&self.dir)
+        remove_tmp_files(&self.dir)?;
+        for tier in [layout::ASSETS_DIR, layout::STATE_DIR] {
+            let tier = self.dir.join(tier);
+            reject_symlinked_tier(&tier)?;
+            match remove_tmp_files(&tier) {
+                Err(Error::Io(e)) if e.kind() == io::ErrorKind::NotFound => {}
+                other => other?,
+            }
+        }
+        Ok(())
     }
 }
 
@@ -234,6 +243,28 @@ fn set_stale<K: Ord>(states: &mut BTreeMap<K, StepState>, key: K, reason: &Reaso
     });
     state.status = Status::Stale;
     state.reason = Some(reason.to_string());
+}
+
+/// Fails with `Error::Job` if `path` is a symlink named like a tier folder (`assets` or
+/// `.minuta`): a link planted there would make writes and the `*.tmp` cleanup reach outside the
+/// job folder. Other names and missing paths pass. A tier folder that is a symlink on purpose
+/// (to keep `assets/` on another disk, say) is refused on purpose too.
+pub fn reject_symlinked_tier(path: &Path) -> Result<()> {
+    let is_tier = path
+        .file_name()
+        .is_some_and(|n| n == layout::ASSETS_DIR || n == layout::STATE_DIR);
+    if !is_tier {
+        return Ok(());
+    }
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(Error::Job(format!(
+            "{} is a symbolic link; remove it or choose another job folder",
+            path.display()
+        ))),
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(with_path(path, e)),
+    }
 }
 
 fn remove_tmp_files(dir: &Path) -> Result<()> {
@@ -290,9 +321,25 @@ fn is_media_extension(ext: &str) -> bool {
     MEDIA_EXTENSIONS.iter().any(|m| ext.eq_ignore_ascii_case(m))
 }
 
-/// Writes an artifact atomically: `f` writes to `<path>.tmp`, which is synced to disk and
-/// renamed to `path` only if `f` succeeds. On failure the temp file is removed and `path` is
-/// left untouched.
+/// Like [`write_atomic`] for a file inside `job_dir`: it first refuses a symlinked tier folder
+/// (`assets` or `.minuta`) between `job_dir` and `path`. Only folders below `job_dir` count, so
+/// a job folder that is itself a symlink, or lives under one, is fine.
+pub fn write_atomic_in(
+    job_dir: &Path,
+    path: &Path,
+    f: impl FnOnce(&Path) -> Result<()>,
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        for ancestor in parent.ancestors().take_while(|a| *a != job_dir) {
+            reject_symlinked_tier(ancestor)?;
+        }
+    }
+    write_atomic(path, f)
+}
+
+/// Writes an artifact atomically, creating its parent folder when missing: `f` writes to
+/// `<path>.tmp`, which is synced to disk and renamed to `path` only if `f` succeeds. On failure
+/// the temp file is removed and `path` is left untouched.
 ///
 /// Whatever already sits at the temp path is removed first and `f` is not called if that fails.
 /// A job folder can come from elsewhere, and a symlink planted at `<path>.tmp` would otherwise
@@ -300,6 +347,9 @@ fn is_media_extension(ext: &str) -> bool {
 /// `f` creates the file (an external tool may be the one writing it), so it is not `create_new`.
 pub fn write_atomic(path: &Path, f: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
     let tmp = tmp_path(path);
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).map_err(|e| with_path(parent, e))?;
+    }
     match fs::remove_file(&tmp) {
         Ok(()) => {}
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}

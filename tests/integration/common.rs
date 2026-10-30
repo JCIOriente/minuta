@@ -272,7 +272,8 @@ pub fn stdout(out: &Output) -> String {
 }
 
 pub fn job_json(job: &Path) -> serde_json::Value {
-    serde_json::from_str(&fs::read_to_string(job.join("job.json")).unwrap()).unwrap()
+    serde_json::from_str(&fs::read_to_string(minuta::job::layout::state_file(job)).unwrap())
+        .unwrap()
 }
 
 /// Steps whose progress line in `stderr` says `cached`.
