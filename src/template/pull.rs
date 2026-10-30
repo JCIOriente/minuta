@@ -290,6 +290,18 @@ pub struct Done {
     pub outcome: Outcome,
 }
 
+/// What `apply` does with a template in `state`: the one place that decides which files are
+/// written, so the prompt can promise exactly that.
+pub fn outcome_for(state: State, force: bool) -> Outcome {
+    match (state, force) {
+        (State::New, _) => Outcome::Created,
+        (State::UpdateAvailable, _) => Outcome::Updated,
+        (State::Modified, true) => Outcome::Overwrote,
+        (State::Modified, false) => Outcome::KeptModified,
+        (State::UpToDate, _) => Outcome::KeptUpToDate,
+    }
+}
+
 /// Writes what the plan says to write: new and updatable files, and modified ones when
 /// `force` is set. Order: fetch every file and verify it (catalog hash, UTF-8, parses as a
 /// template), save backups of the modified files that will be replaced, then write. A
@@ -303,13 +315,7 @@ pub fn apply(
     fetch: &mut dyn FnMut(&Entry) -> Result<Vec<u8>>,
     manifest: &mut Manifest,
 ) -> Result<Vec<Done>> {
-    let outcome = |item: &Item<'_>| match (item.state, force) {
-        (State::New, _) => Outcome::Created,
-        (State::UpdateAvailable, _) => Outcome::Updated,
-        (State::Modified, true) => Outcome::Overwrote,
-        (State::Modified, false) => Outcome::KeptModified,
-        (State::UpToDate, _) => Outcome::KeptUpToDate,
-    };
+    let outcome = |item: &Item<'_>| outcome_for(item.state, force);
     let writes =
         |item: &Item<'_>| !matches!(outcome(item), Outcome::KeptUpToDate | Outcome::KeptModified);
 

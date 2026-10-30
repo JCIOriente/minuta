@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use minuta::error::{Error, Result};
 use minuta::template::catalog::{sha256_hex, Catalog, Entry, Manifest, State};
 use minuta::template::pull::{
-    apply, fetch_catalog, fetch_file, plan, read_manifest, Done, Origin, Outcome, CATALOG_CAP,
-    FILE_CAP, LOCAL_CAP,
+    apply, fetch_catalog, fetch_file, outcome_for, plan, read_manifest, Done, Origin, Outcome,
+    CATALOG_CAP, FILE_CAP, LOCAL_CAP,
 };
 use tempfile::TempDir;
 
@@ -1400,4 +1400,30 @@ fn read_manifest_over_the_local_cap_is_an_error() {
         err_text(read_manifest(&d.dir())),
         format!("I/O error: {} is larger than 1048576 bytes", path.display())
     );
+}
+
+// ---- outcome_for ----
+
+#[test]
+fn outcome_for_new_is_created_with_or_without_force() {
+    assert_eq!(outcome_for(State::New, false), Outcome::Created);
+    assert_eq!(outcome_for(State::New, true), Outcome::Created);
+}
+
+#[test]
+fn outcome_for_update_available_is_updated_with_or_without_force() {
+    assert_eq!(outcome_for(State::UpdateAvailable, false), Outcome::Updated);
+    assert_eq!(outcome_for(State::UpdateAvailable, true), Outcome::Updated);
+}
+
+#[test]
+fn outcome_for_modified_depends_on_force() {
+    assert_eq!(outcome_for(State::Modified, false), Outcome::KeptModified);
+    assert_eq!(outcome_for(State::Modified, true), Outcome::Overwrote);
+}
+
+#[test]
+fn outcome_for_up_to_date_is_kept_with_or_without_force() {
+    assert_eq!(outcome_for(State::UpToDate, false), Outcome::KeptUpToDate);
+    assert_eq!(outcome_for(State::UpToDate, true), Outcome::KeptUpToDate);
 }
