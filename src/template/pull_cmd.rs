@@ -4,12 +4,13 @@
 //! the files written, which go to stdout one per line.
 
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::catalog::{select, Entry, Selection};
 use super::pull::{
     apply, fetch_catalog, fetch_file, outcome_for, plan, read_manifest, Done, Item, Origin, Outcome,
 };
+use super::valid_stem;
 use crate::cli::sanitize;
 use crate::error::{Error, Result};
 
@@ -77,6 +78,11 @@ pub fn run(origin: &Origin, options: &Options<'_>, term: &mut Terminal<'_>) -> R
         return Ok(());
     }
 
+    if catalog.entries.is_empty() && matches!(options.choice, Choice::All | Choice::Ask) {
+        writeln!(term.stderr, "the catalog has no templates")?;
+        return Ok(());
+    }
+
     let chosen: Vec<&Entry> = match &options.choice {
         Choice::All => select(&catalog, Selection::All)?,
         Choice::Names(names) => select(&catalog, Selection::Names(names))?,
@@ -90,8 +96,7 @@ pub fn run(origin: &Origin, options: &Options<'_>, term: &mut Terminal<'_>) -> R
                 "Select templates (numbers separated by commas or spaces, a for all, empty to cancel): "
             )?;
             term.stderr.flush()?;
-            let mut line = String::new();
-            term.input.read_line(&mut line)?;
+            let line = read_answer(term)?;
             parse_choice(&line, all.len())?
                 .into_iter()
                 .map(|i| all[i])
@@ -122,11 +127,14 @@ pub fn run(origin: &Origin, options: &Options<'_>, term: &mut Terminal<'_>) -> R
                 prompt_note(item, options.force)
             )?;
         }
-        writeln!(term.stderr, "into {}", options.dest.display())?;
+        writeln!(
+            term.stderr,
+            "into {}",
+            sanitize(&options.dest.display().to_string())
+        )?;
         write!(term.stderr, "Continue? [y/N] ")?;
         term.stderr.flush()?;
-        let mut answer = String::new();
-        term.input.read_line(&mut answer)?;
+        let answer = read_answer(term)?;
         if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
             writeln!(term.stderr, "cancelled")?;
             return Ok(());
@@ -154,8 +162,18 @@ pub fn run(origin: &Origin, options: &Options<'_>, term: &mut Terminal<'_>) -> R
     if !writes {
         writeln!(term.stderr, "nothing to download")?;
     }
-    missing_inputs(&chosen, &done, options.known, term)?;
+    missing_inputs(&chosen, &done, options, term)?;
     Ok(())
+}
+
+/// Reads one line the user typed. At the end of the input (Ctrl-D) nothing was typed and no
+/// Enter moved the cursor, so the line is ended here.
+fn read_answer(term: &mut Terminal<'_>) -> Result<String> {
+    let mut line = String::new();
+    if term.input.read_line(&mut line)? == 0 {
+        writeln!(term.stderr)?;
+    }
+    Ok(line)
 }
 
 /// The file of template `name`.
@@ -271,10 +289,12 @@ fn numbered(items: &[Item<'_>]) -> String {
 fn missing_inputs(
     chosen: &[&Entry],
     done: &[Done],
-    known: Option<&[String]>,
+    options: &Options<'_>,
     term: &mut Terminal<'_>,
 ) -> Result<()> {
-    let Some(known) = known else { return Ok(()) };
+    let Some(known) = options.known else {
+        return Ok(());
+    };
     for item in done.iter().filter(|d| written(d.outcome)) {
         let Some(entry) = chosen.iter().find(|e| e.name == item.name) else {
             continue;
@@ -284,7 +304,8 @@ fn missing_inputs(
             let available = dep.is_empty()
                 || dep == "transcript"
                 || known.iter().any(|k| k == dep)
-                || chosen.iter().any(|e| e.name == dep);
+                || chosen.iter().any(|e| e.name == dep)
+                || in_destination(&options.dest, dep, term)?;
             if !available {
                 writeln!(
                     term.stderr,
@@ -296,6 +317,28 @@ fn missing_inputs(
         }
     }
     Ok(())
+}
+
+/// Whether the destination folder already has a template called `name` (pulled earlier). When
+/// that cannot be found out it counts as there, so no wrong note is made, and a warning says
+/// why.
+fn in_destination(dest: &Path, name: &str, term: &mut Terminal<'_>) -> Result<bool> {
+    if !valid_stem(name) {
+        return Ok(false);
+    }
+    let path = dest.join(md(name));
+    match path.try_exists() {
+        Ok(found) => Ok(found),
+        Err(e) => {
+            writeln!(
+                term.stderr,
+                "warning: cannot check {}: {}",
+                sanitize(&path.display().to_string()),
+                sanitize(&e.to_string())
+            )?;
+            Ok(true)
+        }
+    }
 }
 
 /// Reads an answer to the numbered list: numbers (1-based, separated by commas or spaces),

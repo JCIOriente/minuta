@@ -460,6 +460,15 @@ fn pull_origin(reference: &str, url_override: Option<std::ffi::OsString>) -> Res
     }
 }
 
+/// The names of every template minuta can use: built-in, user and project.
+fn known_templates() -> Result<Vec<String>> {
+    Ok(discover(&Dirs::standard()?)?
+        .templates
+        .keys()
+        .cloned()
+        .collect())
+}
+
 fn templates_pull(args: PullArgs) -> Result<()> {
     let origin = pull_origin(&args.reference, std::env::var_os("MINUTA_TEMPLATES_URL"))?;
     let cwd = std::env::current_dir().map_err(|e| {
@@ -469,11 +478,19 @@ fn templates_pull(args: PullArgs) -> Result<()> {
         ))
     })?;
     let dest = cwd.join(args.to.unwrap_or_else(|| PathBuf::from("templates")));
-    let known: Vec<String> = discover(&Dirs::standard()?)?
-        .templates
-        .keys()
-        .cloned()
-        .collect();
+    // Only the note about a missing `input:` template needs to know what minuta can use: a
+    // folder that cannot be read must not stop a download, so it is reported and the note
+    // is skipped.
+    let known = match known_templates() {
+        Ok(names) => Some(names),
+        Err(e) => {
+            eprintln!(
+                "warning: cannot check which templates minuta already has: {}",
+                sanitize(&e.to_string())
+            );
+            None
+        }
+    };
     let choice = if !args.names.is_empty() {
         Choice::Names(args.names)
     } else if args.all {
@@ -489,7 +506,7 @@ fn templates_pull(args: PullArgs) -> Result<()> {
         dest,
         force: args.force,
         yes: args.yes,
-        known: Some(&known),
+        known: known.as_deref(),
     };
     let stdin = std::io::stdin();
     let interactive = stdin.is_terminal() && std::io::stderr().is_terminal();

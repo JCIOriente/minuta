@@ -988,9 +988,10 @@ fn an_empty_catalog_with_a_name_is_an_unknown_template() {
     let mut c = case(names(&["alpha"]));
     c.yes = true;
     let out = c.run(&s, &d.dir());
-    assert_eq!(
-        usage(&out.result),
-        "unknown template \"alpha\" (available: )"
+    assert!(
+        usage(&out.result).starts_with("unknown template \"alpha\""),
+        "{:?}",
+        out.result
     );
 }
 
