@@ -1,1 +1,78 @@
 version = 1
+
+[[template]]
+name = "action-items"
+description = "Action items with owners, due dates and timestamps"
+platform = "meeting"
+tags = ["tasks", "work"]
+sha256 = "8aaa0f453185551331880034e108298f311e3d20c7b6a82357fed091a8c330ee"
+
+[[template]]
+name = "blog-post"
+description = "Search-focused blog post with title and topical tags"
+platform = "web"
+tags = ["blog", "seo", "long-form"]
+sha256 = "e0d6bf388ebe318e55e95fb085f33b873743f366aa4116d6e33ac410c03c436c"
+
+[[template]]
+name = "instagram"
+description = "Instagram caption with a hook and focused hashtags"
+platform = "instagram"
+tags = ["social", "short-form", "hashtags"]
+input = "summary -> transcript"
+sha256 = "6ce3445f95f5af71c826217034806ba5a05f99eb34b69118817a4bac6b6152d8"
+
+[[template]]
+name = "linkedin"
+description = "Specific, useful LinkedIn post from the recording"
+platform = "linkedin"
+tags = ["social", "professional"]
+input = "summary -> transcript"
+sha256 = "082283f68c9d10b73567098c2cbec50b4bf2b6d4b7de86f38dfea3d4a0080cba"
+
+[[template]]
+name = "meeting-minutes"
+description = "Concise meeting minutes with decisions, owners and due dates"
+platform = "meeting"
+tags = ["minutes", "work"]
+sha256 = "f07da92aeadfa293d9a6818b25dd1babbf89172831efef03999ae5e61e95450e"
+
+[[template]]
+name = "newsletter"
+description = "Newsletter subject and body with one clear call to action"
+platform = "email"
+tags = ["newsletter", "long-form"]
+input = "summary -> transcript"
+sha256 = "f98e9274496f5ea5ac52a1ee81af4f64554f286192dfdc6554ddfd41a98f4f32"
+
+[[template]]
+name = "podcast-notes"
+description = "Podcast episode title, show notes and search topics"
+platform = "audio"
+tags = ["podcast", "show-notes"]
+input = "summary -> transcript"
+sha256 = "5f814856ca07437402ffdbe69e791e2e8c49a81f8b7b5c14aac69181fc050381"
+
+[[template]]
+name = "tiktok"
+description = "TikTok caption with a conversation hook and focused hashtags"
+platform = "tiktok"
+tags = ["social", "short-form", "hashtags"]
+input = "summary -> transcript"
+sha256 = "9e3fddee4f9cb23aae20c5fcdc7e1d907b2a5f12482f99d055f75c629f26c85a"
+
+[[template]]
+name = "x-thread"
+description = "X thread with a sharp hook and one clear idea per post"
+platform = "x"
+tags = ["social", "thread"]
+input = "summary -> transcript"
+sha256 = "775c597c3fe61b3d08e9f7c44089c62b26b7c022ccce8b939978f9e2490d6280"
+
+[[template]]
+name = "youtube"
+description = "YouTube title, description, tags and thumbnail text"
+platform = "youtube"
+tags = ["video", "seo", "thumbnail"]
+input = "summary -> transcript"
+sha256 = "38577d8a83a2cf73be86a6334f90e7e1104e671a7cf0e67f9cb0d0d2331bc814"
