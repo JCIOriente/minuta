@@ -188,6 +188,52 @@ fn notes_over_limit_gets_a_repair_call() {
 }
 
 #[test]
+fn notes_follow_filled_chapters_and_hashtags() {
+    require_ffmpeg!();
+    let env = env_with_clip();
+    env.template(
+        "templates",
+        "post",
+        "---\ninput: summary\noutput: fields\nfields: [body, chapters, hashtags, notes]\nformat: plain\n---\nWrite a post.",
+    );
+    let fake = summary_and_fields(|_| {
+        serde_json::json!({
+            "body": "A class.",
+            "hashtags": ["rust"],
+            "notes": "Pinned comment: Which part was hardest?",
+        })
+        .to_string()
+    });
+    let out = run_class(&env, &["run", "a.mp4", "-t", "post"], &fake);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let job = env.job_dir("a");
+    assert_eq!(
+        fs::read_to_string(job.join("post.md")).unwrap(),
+        "A class.\n\n0:00 Introducción\n0:32 La propiedad\n1:47 Movimientos y copias\n3:25 Préstamos\n4:40 Ejercicios\n\n#rust\n\nPinned comment: Which part was hardest?\n"
+    );
+    assert_eq!(
+        read_json(job.join("post.json")),
+        serde_json::json!({
+            "version": 1,
+            "template": "post",
+            "output_lang": "es",
+            "fields": {
+                "body": "A class.",
+                "chapters": [
+                    {"start": 0, "title": "Introducción"},
+                    {"start": 32, "title": "La propiedad"},
+                    {"start": 107, "title": "Movimientos y copias"},
+                    {"start": 205, "title": "Préstamos"},
+                    {"start": 280, "title": "Ejercicios"},
+                ],
+                "hashtags": ["rust"],
+                "notes": "Pinned comment: Which part was hardest?",
+            },
+        })
+    );
+}
+
+#[test]
 fn fields_repairs_exhausted() {
     require_ffmpeg!();
     let env = env_with_clip();

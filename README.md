@@ -231,7 +231,7 @@ depend on run first.
 | --- | --- | --- |
 | `summary` | transcript | `summary.md`: overview, key points, decisions, action items, open questions |
 | `chapters` | transcript | `chapters.json` and `chapters.md`: timestamped chapters that follow YouTube's rules |
-| `youtube` | `summary` | `youtube.json` and `youtube.md`: title, description, chapters, tags and thumbnail text |
+| `youtube` | `summary` | `youtube.json` and `youtube.md`: title, description, chapters, hashtags, tags and thumbnail text |
 | `linkedin` | `summary` | `linkedin.json` and `linkedin.md`: post body and hashtags |
 | `instagram` | `summary` | `instagram.json` and `instagram.md`: caption and hashtags |
 
