@@ -121,7 +121,7 @@ minuta templates pull [NAME...] [--all] [--filter TEXT] [--list]
 
 ## Behavior & edge cases
 - Order: fetch catalog -> read manifest -> select -> build the plan (state per file) -> prompt -> fetch files -> verify all -> write all. Verification finishes before the first write.
-- Unknown NAME: usage error listing available names. `--filter` with no match: usage error, nothing fetched beyond the catalog.
+- Unknown NAME: usage error listing available names. `--filter` with no match, or with blank text: usage error ("no template matches filter ...", "filter must not be empty"), nothing fetched beyond the catalog.
 - Empty selection from the checklist: exit 0, "nothing selected".
 - When every selected file is *up to date* or *modified* (without `--force`): no prompt, a line per file with its state, exit 0.
 - `--force` on an *up to date* file does nothing. `--force` on a *modified* file writes `NAME.md.bak` (replacing an older `.bak`) before overwriting; if the backup cannot be written, the file is not overwritten.
@@ -169,7 +169,7 @@ None. Approved by the owner with default `--ref main` and the 256 KiB / 1 MiB si
 ## Implementation status
 - [x] ADR-0011 (proposed, PR #159)
 - [x] Plan: `docs/plans/2026-10-30-templates-pull.md`
-- [ ] #160 catalog, manifest and states
+- [x] #160 catalog, manifest and states (PR #167, in review)
 - [ ] #161 fetch, plan, verify, write
 - [ ] #162 CLI command
 - [ ] #163 repo catalog and consistency test
