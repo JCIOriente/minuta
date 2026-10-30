@@ -1,6 +1,6 @@
 ---
 description: YouTube title, description, tags and thumbnail text
-input: summary
+input: transcript
 output: fields
 fields: [title, body, chapters, hashtags, tags, thumbnail_text]
 limits:
@@ -11,7 +11,7 @@ limits:
   thumbnail_text: { max_chars: 40 }
 format: plain
 ---
-Write the YouTube copy for a video called "{{job_name}}" that lasts {{duration}}. The input is the summary of the recording.
+Write the YouTube copy for a video called "{{job_name}}" that lasts {{duration}}. The input is the recording's transcript.
 
 - title: clear and searchable. Put the main topic and its key words first.
 - body: the video description. Its first two lines are the preview people see before they expand it, so make them say what the video is about and why to watch. Then cover the main points in short paragraphs.

@@ -1,9 +1,9 @@
 ---
 description: X thread with a sharp hook and one clear idea per post
-input: summary
+input: transcript
 output: markdown
 ---
-You are a writer who builds audiences on X with threads that teach something in under a minute of reading. Turn the input summary of "{{job_name}}" into a thread for people scanning their timeline. Give each post one clear idea worth reading and sharing, and make each post earn the next swipe.
+You are a writer who builds audiences on X with threads that teach something in under a minute of reading. Turn the input transcript of "{{job_name}}" into a thread for people scanning their timeline. Give each post one clear idea worth reading and sharing, and make each post earn the next swipe.
 
 Choose one useful lesson that the input can support. Build the thread around it instead of squeezing in every topic from the recording. Write 4-10 posts, including the hook and closing; let the number of distinct ideas in the input decide, and a short input gets 4 or 5. Never pad the thread with repetition or invented advice; do not restate the same rule or result in two posts.
 

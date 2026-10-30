@@ -345,3 +345,34 @@ fn catalog_check_flags_hash_mismatch_and_parse_failure_together() {
         ]
     );
 }
+
+#[test]
+fn catalog_templates_declare_transcript_input() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let index = Catalog::parse(&fs::read_to_string(dir.join("index.toml")).unwrap()).unwrap();
+    for entry in &index.entries {
+        if let Some(input) = &entry.input {
+            assert!(!input.contains("summary"), "{}: {input}", entry.name);
+        }
+        let text = fs::read_to_string(dir.join(format!("{}.md", entry.name))).unwrap();
+        let t = Template::parse(&entry.name, Layer::Project, None, &text).unwrap();
+        assert_ne!(
+            t.input,
+            minuta::template::Input::Template("summary".into()),
+            "{}",
+            entry.name
+        );
+        assert!(!t.body.contains("summary of"), "{}", entry.name);
+        assert!(!t.body.contains("input summary"), "{}", entry.name);
+    }
+}
+
+#[test]
+fn catalog_hashes_match_files() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let index = Catalog::parse(&fs::read_to_string(dir.join("index.toml")).unwrap()).unwrap();
+    for entry in &index.entries {
+        let bytes = fs::read(dir.join(format!("{}.md", entry.name))).unwrap();
+        assert_eq!(sha256_hex(&bytes), entry.sha256, "{}", entry.name);
+    }
+}

@@ -1,6 +1,6 @@
 # Brief: newsletter
 
-- **Template**: `newsletter`. Output `fields: [title, body]`, `format: markdown`. Input `summary`.
+- **Template**: `newsletter`. Output `fields: [title, body]`, `format: markdown`. Input `transcript`.
 - **Limits**: `title` max_chars 60 (the subject line), `body` max_chars 4000.
 
 ## Persona

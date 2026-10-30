@@ -792,7 +792,7 @@ fn builtin_limit(name: &str, field: Field) -> Limit {
 fn builtin_shape(name: &str, fields: &[Field]) -> String {
     let t = builtin(name);
     assert_eq!(t.layer, Layer::BuiltIn);
-    assert_eq!(t.input, Input::Template("summary".into()));
+    assert_eq!(t.input, Input::Transcript);
     let s = spec(&t);
     assert_eq!(s.format, Format::Plain);
     let got: Vec<Field> = s.fields.iter().map(|f| f.field).collect();
@@ -1214,4 +1214,37 @@ fn user_layer_overridden_by_project_layer() {
     let c = discover(&Dirs::for_home(&home, &cwd)).unwrap();
     assert_eq!(c.get("x").unwrap().body, "project body\n");
     assert_eq!(c.get("x").unwrap().layer, Layer::Project);
+}
+
+#[test]
+fn social_builtins_read_transcript() {
+    for name in ["linkedin", "instagram", "youtube"] {
+        let t = builtin(name);
+        assert_eq!(t.input, Input::Transcript, "{name}");
+        assert!(!t.body.contains("summary"), "{name}: {}", t.body);
+    }
+}
+
+#[test]
+fn social_run_creates_no_summary() {
+    let e = env();
+    let c = discover(&Dirs {
+        user: None,
+        project: e.project.clone(),
+    })
+    .unwrap();
+    let deps_of = |name: &str| {
+        c.get(name).ok().map(|t| match &t.input {
+            Input::Transcript => Vec::new(),
+            Input::Template(dep) => vec![dep.clone()],
+        })
+    };
+    let requested: Vec<String> = ["linkedin", "instagram", "youtube"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let order = minuta::template::graph::order(&requested, &deps_of).unwrap();
+    assert_eq!(order, requested);
+    let order = minuta::template::graph::order(&["summary".to_string()], &deps_of).unwrap();
+    assert_eq!(order, ["summary"]);
 }

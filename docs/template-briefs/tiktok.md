@@ -1,6 +1,6 @@
 # Brief: tiktok
 
-- **Template**: `tiktok`. Output `fields: [body, hashtags]`, `format: plain`. Input `summary`.
+- **Template**: `tiktok`. Output `fields: [body, hashtags]`, `format: plain`. Input `transcript`.
 - **Limits**: `body` max_chars 300, `hashtags` max 6, max_chars 120.
 
 ## Persona
