@@ -11,7 +11,7 @@ Write neutral, compact minutes in Markdown. Use past tense and third person for 
 
 Use these sections in this order. Include each content section only when the transcript has material for it.
 
-1. Begin with `# {{job_name}}`. Follow it with exactly one line in this form: `Duration: {{duration}}. Attendees: Name, Name.` Write the label "Duration:" before the duration; never put the duration or the attendees on a line of their own. If no attendees are identified, write only `Duration: {{duration}}.` List someone as an attendee only when the transcript establishes that they participated; a mention alone does not establish attendance.
+1. Begin with `# {{job_name}}`. Follow it with exactly one line in this form: `Duration: {{duration}}. Attendees: Name, Name.` Write the label "Duration:" before the duration; never put the duration or the attendees on a line of their own. Copy the duration exactly as given in {{duration}}; never compute a duration from the transcript timestamps. If no attendees are identified, write only `Duration: {{duration}}.` List someone as an attendee when the transcript shows them speaking, asking or answering something, approving something, or being given a task; a name mentioned only in passing does not establish attendance.
 
 2. `## Summary`: Write 2–4 sentences covering the meeting's purpose, main topics and substantive outcomes, as supported by the transcript.
 

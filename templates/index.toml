@@ -5,14 +5,14 @@ name = "action-items"
 description = "Action items with owners, due dates and timestamps"
 platform = "meeting"
 tags = ["tasks", "work"]
-sha256 = "ee5af243793de65f5493d87514d69dbe692aff9cc3dc9fb5d31a2c61b9db7ecc"
+sha256 = "8aaa0f453185551331880034e108298f311e3d20c7b6a82357fed091a8c330ee"
 
 [[template]]
 name = "blog-post"
 description = "Search-focused blog post with title and topical tags"
 platform = "web"
 tags = ["blog", "seo", "long-form"]
-sha256 = "32f26030a7930d2b817887d189d7930f7a6b35677b4413215f197be73dee94fe"
+sha256 = "e0d6bf388ebe318e55e95fb085f33b873743f366aa4116d6e33ac410c03c436c"
 
 [[template]]
 name = "instagram"
@@ -20,7 +20,7 @@ description = "Instagram caption with a hook and focused hashtags"
 platform = "instagram"
 tags = ["social", "short-form", "hashtags"]
 input = "summary -> transcript"
-sha256 = "773800f64be7b475fb4992a36d6ab26d6841a39f5ad46dba2af59704476fd1cc"
+sha256 = "a20a3a7eec96b39c1a16ba2f8e9deb6fc0870ecd33a5f5761014379edd0711ca"
 
 [[template]]
 name = "linkedin"
@@ -28,14 +28,14 @@ description = "Specific, useful LinkedIn post from the recording"
 platform = "linkedin"
 tags = ["social", "professional"]
 input = "summary -> transcript"
-sha256 = "028c477536d694e2968b1e45dd9908297d6e5a4bcf9befe59eb6c8e6ebac47cf"
+sha256 = "5a6364c22ab4eb65c7165409e328b18b5e27669bdfc0054758d22f26b6ced33a"
 
 [[template]]
 name = "meeting-minutes"
 description = "Concise meeting minutes with decisions, owners and due dates"
 platform = "meeting"
 tags = ["minutes", "work"]
-sha256 = "ae010b53832f8a58b1f6ad36ee068b0ee4d5bc11f1482802bb8bee9ebab35d1c"
+sha256 = "f07da92aeadfa293d9a6818b25dd1babbf89172831efef03999ae5e61e95450e"
 
 [[template]]
 name = "newsletter"
@@ -43,7 +43,7 @@ description = "Newsletter subject and body with one clear call to action"
 platform = "email"
 tags = ["newsletter", "long-form"]
 input = "summary -> transcript"
-sha256 = "09536775fea235290cc22b4c020936db329150f0fe759a805bd4384280868548"
+sha256 = "f98e9274496f5ea5ac52a1ee81af4f64554f286192dfdc6554ddfd41a98f4f32"
 
 [[template]]
 name = "podcast-notes"
@@ -51,7 +51,7 @@ description = "Podcast episode title, show notes and search topics"
 platform = "audio"
 tags = ["podcast", "show-notes"]
 input = "summary -> transcript"
-sha256 = "4012e828c86eaca82837b44167c8e36552b2aca563b9279c4985c18acc1f5b45"
+sha256 = "d57b4560bde4e46f2969a117fb3f8087ed578802b23fbf718a52e5807cf7d736"
 
 [[template]]
 name = "tiktok"
@@ -67,7 +67,7 @@ description = "X thread with a sharp hook and one clear idea per post"
 platform = "x"
 tags = ["social", "thread"]
 input = "summary -> transcript"
-sha256 = "97870a12768bec3be66a1bdfcffa3ad634831b3fdd79d5feba6cf59f657bf6ab"
+sha256 = "daf1dfdc43f9a1b94d0fa1fdfecd51df1865fea47d999056ff3114fed359549b"
 
 [[template]]
 name = "youtube"
@@ -75,4 +75,4 @@ description = "YouTube title, description, tags and thumbnail text"
 platform = "youtube"
 tags = ["video", "seo", "thumbnail"]
 input = "summary -> transcript"
-sha256 = "7815c417e6ae8caee84cb1a7ecf940013218c65bd0dd2863ed522ffbdb21d276"
+sha256 = "488a3bf32031391f04f5dae3e3f8b91d952849e73d9d9d704e7eb36aa3403e81"

@@ -19,7 +19,7 @@ Write the fields as follows:
 
 - title: A specific episode title of at most 100 characters, short enough to scan in a feed. Put the central topic or question early. Do not promise an answer or outcome the input does not support.
 - body: Show notes of at most 4000 characters, including headings, spaces and line breaks. Follow the structure below.
-- tags: Distinct topics a listener would search to find this episode, grounded in the input. Use plain search terms without hashtags. Include at most 10 tags, with at most 300 characters total when joined with ", ". Choose relevant terms rather than filling the allowance.
+- tags: Distinct topics a listener would search to find this episode, grounded in the input. Never put a number in a tag unless that exact number appears in the input. Use plain search terms without hashtags. Include at most 10 tags, with at most 300 characters total when joined with ", ". Choose relevant terms rather than filling the allowance.
 
 Build the body in this order:
 
