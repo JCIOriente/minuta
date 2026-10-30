@@ -13,7 +13,8 @@ const VALID: &str = "---\ndescription: A valid template\n---\nbody\n";
 const OTHER: &str = "---\ndescription: Another valid template\n---\nother body\n";
 
 /// Checks that `dir/index.toml` and the `dir/*.md` files agree. Returns every problem found:
-/// entries in catalog order, then files without an entry by sorted stem.
+/// entries in catalog order, then files without an entry by sorted stem, then non-UTF-8
+/// names sorted.
 fn check_catalog_dir(dir: &Path) -> Result<(), Vec<String>> {
     let index = dir.join("index.toml");
     let text = fs::read_to_string(&index)
@@ -21,6 +22,7 @@ fn check_catalog_dir(dir: &Path) -> Result<(), Vec<String>> {
     let catalog = Catalog::parse(&text).map_err(|e| vec![e.to_string()])?;
 
     let mut problems = Vec::new();
+    let mut non_utf8: BTreeSet<String> = BTreeSet::new();
     // Every `*.md` directly in the folder, read once, by stem.
     let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let listing =
@@ -32,10 +34,7 @@ fn check_catalog_dir(dir: &Path) -> Result<(), Vec<String>> {
             continue;
         }
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-            problems.push(format!(
-                "templates/{} has a non UTF-8 name",
-                item.file_name().to_string_lossy()
-            ));
+            non_utf8.insert(item.file_name().to_string_lossy().into_owned());
             continue;
         };
         let bytes =
@@ -93,6 +92,11 @@ fn check_catalog_dir(dir: &Path) -> Result<(), Vec<String>> {
             ));
         }
     }
+    problems.extend(
+        non_utf8
+            .iter()
+            .map(|name| format!("templates/{name} has a non UTF-8 name")),
+    );
     if problems.is_empty() {
         Ok(())
     } else {
@@ -294,6 +298,50 @@ fn catalog_check_flags_non_utf8_name_and_keeps_going() {
         vec![
             "template \"two\": templates/two.md is missing".to_string(),
             "templates/bad\u{FFFD}.md has a non UTF-8 name".to_string(),
+        ]
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn catalog_check_orders_non_utf8_names_after_other_problems() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let dir = folder(
+        &entry_text("one", VALID),
+        &[("one.md", VALID), ("extra.md", OTHER)],
+    );
+    for name in [&b"b\xff.md"[..], &b"a\xff.md"[..]] {
+        fs::write(dir.path().join(OsStr::from_bytes(name)), VALID).unwrap();
+    }
+    assert_eq!(
+        problems(&dir),
+        vec![
+            "templates/extra.md has no entry in templates/index.toml".to_string(),
+            "templates/a\u{FFFD}.md has a non UTF-8 name".to_string(),
+            "templates/b\u{FFFD}.md has a non UTF-8 name".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn catalog_check_flags_hash_mismatch_and_parse_failure_together() {
+    let broken = "---\nbody without a closing delimiter\n";
+    let edited = format!("{broken}edited\n");
+    let dir = folder(
+        &format!("{}{}", entry_text("one", VALID), entry_text("two", broken)),
+        &[("one.md", VALID), ("two.md", &edited)],
+    );
+    assert_eq!(
+        problems(&dir),
+        vec![
+            format!(
+                "template \"two\": sha256 mismatch: index.toml has {}, templates/two.md has {}; run: shasum -a 256 templates/two.md",
+                sha256_hex(broken.as_bytes()),
+                sha256_hex(edited.as_bytes())
+            ),
+            "template \"two\": templates/two.md does not parse: template two: templates/two.md: frontmatter is not closed (expected a closing '---' line)".to_string(),
         ]
     );
 }
