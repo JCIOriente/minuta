@@ -16,7 +16,8 @@
 - Ten curated templates in the repository's `templates/` folder: `instagram`, `youtube`,
   `linkedin`, `tiktok`, `x-thread`, `newsletter`, `blog-post`, `podcast-notes`,
   `meeting-minutes` and `action-items`. The five built-in templates are unchanged and keep
-  working offline. New templates are added to the repository and appear in `pull --list`
+  working offline. A pulled template replaces the built-in or user template of the same name
+  (`youtube`, `linkedin` and `instagram` exist in both) for that folder. New templates are added to the repository and appear in `pull --list`
   without a new release.
 - README sections "Downloading templates" and "Contributing a template".
 
