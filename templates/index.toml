@@ -20,7 +20,7 @@ description = "Instagram caption with a hook and focused hashtags"
 platform = "instagram"
 tags = ["social", "short-form", "hashtags"]
 input = "summary -> transcript"
-sha256 = "966fc2f9a42063a5b25d7998c3b27c07fc5df8dcc11b77354e24eaaca70bf314"
+sha256 = "32e99a5507cd05a15dd18d0c75637a02f612f61cc5c8154a1216e4d35010caa8"
 
 [[template]]
 name = "linkedin"
