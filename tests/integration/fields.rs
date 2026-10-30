@@ -21,6 +21,7 @@ fn youtube_answer(title: &str, body: &str) -> String {
     serde_json::json!({
         "title": title,
         "body": body,
+        "hashtags": ["rust", "ownership"],
         "tags": ["rust", "ownership"],
         "thumbnail_text": "Ownership",
     })
@@ -43,6 +44,7 @@ fn valid_youtube_json() -> serde_json::Value {
                 {"start": 205, "title": "Préstamos"},
                 {"start": 280, "title": "Ejercicios"},
             ],
+            "hashtags": ["rust", "ownership"],
             "tags": ["rust", "ownership"],
             "thumbnail_text": "Ownership",
         },
@@ -117,7 +119,7 @@ fn fields_run_then_cached() {
 fn fields_repair_request() {
     require_ffmpeg!();
     let env = env_with_clip();
-    let over = youtube_answer("Rust ownership", &"x".repeat(3451));
+    let over = youtube_answer("Rust ownership", &"x".repeat(3201));
     let previous = over.clone();
     let fake = summary_and_fields(move |req| {
         if is_repair(req) {
@@ -141,7 +143,7 @@ fn fields_repair_request() {
     assert_eq!(
         message(youtube[1], 1),
         format!(
-            "Previous answer:\n{previous}\n\nProblems:\n- \"body\" has 3451 characters; the limit is 3450. Shorten it to at most 3450 characters."
+            "Previous answer:\n{previous}\n\nProblems:\n- \"body\" has 3201 characters; the limit is 3200. Shorten it to at most 3200 characters."
         )
     );
     assert!(message(youtube[1], 0).starts_with("You correct a JSON object."));
@@ -154,10 +156,88 @@ fn fields_repair_request() {
 }
 
 #[test]
+fn notes_over_limit_gets_a_repair_call() {
+    require_ffmpeg!();
+    let env = env_with_clip();
+    env.template(
+        "templates",
+        "post",
+        "---\noutput: fields\nfields: [body, notes]\nlimits:\n  notes: { max_chars: 5 }\n---\nWrite a post.",
+    );
+    let fake = summary_and_fields(|req| {
+        let notes = if is_repair(req) { "Short" } else { "Too long" };
+        serde_json::json!({"body": "Text", "notes": notes}).to_string()
+    });
+    let out = run_class(&env, &["run", "a.mp4", "-t", "post"], &fake);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let sent = chats(&fake);
+    let repair = sent.iter().find(|r| is_repair(r)).expect("a repair call");
+    assert!(
+        message(repair, 1).ends_with(
+            "\"notes\" has 8 characters; the limit is 5. Shorten it to at most 5 characters."
+        ),
+        "{}",
+        message(repair, 1)
+    );
+    let job = env.job_dir("a");
+    assert_eq!(
+        fs::read_to_string(job.join("post.md")).unwrap(),
+        "Text\n\nShort\n"
+    );
+    assert_eq!(read_json(job.join("post.json"))["fields"]["notes"], "Short");
+}
+
+#[test]
+fn notes_follow_filled_chapters_and_hashtags() {
+    require_ffmpeg!();
+    let env = env_with_clip();
+    env.template(
+        "templates",
+        "post",
+        "---\ninput: summary\noutput: fields\nfields: [body, chapters, hashtags, notes]\nformat: plain\n---\nWrite a post.",
+    );
+    let fake = summary_and_fields(|_| {
+        serde_json::json!({
+            "body": "A class.",
+            "hashtags": ["rust"],
+            "notes": "Pinned comment: Which part was hardest?",
+        })
+        .to_string()
+    });
+    let out = run_class(&env, &["run", "a.mp4", "-t", "post"], &fake);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let job = env.job_dir("a");
+    assert_eq!(
+        fs::read_to_string(job.join("post.md")).unwrap(),
+        "A class.\n\n0:00 Introducción\n0:32 La propiedad\n1:47 Movimientos y copias\n3:25 Préstamos\n4:40 Ejercicios\n\n#rust\n\nPinned comment: Which part was hardest?\n"
+    );
+    assert_eq!(
+        read_json(job.join("post.json")),
+        serde_json::json!({
+            "version": 1,
+            "template": "post",
+            "output_lang": "es",
+            "fields": {
+                "body": "A class.",
+                "chapters": [
+                    {"start": 0, "title": "Introducción"},
+                    {"start": 32, "title": "La propiedad"},
+                    {"start": 107, "title": "Movimientos y copias"},
+                    {"start": 205, "title": "Préstamos"},
+                    {"start": 280, "title": "Ejercicios"},
+                ],
+                "hashtags": ["rust"],
+                "notes": "Pinned comment: Which part was hardest?",
+            },
+        })
+    );
+}
+
+#[test]
 fn fields_repairs_exhausted() {
     require_ffmpeg!();
     let env = env_with_clip();
-    let over = youtube_answer("Rust ownership", &"x".repeat(3451));
+    let over = youtube_answer("Rust ownership", &"x".repeat(3201));
     let fake = summary_and_fields(move |_| over.clone());
     let args = ["run", "a.mp4", "-t", "youtube"];
     let out = run_class(&env, &args, &fake);
@@ -165,7 +245,7 @@ fn fields_repairs_exhausted() {
     let err = stderr(&out);
     assert_eq!(
         err.lines().last(),
-        Some("minuta: template youtube: the answer still breaks 1 limit after 2 repairs: \"body\" has 3451 characters; the limit is 3450. Shorten it to at most 3450 characters; raise llm.repairs, relax the limit in a project template, or use a stronger backend with --llm"),
+        Some("minuta: template youtube: the answer still breaks 1 limit after 2 repairs: \"body\" has 3201 characters; the limit is 3200. Shorten it to at most 3200 characters; raise llm.repairs, relax the limit in a project template, or use a stronger backend with --llm"),
         "{err}"
     );
     let job = env.job_dir("a");

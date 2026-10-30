@@ -101,6 +101,21 @@ mod tests {
     }
 
     #[test]
+    fn notes_render_in_declared_order() {
+        let values = Values(vec![
+            (Field::Notes, text("Slide 1: Hook")),
+            (Field::Body, text("Caption")),
+        ]);
+        assert_eq!(render(&values, Format::Plain), "Slide 1: Hook\n\nCaption\n");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&artifact_json("t", "en", &values)).unwrap();
+        assert_eq!(
+            parsed["fields"],
+            serde_json::json!({"notes": "Slide 1: Hook", "body": "Caption"})
+        );
+    }
+
+    #[test]
     fn render_plain_tags() {
         let values = Values(vec![(Field::Tags, list(&["rust", "cli"]))]);
         assert_eq!(render(&values, Format::Plain), "rust, cli\n");
