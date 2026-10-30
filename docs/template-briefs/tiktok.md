@@ -28,4 +28,4 @@ Casual, quick, a little playful. Spoken language. Lowercase is fine if it matche
 
 ## Good and bad
 Good: "the meeting rule that saved us an hour a week. what is yours?" Bad: "In this video I will explain how to have better meetings. Like and follow!"
-Good hashtags: "meetings, productivity, teamwork". Bad hashtags: "fyp, viral, trending, foryou, meetings" (generic tags unrelated to the content).
+Good hashtags: "meetings, asyncwork, standupfatigue, remoteteams" (one broad tag, then specific ones). Bad hashtags: "fyp, viral, trending, foryou" (reach-bait tags unrelated to the content).
