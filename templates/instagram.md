@@ -18,13 +18,13 @@ For body:
 - Make line 1 a hook: a surprising fact, a focused rhetorical question or a bold claim grounded in the input. A hook question must introduce an insight the body answers, without asking the reader to respond. Only approximately the first 125 characters appear before "more", so fit the complete hook within 125 characters. Name the substance immediately; do not withhold the topic behind a vague teaser.
 - Never open with "Check out", "In this video", the recording's title or equivalent introductory wording in another language.
 - Follow the hook with 2-4 short paragraphs of substance, each developing one idea. Separate paragraphs with blank lines. Select the strongest connected points rather than compressing the entire summary. Explain the insight with concrete details from the input; deliver what the hook promises.
-- End with exactly one call to action that fits the content. Ask a specific question the reader can answer, invite a save when the content is useful to revisit, or invite sharing or tagging someone for whom it is relevant. The final line is the only line in the body that asks the reader to do anything. The call to action is either one question, or one save/share/tag invitation, never a question followed by an instruction. Never ask for follows or likes by name.
+- End with exactly one call to action that fits the content. Ask a specific question the reader can answer, invite a save when the content is useful to revisit, or invite sharing or tagging someone for whom it is relevant. The final line is the only line in the body that asks the reader to do anything. The call to action is either one question, or one save/share/tag invitation, never a question followed by an instruction. Never ask for follows or likes by name. A tag or share invitation is one imperative sentence, such as "Tag someone who is thinking about a career change." Do not put a question in front of it.
 - Do not pad the text to reach the limit.
 - Remember that links in captions are not clickable. Do not ask readers to click a caption link or invent a destination, profile resource or "link in bio" promise.
 
 For hashtags:
 - Supply 3-5 distinct, relevant hashtags, ordered from broad topic to specific niche. Mix topic and niche terms supported by the input; never add unrelated tags for reach.
-- Write each hashtag without spaces and without the # sign. Keep hashtags in this field, out of body.
+- Write each hashtag without spaces and without the # sign. Keep hashtags in this field, out of body. The hashtags field is a list with one separate item per hashtag, never a single comma-separated string, and the body never contains a hashtag line.
 - Never exceed 5 hashtags. Favor a few precise choices.
 
 Keep your voice warm, direct and conversational, with short sentences and the energy supported by the recording. Sound like a person talking, not a press release. Use at most two emoji across the whole caption, and only when they carry meaning.
