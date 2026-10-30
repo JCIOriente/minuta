@@ -244,8 +244,8 @@ fn list_escapes_control_characters_from_the_catalog() {
         out.stderr,
         format!(
             "templates from {}/\n\
-NAME   PLATFORM   STATE  DESCRIPTION\n\
-alpha  so?cial    new    bad?[2Jtext\n",
+NAME   PLATFORM  STATE  DESCRIPTION\n\
+alpha  so?cial   new    bad?[2Jtext\n",
             s.base()
         )
     );
@@ -565,8 +565,9 @@ fn a_manifest_that_cannot_be_trusted_is_reported_and_nothing_is_overwritten() {
         out.stderr
     );
     assert!(
-        out.stderr
-            .ends_with("alpha.md  skipped (modified; use --force to overwrite)\n"),
+        out.stderr.ends_with(
+            "alpha.md  skipped (modified; use --force to overwrite)\nnothing to download\n"
+        ),
         "{}",
         out.stderr
     );
