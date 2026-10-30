@@ -51,7 +51,9 @@ fn transcript(language: &str, segments: &[(f64, f64, &str)]) -> Transcript {
 }
 
 fn write_transcript(dir: &Path, t: &Transcript) {
-    fs::write(dir.join(TRANSCRIPT_FILE), serde_json::to_string(t).unwrap()).unwrap();
+    let path = dir.join(TRANSCRIPT_FILE);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, serde_json::to_string(t).unwrap()).unwrap();
 }
 
 /// A job folder holding a short Spanish transcript.

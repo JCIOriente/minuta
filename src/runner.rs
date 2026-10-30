@@ -25,7 +25,6 @@ use crate::llm::{Backend, BackendId};
 use crate::models::{self, ModelKind};
 use crate::progress::{template_detail, Progress};
 use crate::steps::probe::read_probe;
-use crate::steps::transcribe::TRANSCRIPT_FILE;
 use crate::steps::{plan_join, Audio, Join, Mode, Outputs, Probe, Transcribe};
 use crate::template::discover::{discover, Catalog, Dirs};
 use crate::template::graph;
@@ -896,7 +895,7 @@ fn concurrency(config: &Config, id: &BackendId) -> usize {
 
 /// The speech language recorded in the job's transcript.
 fn detected_language(dir: &Path) -> Result<String> {
-    let path = dir.join(TRANSCRIPT_FILE);
+    let path = layout::transcript_json(dir);
     let json = fs::read_to_string(&path)
         .map_err(|e| Error::Io(io::Error::new(e.kind(), format!("{}: {e}", path.display()))))?;
     let transcript: Transcript = serde_json::from_str(&json)
@@ -909,14 +908,14 @@ fn detail(step: StepName, ctx: &Ctx) -> Option<String> {
     match step {
         StepName::Join => {
             let mode = match plan_join(&read_probe(&ctx.dir).ok()?) {
-                Mode::Link => "single source",
-                Mode::StreamCopy => "stream copy",
-                Mode::Reencode => "re-encode",
+                None => "single source",
+                Some(Mode::StreamCopy) => "stream copy",
+                Some(Mode::Reencode) => "re-encode",
             };
             Some(mode.to_string())
         }
         StepName::Transcribe => {
-            let json = fs::read_to_string(ctx.dir.join(TRANSCRIPT_FILE)).ok()?;
+            let json = fs::read_to_string(layout::transcript_json(&ctx.dir)).ok()?;
             let transcript: Transcript = serde_json::from_str(&json).ok()?;
             Some(format!(
                 "language={}  {} segments",

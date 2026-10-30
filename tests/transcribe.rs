@@ -64,7 +64,8 @@ fn setup(fixture: Option<&str>, exit: i32) -> Setup {
     let bin = fake_whisper(&bin_dir, fixture, exit);
     let model = tmp.path().join("ggml-tiny.bin");
     fs::write(&model, b"model-bytes").unwrap();
-    fs::write(job.join("audio.wav"), b"RIFF").unwrap();
+    fs::create_dir_all(job.join("assets")).unwrap();
+    fs::write(job.join("assets/audio.wav"), b"RIFF").unwrap();
     let ctx = Ctx {
         dir: job,
         sources: vec![],
@@ -76,6 +77,16 @@ fn setup(fixture: Option<&str>, exit: i32) -> Setup {
         model,
         ctx,
     }
+}
+
+/// The sorted file names in `dir`.
+fn names_in(dir: &Path) -> Vec<String> {
+    let mut names: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    names
 }
 
 fn step(s: &Setup, lang: &str) -> Transcribe {
@@ -131,22 +142,21 @@ fn whisper_args_include_vad_and_json() {
     assert_eq!(pair(&args, "-l"), "auto");
     assert_eq!(
         pair(&args, "-f"),
-        s.ctx.dir.join("audio.wav").to_str().unwrap()
+        s.ctx.dir.join("assets/audio.wav").to_str().unwrap()
     );
     let prefix = Path::new(pair(&args, "-of"));
-    assert_eq!(prefix.parent().unwrap(), s.ctx.dir);
+    assert_eq!(prefix.parent().unwrap(), s.ctx.dir.join(".minuta"));
     assert!(lines.iter().any(|l| l.contains("progress = 50%")));
 
     // The parsed transcript is written, whisper's raw file is gone, and no temp is left.
-    let json = fs::read_to_string(s.ctx.dir.join("transcript.json")).unwrap();
+    let json = fs::read_to_string(s.ctx.dir.join("assets/transcript.json")).unwrap();
     let t: Transcript = serde_json::from_str(&json).unwrap();
     assert!(!t.segments.is_empty());
-    let mut names: Vec<_> = fs::read_dir(&s.ctx.dir)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().into_string().unwrap())
-        .collect();
-    names.sort();
-    assert_eq!(names, ["audio.wav", "transcript.json"]);
+    assert_eq!(
+        names_in(&s.ctx.dir.join("assets")),
+        ["audio.wav", "transcript.json"]
+    );
+    assert_eq!(names_in(&s.ctx.dir.join(".minuta")), Vec::<String>::new());
 }
 
 #[test]
@@ -207,7 +217,7 @@ fn empty_transcript_still_writes_outputs() {
     assert_eq!(outcome.warnings.len(), 1);
     assert!(outcome.warnings[0].contains("no speech"));
 
-    let json = fs::read_to_string(s.ctx.dir.join("transcript.json")).unwrap();
+    let json = fs::read_to_string(s.ctx.dir.join("assets/transcript.json")).unwrap();
     let t: Transcript = serde_json::from_str(&json).unwrap();
     assert!(t.segments.is_empty());
 
@@ -227,16 +237,17 @@ fn whisper_failure_leaves_no_artifact() {
     let s = setup(None, 3);
     let err = run_step(&step(&s, "auto"), &s.ctx, &mut |_| {}).unwrap_err();
     assert!(matches!(err, Error::Tool { code: Some(3), .. }), "{err:?}");
-    assert!(!s.ctx.dir.join("transcript.json").exists());
-    assert!(!s.ctx.dir.join("transcript.json.tmp").exists());
+    assert!(!s.ctx.dir.join("assets/transcript.json").exists());
+    assert!(!s.ctx.dir.join("assets/transcript.json.tmp").exists());
 
     // Also when whisper "succeeds" but wrote garbage.
     let s = setup(Some("sample.json"), 0);
     fs::write(&s.bin, "#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = -of ] && p=$2; shift; done\necho nope > \"$p.json\"\n").unwrap();
     let err = run_step(&step(&s, "auto"), &s.ctx, &mut |_| {}).unwrap_err();
     assert!(matches!(err, Error::Parse(_)), "{err:?}");
-    assert!(!s.ctx.dir.join("transcript.json").exists());
-    assert_eq!(fs::read_dir(&s.ctx.dir).unwrap().count(), 1);
+    assert!(!s.ctx.dir.join("assets/transcript.json").exists());
+    assert_eq!(names_in(&s.ctx.dir.join("assets")), ["audio.wav"]);
+    assert_eq!(names_in(&s.ctx.dir.join(".minuta")), Vec::<String>::new());
 }
 
 #[test]
@@ -247,14 +258,10 @@ fn missing_whisper_output_names_file() {
 
     let expected = format!(
         "whisper exited without writing {}",
-        s.ctx.dir.join("whisper-raw.json").display()
+        s.ctx.dir.join(".minuta/whisper-raw.json").display()
     );
     assert!(matches!(&err, Error::Job(m) if *m == expected), "{err}");
-    let names: Vec<_> = fs::read_dir(&s.ctx.dir)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().into_string().unwrap())
-        .collect();
-    assert_eq!(names, ["audio.wav"]);
+    assert_eq!(names_in(&s.ctx.dir.join("assets")), ["audio.wav"]);
 }
 
 #[test]
@@ -269,14 +276,15 @@ fn outputs_derive_from_transcript_json() {
         }],
     };
     fs::write(
-        s.ctx.dir.join("transcript.json"),
+        s.ctx.dir.join("assets/transcript.json"),
         serde_json::to_string(&t).unwrap(),
     )
     .unwrap();
     // A raw whisper file with different content must be ignored.
+    fs::create_dir_all(s.ctx.dir.join(".minuta")).unwrap();
     fs::copy(
         format!("{FIXTURES}/sample.json"),
-        s.ctx.dir.join("whisper-raw.json"),
+        s.ctx.dir.join(".minuta/whisper-raw.json"),
     )
     .unwrap();
 
@@ -295,6 +303,22 @@ fn outputs_derive_from_transcript_json() {
     assert_eq!(
         fs::read_to_string(s.ctx.dir.join("captions.srt")).unwrap(),
         transcript::to_srt(&t)
+    );
+}
+
+#[test]
+fn transcript_txt_and_srt_stay_at_root() {
+    let s = setup(Some("sample.json"), 0);
+    run_step(&step(&s, "auto"), &s.ctx, &mut |_| {}).unwrap();
+    Outputs.run(&s.ctx).unwrap();
+
+    assert_eq!(
+        names_in(&s.ctx.dir),
+        [".minuta", "assets", "captions.srt", "transcript.txt"]
+    );
+    assert_eq!(
+        names_in(&s.ctx.dir.join("assets")),
+        ["audio.wav", "transcript.json"]
     );
 }
 
@@ -319,7 +343,7 @@ fn outputs_do_not_follow_a_planted_tmp_symlink() {
         }],
     };
     fs::write(
-        s.ctx.dir.join("transcript.json"),
+        s.ctx.dir.join("assets/transcript.json"),
         serde_json::to_string(&t).unwrap(),
     )
     .unwrap();

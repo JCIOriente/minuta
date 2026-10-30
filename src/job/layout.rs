@@ -45,6 +45,11 @@ pub fn raw_whisper(dir: &Path) -> PathBuf {
     state_dir(dir).join("whisper-raw.json")
 }
 
+/// `.minuta/concat.txt`, ffmpeg's list of sources while joining. Removed after the join.
+pub fn concat_list(dir: &Path) -> PathBuf {
+    state_dir(dir).join("concat.txt")
+}
+
 /// `assets/transcript.json`.
 pub fn transcript_json(dir: &Path) -> PathBuf {
     assets(dir).join("transcript.json")
