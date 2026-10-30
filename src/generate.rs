@@ -131,13 +131,13 @@ impl TemplateRun<'_> {
 
     /// A requested template whose files an earlier run left in `.minuta/derived/` (it ran as
     /// an implicit dependency then) gets them moved to their normal places, so an unchanged
-    /// template needs no new run. Returns whether anything moved. Does nothing for an
+    /// template needs no new run. Returns whether any file moved or was removed, so the caller records the new paths. Does nothing for an
     /// implicit template.
     pub fn move_derived(&self, ctx: &Ctx) -> Result<bool> {
         if self.implicit {
             return Ok(false);
         }
-        let mut moved = false;
+        let mut changed = false;
         let pairs = self
             .artifacts_at(&ctx.dir, true)
             .into_iter()
@@ -149,6 +149,7 @@ impl TemplateRun<'_> {
             if exists(&normal)? {
                 // The normal file wins; a second copy must not stay behind.
                 fs::remove_file(&derived).map_err(|e| io_error(&derived, e))?;
+                changed = true;
                 continue;
             }
             let bytes = fs::read(&derived).map_err(|e| io_error(&derived, e))?;
@@ -157,9 +158,9 @@ impl TemplateRun<'_> {
                 Ok(())
             })?;
             fs::remove_file(&derived).map_err(|e| io_error(&derived, e))?;
-            moved = true;
+            changed = true;
         }
-        Ok(moved)
+        Ok(changed)
     }
 
     /// The template's fingerprint. It hashes the content of the input artifact and the

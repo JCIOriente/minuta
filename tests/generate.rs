@@ -1593,7 +1593,14 @@ fn dependent_reads_implicit_inputs_from_derived() {
     let r = run_implicit(&youtube, &b, false, &implicit);
     execute(&r, dir.path()).unwrap();
     let json = fs::read_to_string(template_json(dir.path(), "youtube")).unwrap();
-    assert!(json.contains("\"start\": 12"), "{json}");
+    assert_eq!(
+        json,
+        "{\n  \"version\": 1,\n  \"template\": \"youtube\",\n  \"output_lang\": \"es\",\n  \
+         \"fields\": {\n    \"title\": \"Hola\",\n    \"chapters\": [\n      {\n        \
+         \"start\": 0,\n        \"title\": \"Introducción\"\n      },\n      {\n        \
+         \"start\": 12,\n        \"title\": \"Empezamos\"\n      }\n    ],\n    \
+         \"body\": \"Corto.\"\n  }\n}\n"
+    );
     assert_eq!(
         fs::read_to_string(dir.path().join("youtube.md")).unwrap(),
         "Hola\n\n0:00 Introducción\n0:12 Empezamos\n\nCorto.\n"
@@ -1649,6 +1656,83 @@ fn move_derived_removes_a_copy_when_the_normal_file_exists() {
     let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok("Resumen.".into())]);
     execute(&run_implicit(&t, &b, true, &[]), dir.path()).unwrap();
     fs::write(dir.path().join("summary.md"), "Resumen.\n").unwrap();
-    assert!(!run(&t, &b, "es").move_derived(&ctx(dir.path())).unwrap());
+    assert!(run(&t, &b, "es").move_derived(&ctx(dir.path())).unwrap());
     assert_eq!(files_under(dir.path()), ["summary.md"]);
+}
+
+#[test]
+fn move_derived_handles_each_file_of_a_pair_on_its_own() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    execute(&run_implicit(&t, &b, true, &[]), dir.path()).unwrap();
+    // The json already sits in assets/; only the md still has to move.
+    fs::create_dir_all(template_json(dir.path(), "social").parent().unwrap()).unwrap();
+    fs::write(template_json(dir.path(), "social"), "kept\n").unwrap();
+    assert!(run(&t, &b, "es").move_derived(&ctx(dir.path())).unwrap());
+    assert_eq!(files_under(dir.path()), ["assets/social.json", "social.md"]);
+    assert_eq!(
+        fs::read_to_string(template_json(dir.path(), "social")).unwrap(),
+        "kept\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("social.md")).unwrap(),
+        "Hola\n\nCorto.\n"
+    );
+}
+
+#[test]
+fn derived_copy_that_cannot_be_removed_is_an_error() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    let blocker = derived_dir(dir.path()).join("social.json");
+    fs::create_dir_all(&blocker).unwrap();
+    let err = execute(&run(&t, &b, "es"), dir.path()).unwrap_err();
+    assert!(
+        matches!(err, Error::Io(ref e) if e.to_string().starts_with(&format!("{}: ", blocker.display()))),
+        "{err}"
+    );
+}
+
+#[test]
+fn derived_copy_that_cannot_be_read_is_an_error() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
+    let blocker = derived_dir(dir.path()).join("social.json");
+    fs::create_dir_all(&blocker).unwrap();
+    let err = run(&t, &b, "es")
+        .move_derived(&ctx(dir.path()))
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::Io(ref e) if e.to_string().starts_with(&format!("{}: ", blocker.display()))),
+        "{err}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn outputs_refuse_a_symlinked_assets_folder() {
+    let (dir, _) = job();
+    let outside = TempDir::new().unwrap();
+    std::os::unix::fs::symlink(outside.path(), dir.path().join("assets")).unwrap();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    assert!(execute(&run(&t, &b, "es"), dir.path()).is_err());
+    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
+    assert!(!dir.path().join("social.md").try_exists().unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+fn moving_derived_files_refuses_a_symlinked_assets_folder() {
+    let (dir, _) = job();
+    let t = tpl("social", FIELDS);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
+    execute(&run_implicit(&t, &b, true, &[]), dir.path()).unwrap();
+    let outside = TempDir::new().unwrap();
+    std::os::unix::fs::symlink(outside.path(), dir.path().join("assets")).unwrap();
+    assert!(run(&t, &b, "es").move_derived(&ctx(dir.path())).is_err());
+    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
 }
