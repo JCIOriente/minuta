@@ -19,6 +19,8 @@ const MANIFEST_WARNING: &str = "invalid manifest, treating every file as modifie
 #[serde(deny_unknown_fields)]
 pub struct Entry {
     pub name: String,
+    /// `description`, `platform`, `tags` and `input` are free text from the network. They are
+    /// not validated here: pass them through the CLI's `sanitize` before printing.
     pub description: String,
     pub platform: Option<String>,
     #[serde(default)]
@@ -107,7 +109,8 @@ pub struct Manifest {
 
 impl Manifest {
     /// Reads `.pulled.toml`. Text that cannot be trusted gives an empty manifest and a
-    /// warning, so every file on disk reads as modified and none is overwritten.
+    /// warning, so every file on disk reads as modified and none is overwritten. The
+    /// warning is safe to print: control characters from the file are escaped.
     pub fn parse(text: &str) -> (Manifest, Option<String>) {
         if text.trim().is_empty() {
             return (Manifest::default(), None);
@@ -116,7 +119,7 @@ impl Manifest {
             Ok(manifest) => (manifest, None),
             Err(reason) => (
                 Manifest::default(),
-                Some(format!("{MANIFEST_WARNING}{reason}")),
+                Some(format!("{MANIFEST_WARNING}{}", escape_controls(&reason))),
             ),
         }
     }
@@ -146,7 +149,12 @@ impl Manifest {
         self.files.get(name).map(String::as_str)
     }
 
+    /// Records the hash of a template just written. `name` and `sha256` come from a parsed
+    /// [`Catalog`] and [`sha256_hex`]; anything else would make `to_toml` write a file that
+    /// `parse` rejects, so it is a caller bug and panics.
     pub fn set(&mut self, name: &str, sha256: &str) {
+        assert!(valid_stem(name), "invalid template name {name:?}");
+        assert!(is_sha256(sha256), "invalid sha256 {sha256:?}");
         self.files.insert(name.to_string(), sha256.to_string());
     }
 
@@ -230,6 +238,9 @@ pub fn select<'c>(catalog: &'c Catalog, selection: Selection<'_>) -> Result<Vec<
             Ok(chosen)
         }
         Selection::Filter(text) => {
+            if text.trim().is_empty() {
+                return Err(Error::Usage("filter must not be empty".into()));
+            }
             let needle = text.to_lowercase();
             let hit = |s: &str| s.to_lowercase().contains(&needle);
             let chosen: Vec<&Entry> = catalog
@@ -254,6 +265,20 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Escapes every control character except `\n` and `\t`, for text that came from a file an
+/// untrusted repo may have supplied and that is printed to a terminal.
+fn escape_controls(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_control() && c != '\n' && c != '\t' {
+                c.escape_unicode().to_string()
+            } else {
+                c.to_string()
+            }
+        })
         .collect()
 }
 

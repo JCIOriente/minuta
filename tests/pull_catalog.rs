@@ -495,3 +495,91 @@ fn sha256_hex_of_empty_input() {
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     );
 }
+
+// ---- review follow-ups ----
+
+#[test]
+fn catalog_rejects_bad_name_after_a_valid_entry() {
+    let text = catalog_text(&format!(
+        "{}{}",
+        entry_text("ok", &a()),
+        entry_text("Bad", &b())
+    ));
+    assert_eq!(
+        parse_err(&text),
+        "template catalog: invalid template name \"Bad\" (use lowercase letters, digits, '-' and '_', starting with a letter or digit)"
+    );
+}
+
+#[test]
+fn catalog_rejects_bad_sha_after_a_valid_entry() {
+    let text = catalog_text(&format!(
+        "{}{}",
+        entry_text("ok", &a()),
+        entry_text("second", "nope")
+    ));
+    assert_eq!(
+        parse_err(&text),
+        "template catalog: template \"second\" has an invalid sha256 (expected 64 lowercase hex characters)"
+    );
+}
+
+#[test]
+fn manifest_bad_name_after_a_valid_entry_is_empty_with_warning() {
+    let text = format!(
+        "version = 1\n[[file]]\nname = \"ok\"\nsha256 = \"{}\"\n[[file]]\nname = \"Bad\"\nsha256 = \"{}\"\n",
+        a(),
+        b()
+    );
+    assert_eq!(
+        invalid_manifest(&text),
+        format!("{MANIFEST_WARNING}invalid template name \"Bad\"")
+    );
+}
+
+#[test]
+fn manifest_bad_sha_after_a_valid_entry_is_empty_with_warning() {
+    let text = format!(
+        "version = 1\n[[file]]\nname = \"ok\"\nsha256 = \"{}\"\n[[file]]\nname = \"second\"\nsha256 = \"nope\"\n",
+        a()
+    );
+    assert_eq!(
+        invalid_manifest(&text),
+        format!("{MANIFEST_WARNING}template \"second\" has an invalid sha256")
+    );
+}
+
+#[test]
+fn manifest_warning_escapes_control_characters_from_the_file() {
+    let w = invalid_manifest("version = 1\n\"\\u001b]0;x\\u0007\" = 1\n");
+    assert!(w.contains("unknown field"), "{w}");
+    assert!(w.contains("\\u{1b}]0;x\\u{7}"), "{w}");
+    assert!(
+        !w.chars().any(|c| c.is_control() && c != '\n' && c != '\t'),
+        "{w:?}"
+    );
+}
+
+#[test]
+fn select_filter_blank_is_usage_error() {
+    let catalog = sample();
+    for blank in ["", " ", "\t\n"] {
+        assert_eq!(
+            usage(select(&catalog, Selection::Filter(blank))),
+            "filter must not be empty",
+            "filter {blank:?}"
+        );
+    }
+}
+
+#[test]
+#[should_panic(expected = "invalid template name \"../x\"")]
+fn manifest_set_rejects_invalid_name() {
+    Manifest::default().set("../x", &a());
+}
+
+#[test]
+#[should_panic(expected = "invalid sha256 \"nope\"")]
+fn manifest_set_rejects_invalid_sha() {
+    Manifest::default().set("ok", "nope");
+}
