@@ -475,7 +475,7 @@ fn chapters_regenerated_identical_keeps_youtube_cached() {
     let strings = |s: &[&str]| s.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     // The youtube prompt does not carry the chapters, so its rerun on new chapters is served
     // by the call cache: it runs again (and fills the new list) without a new request.
-    let four_chapters = "Rust ownership\n\nA class about ownership.\n\n0:00 Introducción\n0:32 La propiedad\n1:47 Movimientos y copias\n3:25 Préstamos\n\nrust, ownership\n\nOwnership\n";
+    let four_chapters = "Rust ownership\n\nA class about ownership.\n\n0:00 Introducción\n0:32 La propiedad\n1:47 Movimientos y copias\n3:25 Préstamos\n\n#rust #ownership\n\nrust, ownership\n\nOwnership\n";
     assert_eq!(
         runs,
         [

@@ -239,7 +239,7 @@ fn fields_error_unknown_field() {
     assert_names_template(&m);
     assert_eq!(
         m,
-        "template a: unknown field \"headline\" (known: title, body, tags, hashtags, thumbnail_text, chapters)"
+        "template a: unknown field \"headline\" (known: title, body, tags, hashtags, thumbnail_text, notes, chapters)"
     );
 }
 
@@ -813,6 +813,7 @@ fn builtin_youtube_shape() {
             Field::Title,
             Field::Body,
             Field::Chapters,
+            Field::Hashtags,
             Field::Tags,
             Field::ThumbnailText,
         ],
@@ -829,6 +830,21 @@ fn builtin_youtube_chapters_instruction() {
         lines,
         ["- Do not write chapters or timestamps in the body. The chapter list is added after it."]
     );
+}
+
+#[test]
+fn builtin_youtube_declares_hashtags_after_chapters() {
+    assert_eq!(
+        builtin_limit("youtube", Field::Hashtags),
+        Limit {
+            max_chars: Some(80),
+            max: Some(5),
+        }
+    );
+    let out = builtin("youtube").render(&vars());
+    let hashtags = out.find("- hashtags:").expect("a hashtags instruction");
+    assert!(out.find("- body:").unwrap() < hashtags, "{out}");
+    assert!(hashtags < out.find("- tags:").unwrap(), "{out}");
 }
 
 #[test]
@@ -911,7 +927,7 @@ fn builtin_youtube_title_limit() {
 
 #[test]
 fn builtin_youtube_body_limit() {
-    assert_eq!(builtin_limit("youtube", Field::Body), chars(3450));
+    assert_eq!(builtin_limit("youtube", Field::Body), chars(3200));
 }
 
 #[test]

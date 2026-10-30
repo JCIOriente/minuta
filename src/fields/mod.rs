@@ -19,6 +19,7 @@ pub enum Field {
     Tags,
     Hashtags,
     ThumbnailText,
+    Notes,
     /// Filled by minuta from `chapters.json`; the model never writes it.
     Chapters,
 }
@@ -32,12 +33,13 @@ pub enum Kind {
 
 impl Field {
     /// Every field, in the order of the spec table.
-    pub const ALL: [Field; 6] = [
+    pub const ALL: [Field; 7] = [
         Field::Title,
         Field::Body,
         Field::Tags,
         Field::Hashtags,
         Field::ThumbnailText,
+        Field::Notes,
         Field::Chapters,
     ];
 
@@ -48,6 +50,7 @@ impl Field {
             Field::Tags => "tags",
             Field::Hashtags => "hashtags",
             Field::ThumbnailText => "thumbnail_text",
+            Field::Notes => "notes",
             Field::Chapters => "chapters",
         }
     }
@@ -59,7 +62,7 @@ impl Field {
 
     pub fn kind(self) -> Kind {
         match self {
-            Field::Title | Field::Body | Field::ThumbnailText => Kind::Text,
+            Field::Title | Field::Body | Field::ThumbnailText | Field::Notes => Kind::Text,
             Field::Tags | Field::Hashtags => Kind::List,
             Field::Chapters => Kind::Chapters,
         }
@@ -79,6 +82,7 @@ impl Field {
             Field::Tags => "Search keywords, without `#`.",
             Field::Hashtags => "Hashtags, written without the `#` sign.",
             Field::ThumbnailText => "A few words to show on a thumbnail image.",
+            Field::Notes => "Notes for the person publishing. Never part of the published text.",
             Field::Chapters => "Chapters, filled by minuta.",
         }
     }
@@ -255,8 +259,21 @@ mod tests {
                 Field::Tags,
                 Field::Hashtags,
                 Field::ThumbnailText,
+                Field::Notes,
                 Field::Chapters,
             ]
+        );
+    }
+
+    #[test]
+    fn field_notes_name_kind_and_description() {
+        assert_eq!(Field::Notes.name(), "notes");
+        assert_eq!(Field::from_name("notes"), Some(Field::Notes));
+        assert_eq!(Field::Notes.kind(), Kind::Text);
+        assert!(!Field::Notes.is_filled());
+        assert_eq!(
+            Field::Notes.description(),
+            "Notes for the person publishing. Never part of the published text."
         );
     }
 

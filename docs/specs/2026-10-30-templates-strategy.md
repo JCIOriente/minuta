@@ -1,6 +1,6 @@
 # Publishing kits: stronger curated templates — Spec
 
-- Status: draft
+- Status: approved
 - Date: 2026-10-30
 - Owner: Arnold Gandarillas Castillo
 - Related: docs/specs/2026-10-30-templates-pull.md, docs/specs/2026-10-25-chapters.md,
@@ -93,7 +93,7 @@ what the publisher will post, so these pieces have no place to go.
 7. `docs/template-briefs/README.md` lists `notes` and says any fields template may declare
    `chapters`.
 8. Every changed or new template has the evidence `docs/conventions.md` asks for: runs on `Webinar 1`
-   and `Clase 3.1`, with `ollama:gemma4:26b` and `claude`, read against the brief by an independent
+   and `Clase 3.1`, with `ollama:gemma4:26b` and `claude:haiku`, read against the brief by an independent
    reviewer. The PR records what was run and found.
 9. No output in the evidence runs invents a fact, computes a number, names a framework the input
    does not, ends mid-sentence, or puts a placeholder in `body`.
@@ -191,7 +191,7 @@ templates.
 
 ## Decisions
 - ADR-0012: `notes` joins the shared field set.
-- Owner, 2026-10-30: use `notes`, keep `x-thread` in Markdown, add `youtube-shorts`,
+- Owner, 2026-10-30: use `notes`, keep `x-thread` in Markdown, send evidence transcripts to Anthropic only through `claude:haiku` run by a Haiku subagent, add `youtube-shorts`,
   `instagram-carousel` and a class template.
 - Defaults taken: LinkedIn hashtags 1-3, TikTok `body` 500 and `hashtags` 5, podcast-notes plain with
   chapters, short-discussion minutes, flat action items, no minuta labels, preview text in `notes`,
@@ -212,8 +212,6 @@ content for the person publishing.
 ## Open questions
 - Spotify documents `MM:SS` and `00:00`, and minuta writes `0:00`. This needs a real upload, which
   this work does not do. If Spotify rejects it, a later change adds a stamp format.
-- The evidence runs send two recordings' transcripts to Anthropic through `claude`, as the
-  convention's stronger model. Confirm at approval.
 
 ## Implementation status
 - [ ] Plan: docs/plans/2026-10-30-templates-strategy.md

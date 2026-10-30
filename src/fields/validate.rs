@@ -316,6 +316,15 @@ mod tests {
     }
 
     #[test]
+    fn empty_notes_is_a_violation() {
+        let s = one(Field::Notes, no_limit());
+        assert_eq!(
+            messages(parse_answer(r#"{"notes": "  "}"#, &s)),
+            vec![r#""notes" is empty"#]
+        );
+    }
+
+    #[test]
     fn violation_hashtag_whitespace() {
         let s = one(Field::Hashtags, no_limit());
         assert_eq!(
