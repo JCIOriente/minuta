@@ -485,7 +485,7 @@ fn templates_pull(args: PullArgs) -> Result<()> {
         Ok(names) => Some(names),
         Err(e) => {
             eprintln!(
-                "warning: cannot check which templates minuta already has: {}",
+                "warning: cannot check which templates minuta already has: {}; notes about missing input templates are skipped",
                 sanitize(&e.to_string())
             );
             None

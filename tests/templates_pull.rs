@@ -995,6 +995,44 @@ fn an_empty_catalog_with_a_name_is_an_unknown_template() {
     );
 }
 
+#[test]
+fn a_destination_lookup_that_fails_is_reported_and_makes_no_note() {
+    let d = Dest::new();
+    // A name this long is a valid template name, but no file system can look it up.
+    let long = "a".repeat(300);
+    let input = format!("{long} -> transcript");
+    let s = server_with(&[("alpha", None, "Alpha", Some(input.as_str()))]);
+    let mut c = case(names(&["alpha"]));
+    c.yes = true;
+    let out = c.run(&s, &d.dir());
+    out.result.unwrap();
+    let path = d.dir().join(format!("{long}.md"));
+    assert!(
+        out.stderr.starts_with(&format!(
+            "alpha.md  written\nwarning: cannot check {}: ",
+            path.display()
+        )),
+        "{}",
+        out.stderr
+    );
+    assert!(!out.stderr.contains("note:"), "{}", out.stderr);
+}
+
+#[test]
+fn an_input_name_that_is_not_a_template_name_is_never_looked_up_on_disk() {
+    let d = Dest::new();
+    // `<dest>/../gamma.md` exists: a lookup of "../gamma" would wrongly find it.
+    fs::write(d.tmp.path().join("gamma.md"), "outside the destination\n").unwrap();
+    let s = server_with(&[("alpha", None, "Alpha", Some("../gamma"))]);
+    let mut c = case(names(&["alpha"]));
+    c.yes = true;
+    let out = c.run(&s, &d.dir());
+    assert_eq!(
+        out.stderr,
+        format!("alpha.md  written\n{}", note("alpha", "../gamma"))
+    );
+}
+
 // ---- the binary ----
 
 struct Env {
@@ -1266,7 +1304,8 @@ fn control_characters_in_the_catalog_never_reach_the_terminal() {
 #[test]
 fn a_template_folder_that_cannot_be_read_does_not_block_pulling() {
     let env = Env::new();
-    let s = server();
+    // beta needs a template that minuta does not have: with the check skipped, no note.
+    let s = server_with(&[("beta", None, "Beta", Some("gamma"))]);
     fs::write(env.work().join("templates"), "not a folder").unwrap();
     let out = env.run(
         &["templates", "pull", "beta", "--yes", "--to", "out"],
@@ -1274,10 +1313,16 @@ fn a_template_folder_that_cannot_be_read_does_not_block_pulling() {
     );
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let stderr = text(&out.stderr);
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(lines.len(), 2, "{stderr}");
     assert!(
-        stderr.starts_with("warning: cannot check which templates minuta already has: "),
+        lines[0].starts_with("warning: cannot check which templates minuta already has: "),
         "{stderr}"
     );
-    assert!(stderr.ends_with("beta.md  written\n"), "{stderr}");
+    assert!(
+        lines[0].ends_with("; notes about missing input templates are skipped"),
+        "{stderr}"
+    );
+    assert_eq!(lines[1], "beta.md  written");
     assert!(env.work().join("out/beta.md").is_file());
 }
