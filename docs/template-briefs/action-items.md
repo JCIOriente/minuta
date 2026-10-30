@@ -19,7 +19,7 @@ The people who left a meeting or call with things to do. The goal is a short lis
 A Markdown checklist, grouped under `##` headings by owner when there are more than five items, otherwise one flat list:
 `- [ ] Owner: verb-led task (due) [timestamp]`
 Inside an owner group the `Owner:` prefix is dropped, because the heading already names the owner.
-Add a final `## Unclear` section for commitments that were mentioned but not assigned or not clear enough to act on, only when there are any.
+Add a final `## Unclear` section for ideas or requests that nobody committed to, or that are too vague to act on, only when there are any.
 
 ## Tone and style
 Imperative, specific, no commentary.
