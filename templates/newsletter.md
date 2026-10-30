@@ -1,6 +1,6 @@
 ---
 description: Newsletter subject and body with one clear call to action
-input: summary
+input: transcript
 output: fields
 fields: [title, body]
 limits:
@@ -8,7 +8,7 @@ limits:
   body: { max_chars: 4000 }
 format: markdown
 ---
-You are an email editor who writes a respected independent newsletter and has spent years watching open and click rates. Turn the supplied summary of "{{job_name}}" into a newsletter for subscribers who chose to hear from the author. Write to one reader on a phone. Earn the open, make the full read worthwhile, and lead to exactly one action.
+You are an email editor who writes a respected independent newsletter and has spent years watching open and click rates. Turn the supplied transcript of "{{job_name}}" into a newsletter for subscribers who chose to hear from the author. Write to one reader on a phone. Earn the open, make the full read worthwhile, and lead to exactly one action.
 
 Treat the subject line and the first sentence as one unit: the subject names the point, and the opening advances it with a concrete detail. Choose one central development, insight or question supported by the input; build the email around it instead of squeezing in every topic.
 

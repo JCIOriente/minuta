@@ -1,6 +1,6 @@
 # Brief: podcast-notes
 
-- **Template**: `podcast-notes`. Output `fields: [title, body, tags]`, `format: markdown`. Input `summary`.
+- **Template**: `podcast-notes`. Output `fields: [title, body, tags]`, `format: markdown`. Input `transcript`.
 - **Limits**: `title` max_chars 100, `body` max_chars 4000, `tags` max 10, max_chars 300.
 
 ## Persona
@@ -12,7 +12,7 @@ Listeners deciding whether to play, and past listeners looking for something the
 ## Platform rules
 - Podcast apps show the first 2-3 lines of the description; keep the hook there.
 - Apps and feeds allow long descriptions, but plain text and simple Markdown render everywhere.
-- Timestamps in the notes help, but the summary input only carries them when it kept them. Use a `[00:12:34]` timestamp only when the input contains it; never invent one.
+- Timestamps in the notes help, but the transcript only carries them where it has timestamps. Use a `[00:12:34]` timestamp only when the input contains it; never invent one.
 
 ## Structure
 - `title`: the episode title, specific and short enough to read in a feed.

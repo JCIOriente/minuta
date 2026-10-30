@@ -1,6 +1,6 @@
 # Brief: x-thread
 
-- **Template**: `x-thread`. Output Markdown (free text, no `fields`), input `summary`.
+- **Template**: `x-thread`. Output Markdown (free text, no `fields`), input `transcript`.
 - **Limits**: not enforceable in the frontmatter (a thread is several posts). The prompt must state them.
 
 ## Persona

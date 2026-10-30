@@ -1,6 +1,6 @@
 # Brief: instagram
 
-- **Template**: `instagram`. Output `fields: [body, hashtags]`, `format: plain`. Input `summary`.
+- **Template**: `instagram`. Output `fields: [body, hashtags]`, `format: plain`. Input `transcript`.
 - **Limits**: `body` max_chars 1800 (the platform allows 2200; keep room), `hashtags` max 5, max_chars 100.
 
 ## Persona

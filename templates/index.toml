@@ -19,16 +19,16 @@ name = "instagram"
 description = "Instagram caption with a hook and focused hashtags"
 platform = "instagram"
 tags = ["social", "short-form", "hashtags"]
-input = "summary -> transcript"
-sha256 = "6ce3445f95f5af71c826217034806ba5a05f99eb34b69118817a4bac6b6152d8"
+input = "transcript"
+sha256 = "0ef9e576652be4a039d1cc933e25b7bf0c18f9f042859b9cad2ee6392b3a2396"
 
 [[template]]
 name = "linkedin"
 description = "Specific, useful LinkedIn post from the recording"
 platform = "linkedin"
 tags = ["social", "professional"]
-input = "summary -> transcript"
-sha256 = "082283f68c9d10b73567098c2cbec50b4bf2b6d4b7de86f38dfea3d4a0080cba"
+input = "transcript"
+sha256 = "c5a1b87c2490e707f787c31a3f54e64930275a52ecc16fd1545d3e320fc89a99"
 
 [[template]]
 name = "meeting-minutes"
@@ -42,37 +42,37 @@ name = "newsletter"
 description = "Newsletter subject and body with one clear call to action"
 platform = "email"
 tags = ["newsletter", "long-form"]
-input = "summary -> transcript"
-sha256 = "f98e9274496f5ea5ac52a1ee81af4f64554f286192dfdc6554ddfd41a98f4f32"
+input = "transcript"
+sha256 = "283e834e2db8e34dfb814ec92d50169b0d1a67ce1d11751ca13edba223cd7499"
 
 [[template]]
 name = "podcast-notes"
 description = "Podcast episode title, show notes and search topics"
 platform = "audio"
 tags = ["podcast", "show-notes"]
-input = "summary -> transcript"
-sha256 = "5f814856ca07437402ffdbe69e791e2e8c49a81f8b7b5c14aac69181fc050381"
+input = "transcript"
+sha256 = "93d20f6ff46db41d92087f58e2afbc3143bf7ea2abb82b53376dbed49d8e48df"
 
 [[template]]
 name = "tiktok"
 description = "TikTok caption with a conversation hook and focused hashtags"
 platform = "tiktok"
 tags = ["social", "short-form", "hashtags"]
-input = "summary -> transcript"
-sha256 = "9e3fddee4f9cb23aae20c5fcdc7e1d907b2a5f12482f99d055f75c629f26c85a"
+input = "transcript"
+sha256 = "dc971351eb969fb7f15bbfac113d53c0ebfb103e6e6cfc1242eac199fd5e8e1b"
 
 [[template]]
 name = "x-thread"
 description = "X thread with a sharp hook and one clear idea per post"
 platform = "x"
 tags = ["social", "thread"]
-input = "summary -> transcript"
-sha256 = "775c597c3fe61b3d08e9f7c44089c62b26b7c022ccce8b939978f9e2490d6280"
+input = "transcript"
+sha256 = "ab525270aa6abf43c076203031164542068aba388267f002d6235cb9177036a2"
 
 [[template]]
 name = "youtube"
 description = "YouTube title, description, tags and thumbnail text"
 platform = "youtube"
 tags = ["video", "seo", "thumbnail"]
-input = "summary -> transcript"
-sha256 = "38577d8a83a2cf73be86a6334f90e7e1104e671a7cf0e67f9cb0d0d2331bc814"
+input = "transcript"
+sha256 = "3ccdff37bec064262e971dededf4538e29e1ba3c5bf657395743c83ff7f0f048"

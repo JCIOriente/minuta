@@ -1,6 +1,6 @@
 # Brief: youtube
 
-- **Template**: `youtube`. Output `fields: [title, body, tags, thumbnail_text]`, `format: plain`. Input `summary`.
+- **Template**: `youtube`. Output `fields: [title, body, tags, thumbnail_text]`, `format: plain`. Input `transcript`.
 - **Limits**: `title` max_chars 100, `body` max_chars 3450, `tags` max 15 and max_chars 500, `thumbnail_text` max_chars 40.
 
 ## Persona
