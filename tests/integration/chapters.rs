@@ -757,3 +757,27 @@ fn requesting_a_derived_template_moves_its_outputs() {
         stderr(&out)
     );
 }
+
+#[test]
+fn force_does_not_make_an_implicit_template_requested() {
+    require_ffmpeg!();
+    let env = env_with_clip();
+    let fake = scripted(|_| valid_chapters(), "unused");
+    let args = ["run", "a.mp4", "-t", "youtube", "--force", "chapters"];
+    let out = run_class(&env, &args, &fake);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let job = env.job_dir("a");
+    assert_eq!(
+        (homes(&job, "chapters"), done_templates(&stderr(&out))),
+        (
+            (
+                Vec::new(),
+                Vec::new(),
+                vec!["chapters.json".to_string(), "chapters.md".to_string()]
+            ),
+            vec!["chapters".to_string(), "youtube".to_string()],
+        ),
+        "{}",
+        stderr(&out)
+    );
+}

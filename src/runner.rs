@@ -176,7 +176,7 @@ struct Resolved {
     catalog: Catalog,
     /// The templates in the run: the requested ones plus their inputs, dependencies first.
     order: Vec<String>,
-    /// The templates the user asked for: `-t` and the target of `--force <template>`. The other
+    /// The templates named with `-t`. `--force` does not request one. The other
     /// templates in `order` are implicit: they run only because a requested one needs them.
     requested: Vec<String>,
     /// The backend of each template in `order`.
@@ -264,12 +264,6 @@ fn resolve(options: &Options, config: &Config) -> Result<Resolved> {
     resolved.step_force = step_force;
     resolved.forced = forced;
     resolved.requested = options.templates.clone();
-    if let Some(ForceArg::Name(name)) = &options.force {
-        let is_template = name.parse::<StepName>().is_err() && resolved.order.contains(name);
-        if is_template && !resolved.requested.contains(name) {
-            resolved.requested.push(name.clone());
-        }
-    }
     Ok(resolved)
 }
 
