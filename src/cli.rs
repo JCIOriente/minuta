@@ -133,7 +133,7 @@ pub struct PullArgs {
     #[arg(long)]
     pub force: bool,
     /// Do not ask for confirmation
-    #[arg(short, long)]
+    #[arg(long)]
     pub yes: bool,
     /// Branch, tag or commit of the repository to download from
     #[arg(long = "ref", value_name = "REF", default_value = "main")]
@@ -448,8 +448,8 @@ fn templates_show(name: &str) -> Result<()> {
 
 /// Where `templates pull` downloads from: `MINUTA_TEMPLATES_URL` (a folder URL; used by
 /// tests, not documented) or the repository at `--ref`.
-fn pull_origin(reference: &str) -> Result<Origin> {
-    match std::env::var_os("MINUTA_TEMPLATES_URL") {
+fn pull_origin(reference: &str, url_override: Option<std::ffi::OsString>) -> Result<Origin> {
+    match url_override {
         Some(url) if !url.is_empty() => {
             let url = url.to_str().ok_or_else(|| {
                 Error::Usage("MINUTA_TEMPLATES_URL is not valid UTF-8".to_string())
@@ -461,7 +461,7 @@ fn pull_origin(reference: &str) -> Result<Origin> {
 }
 
 fn templates_pull(args: PullArgs) -> Result<()> {
-    let origin = pull_origin(&args.reference)?;
+    let origin = pull_origin(&args.reference, std::env::var_os("MINUTA_TEMPLATES_URL"))?;
     let cwd = std::env::current_dir().map_err(|e| {
         Error::Io(std::io::Error::new(
             e.kind(),
@@ -667,5 +667,51 @@ mod tests {
     #[test]
     fn single_line_joins_lines() {
         assert_eq!(single_line("a\n  b\n\n"), "a; b");
+    }
+
+    #[test]
+    fn pull_origin_downloads_from_the_repository_at_the_ref() {
+        let origin = pull_origin("v1", None).unwrap();
+        assert_eq!(
+            origin.url("index.toml"),
+            "https://raw.githubusercontent.com/JCIOriente/minuta/v1/templates/index.toml"
+        );
+    }
+
+    #[test]
+    fn pull_origin_url_variable_replaces_the_repository_and_the_ref() {
+        let origin = pull_origin("v1", Some("https://h.example/t".into())).unwrap();
+        assert_eq!(origin.url("a.md"), "https://h.example/t/a.md");
+    }
+
+    #[test]
+    fn pull_origin_empty_url_variable_is_ignored() {
+        let origin = pull_origin("v1", Some("".into())).unwrap();
+        assert_eq!(
+            origin.url("a.md"),
+            "https://raw.githubusercontent.com/JCIOriente/minuta/v1/templates/a.md"
+        );
+    }
+
+    #[test]
+    fn pull_origin_rejects_a_bad_ref() {
+        match pull_origin("a b", None) {
+            Err(Error::Usage(m)) => assert_eq!(
+                m,
+                "invalid ref \"a b\" (use letters, digits, '.', '_', '-' and '/')"
+            ),
+            other => panic!("expected usage error, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pull_origin_rejects_a_url_variable_that_is_not_utf8() {
+        use std::os::unix::ffi::OsStringExt;
+        let value = std::ffi::OsString::from_vec(vec![0xff, 0xfe]);
+        match pull_origin("main", Some(value)) {
+            Err(Error::Usage(m)) => assert_eq!(m, "MINUTA_TEMPLATES_URL is not valid UTF-8"),
+            other => panic!("expected usage error, got {other:?}"),
+        }
     }
 }
