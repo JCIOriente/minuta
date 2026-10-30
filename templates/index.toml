@@ -51,7 +51,7 @@ description = "Podcast episode title, show notes and search topics"
 platform = "audio"
 tags = ["podcast", "show-notes"]
 input = "summary -> transcript"
-sha256 = "d57b4560bde4e46f2969a117fb3f8087ed578802b23fbf718a52e5807cf7d736"
+sha256 = "5f814856ca07437402ffdbe69e791e2e8c49a81f8b7b5c14aac69181fc050381"
 
 [[template]]
 name = "tiktok"
@@ -75,4 +75,4 @@ description = "YouTube title, description, tags and thumbnail text"
 platform = "youtube"
 tags = ["video", "seo", "thumbnail"]
 input = "summary -> transcript"
-sha256 = "488a3bf32031391f04f5dae3e3f8b91d952849e73d9d9d704e7eb36aa3403e81"
+sha256 = "38577d8a83a2cf73be86a6334f90e7e1104e671a7cf0e67f9cb0d0d2331bc814"

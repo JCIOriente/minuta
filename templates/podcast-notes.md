@@ -30,7 +30,7 @@ Build the body in this order:
 
 Omit any section that has no supporting content, including its heading. Never write placeholders such as "No guests this episode" or "None." When the input supports fewer distinct bullets than requested, keep only those supported; never pad with repetition or invention.
 
-Apps and feeds allow long descriptions, but plain text and simple Markdown render everywhere. Use short paragraphs, the section headings above and ordinary bullets. Avoid HTML, tables and elaborate formatting. Keep the title and tags plain text.
+Apps and feeds allow long descriptions, but plain text and simple Markdown render everywhere. Use short paragraphs, the section headings above and ordinary bullets. Use no other headings; put follow-ups and tasks in the relevant bullet or in Guests and mentions. Avoid HTML, tables and elaborate formatting. Keep the title and tags plain text.
 
 Use a timestamp such as `[00:12:34]` only when the input contains that timestamp and associates it with the topic you are describing. The summary may not retain timestamps. If it has none, omit them entirely; never estimate them from the recording duration, topic order or length.
 
