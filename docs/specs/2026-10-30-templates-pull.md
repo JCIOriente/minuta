@@ -6,12 +6,12 @@
 - Related: ADR-0004 (template file format), `src/template/discover.rs`, `src/cli.rs` (`templates` commands), `src/models.rs` (download code), `src/config_init.rs` (safe write)
 
 ## TL;DR
-- Curated templates live as plain `.md` files in a top-level `templates/` folder of the repo, with a `templates/index.json` catalog. They are not compiled into the binary.
+- Curated templates live as plain `.md` files in a top-level `templates/` folder of the repo, with a `templates/index.toml` catalog (TOML, like the config file). They are not compiled into the binary.
 - `minuta templates pull` downloads the ones the user picks into `./templates` (or `--to DIR`). Pulled files are ordinary project templates and win over `~/.minuta/templates` and the built-ins.
 - Before any network access or write, minuta shows the host, ref, files and destination and asks for confirmation (`--yes` skips it; a non-interactive run without `--yes` refuses).
 - Every file is checked against the catalog SHA-256 and parsed as a template before it is written.
 - Lookup order does not change: `./templates` already comes first. The 5 built-ins stay as the offline fallback.
-- First curated set is written by a specialist persona per platform (separate content task, same plan).
+- The first curated set is written with Codex at high reasoning effort, one specialist persona per platform, then reviewed (see Curated content).
 
 ## Change in a nutshell
 ```console
@@ -54,7 +54,7 @@ wins) already exists; what is missing is a way to fill it.
 - An existing file is skipped unless `--force`.
 - A file whose SHA-256 differs from the catalog, or that fails `Template::parse`, is not written and the command exits non-zero naming the file. Other selected files are not written either (all or nothing).
 - Adding a template to the repo needs a new `templates/<name>.md` and one catalog entry. No Rust change.
-- A repo test fails if `templates/index.json` and the files disagree (missing file, wrong hash, file not parsable, name not matching the file stem).
+- A repo test fails if `templates/index.toml` and the files disagree (missing file, wrong hash, file not parsable, name not matching the file stem).
 - Offline use is unchanged: nothing else in minuta touches the network for templates.
 
 ## Non-goals
@@ -76,12 +76,27 @@ n/a for data. Catalog descriptions and prompts are English, like the rest of the
 chooses its output language through minuta's existing `output_lang` handling, not through pull.
 
 ## Domain model
-- **Catalog**: `templates/index.json` at a ref. `{ "version": 1, "templates": [Entry] }`.
+- **Catalog**: `templates/index.toml` at a ref: `version = 1` and one `[[template]]` table per Entry. Minuta reads it fresh on every `pull`, so templates added to the repo show up without a new release or tag.
 - **Entry**: `name` (matches `valid_stem`), `description`, `platform`, `tags[]`, `input` (the template's `input:` chain, informational), `sha256` of the file bytes.
 - **Pulled template**: a file `<dest>/<name>.md`. After writing it is an ordinary project-layer template; minuta keeps no record that it was pulled.
 - Invariants: a written file's bytes hash to the catalog value and parse as a template; entry name equals file stem.
 
+## Curated content
+Part of this work, as its own plan task after the pull command exists. Process, per template:
+1. A persona brief fixes role, platform rules and limits (for example, Instagram copywriter: hook in the first 125 characters, caption length, hashtag strategy, call to action).
+2. `codex exec` at high reasoning effort drafts the template in the ADR-0004 format, with `description`, `limits`, a grounding rule ("only facts in the input") and the `input:` chain. If the `codex` CLI is not installed, Claude subagents draft instead and the PR says so.
+3. A second, independent agent reviews each draft, and each template runs through `minuta run -t NAME` on a sample transcript.
+4. The persona briefs are committed under `docs/` so contributors can reuse them.
+The briefs go to the owner for approval before drafting. Initial set: instagram, youtube, linkedin, tiktok, x-thread, newsletter, blog-post, podcast-notes, meeting-minutes, action-items.
+
 ## Interfaces
+`minuta templates` has three commands, each with one job:
+| Command | What it does | Network |
+|---|---|---|
+| `templates list` | Templates minuta can use now, with layer (built-in, user, project) | no |
+| `templates show NAME` | Prints one template's file | no |
+| `templates pull` | Downloads curated templates into `./templates` | yes, after confirmation |
+
 ```
 minuta templates pull [NAME...] [--all] [--filter TEXT] [--list]
                       [--to DIR] [--force] [--yes] [--ref REF]
@@ -98,20 +113,20 @@ minuta templates pull [NAME...] [--all] [--filter TEXT] [--list]
 - Empty selection from the checklist: exit 0, "nothing selected".
 - Files that all exist and no `--force`: no prompt, "nothing to do", exit 0.
 - Write is temp file + rename in the destination, so a failure leaves no half file. If the destination exists as a symlink or is not a directory, error naming the path (`try_exists`, not `exists`, per `docs/conventions.md`).
-- Catalog or file parse failure from the remote (invalid JSON, `version` != 1, name not `valid_stem`, duplicate name) is a hard error that shows the sanitized reason. Remote strings are passed through `sanitize` before printing.
+- Catalog or file parse failure from the remote (invalid TOML, `version` != 1, name not `valid_stem`, duplicate name) is a hard error that shows the sanitized reason. Remote strings are passed through `sanitize` before printing.
 - A pulled template whose `input:` names a template minuta cannot find is still written; `templates list` shows the existing invalid-state output. Pull prints a note listing the missing name.
 - A template using frontmatter an older binary does not know fails `Template::parse` (`deny_unknown_fields`). It is rejected at pull time with the parse error and a hint to upgrade minuta, instead of failing later during a run.
 - Trust: the SHA-256 comes from the same repo ref as the file, so it protects against truncation and mismatched files, not against a malicious commit. The confirmation prompt, the all-parse check, and the project-layer protections already in `discover.rs` (symlink and hard-link refusal) are the controls. A user who wants stability passes `--ref v0.3.0` or a commit.
 - Network failure: error naming the URL (without query), nothing written.
 
 ## Data & migrations
-None. No config key. The `templates/` folder and `index.json` are new repo content; `index.json` has `version: 1`. Packaging (`cargo package`/release) must not need these files, since nothing embeds them.
+None. No config key. The `templates/` folder and `index.toml` are new repo content; `index.toml` has `version = 1`. Packaging (`cargo package`/release) must not need these files, since nothing embeds them.
 
 ## Testing strategy
 - Unit: catalog parsing (valid, bad version, duplicate, bad name, oversized), selection (names, `--all`, `--filter` on name/platform/tag), plan states, hash check, parse check.
 - Integration against a local fake HTTP server (pattern: `tests/support/fake_ollama.rs`, `tests/config_init.rs`): `--list`, pull by name, `--all`, `--filter`, existing file skipped, `--force` overwrites, `--to`, hash mismatch rejects and writes nothing, unparsable file rejects all, non-TTY without `--yes` refuses, stdout contains only paths, stale half file never appears after a mid-download failure.
 - The source URL base is injectable (env var `MINUTA_TEMPLATES_URL`, undocumented, used by tests) so no test touches GitHub.
-- Repo consistency test: every `templates/index.json` entry has a file whose hash matches, parses with `Template::parse`, and has `name == stem`; every `templates/*.md` has an entry.
+- Repo consistency test: every `templates/index.toml` entry has a file whose hash matches, parses with `Template::parse`, and has `name == stem`; every `templates/*.md` has an entry.
 - Permission-denial: destination not writable gives an error naming the path and exit non-zero.
 - Manual check in a scratch folder after the content lands (see plan): `pull`, `templates list`, `run -t <pulled>`.
 

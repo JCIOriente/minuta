@@ -18,8 +18,8 @@ download source and a catalog format, changing either breaks their scripts.
 3. **Copy from a local checkout path**: simplest and no trust issue. Unusable for anyone who installed through cargo or a package manager.
 
 ## Decision
-Option 1. Templates are plain files in `templates/` with a `templates/index.json` catalog
-(`version: 1`). `minuta templates pull` fetches them over HTTPS from `raw.githubusercontent.com`
+Option 1. Templates are plain files in `templates/` with a `templates/index.toml` catalog
+(`version = 1`; TOML like the rest of minuta's config). `minuta templates pull` fetches them over HTTPS from `raw.githubusercontent.com`
 at a ref (default `main`, override with `--ref`), after a confirmation that names host, ref,
 files and destination. Each file is checked against the catalog SHA-256 and parsed as a
 template before anything is written. The SHA-256 is an integrity check only, since it comes
@@ -27,6 +27,6 @@ from the same ref as the file. The 5 built-ins stay as the offline fallback.
 
 ## Consequences
 - Easier: adding or fixing a template needs no release and no Rust; users choose what to download and can delete any file.
-- Harder: `index.json` `version` and the entry fields are now a public contract; a new `Frontmatter` key makes the newest templates unusable on older binaries (rejected at pull time with a hint to upgrade).
+- Harder: `index.toml` `version` and the entry fields are now a public contract; a new `Frontmatter` key makes the newest templates unusable on older binaries (rejected at pull time with a hint to upgrade).
 - Must do: README explains why templates are downloaded and how to remove them; a repo test keeps catalog and files consistent.
 - Revisit if: users need authenticity, not just integrity (then sign the catalog), or the repo moves, or offline-first users ask for bundled copies (then add option 2 on top).
