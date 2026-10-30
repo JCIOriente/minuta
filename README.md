@@ -87,8 +87,8 @@ backend is reachable, but does not change the exit status.
 
    ```sh
    minuta models pull base
-   mkdir -p ~/.config/minuta
-   printf '[whisper]\nmodel = "base"\n' > ~/.config/minuta/config.toml
+   mkdir -p ~/.minuta
+   printf '[whisper]\nmodel = "base"\n' > ~/.minuta/config.toml
    ```
 
    This creates the config file, replacing any you already have. If you have
@@ -142,6 +142,7 @@ cat "$(minuta run talk.mp4 -t linkedin -q)/linkedin.md"
 | `minuta templates show NAME` | Print the file that defines a template (its path goes to stderr) |
 | `minuta config path` | Print the config file path |
 | `minuta config show` | Print every setting, its value and where it came from |
+| `minuta config init [--force]` | Write a commented template of every setting to the config file path; an existing file is left alone unless `--force` is given |
 
 Run `minuta help <command>` for the full usage of any command.
 
@@ -212,7 +213,7 @@ minuta models pull silero-v5.1.2
 ```
 
 ```toml
-# ~/.config/minuta/config.toml
+# ~/.minuta/config.toml
 [whisper]
 vad_model = "silero-v5.1.2"
 ```
@@ -241,14 +242,14 @@ minuta loads templates from three places. A template with the same name in a
 later place replaces the earlier one:
 
 1. Built in to minuta
-2. Your user templates: `~/.config/minuta/templates/*.md`
+2. Your user templates: `~/.minuta/templates/*.md`
 3. Project templates: `./templates/*.md` in the current directory
 
 To customize a built-in template, copy it and edit the copy:
 
 ```sh
-mkdir -p ~/.config/minuta/templates
-minuta templates show summary > ~/.config/minuta/templates/summary.md
+mkdir -p ~/.minuta/templates
+minuta templates show summary > ~/.minuta/templates/summary.md
 ```
 
 > **Security:** templates in `./templates` are read from whatever directory you
@@ -415,8 +416,19 @@ default. A template's `llm` and `lang` keys sit between the flag and the other
 layers (see [LLM backends](#llm-backends)).
 Run `minuta config show` to see every value and where it came from.
 
-The config file is `~/.config/minuta/config.toml`. Set `MINUTA_CONFIG` to use
-another file. Unknown keys are an error.
+The config file is `~/.minuta/config.toml`. Set `MINUTA_CONFIG` to use
+another file. Unknown keys are an error. `minuta config init` writes a
+commented template of every setting to that path, so you can see what can be set.
+
+**Upgrading from 0.2.0 or earlier:** the config file and user templates moved
+into `~/.minuta/`, next to the models. Files in the old folder are ignored, so
+move them once:
+
+```sh
+mkdir -p ~/.minuta
+mv ~/.config/minuta/config.toml ~/.minuta/config.toml      # if you have one
+mv ~/.config/minuta/templates ~/.minuta/templates          # if you have user templates
+```
 
 ```toml
 out_dir = "/Users/you/Documents/minuta"   # `~` is not expanded

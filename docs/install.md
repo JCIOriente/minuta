@@ -83,7 +83,7 @@ If you keep `whisper-cli` somewhere that is not on your `PATH`, point minuta to
 it:
 
 ```toml
-# ~/.config/minuta/config.toml
+# ~/.minuta/config.toml
 [whisper]
 bin = "/opt/whisper.cpp/build/bin/whisper-cli"
 ```
@@ -115,7 +115,7 @@ minuta models pull base    # download one
 Then make it the default, so you do not have to pass `--model` on every run:
 
 ```toml
-# ~/.config/minuta/config.toml
+# ~/.minuta/config.toml
 [whisper]
 model = "base"
 ```
@@ -133,7 +133,7 @@ minuta models pull silero-v5.1.2
 ```
 
 ```toml
-# ~/.config/minuta/config.toml
+# ~/.minuta/config.toml
 [whisper]
 model = "base"
 vad_model = "silero-v5.1.2"
@@ -164,7 +164,7 @@ ollama pull <model>
 ```
 
 ```toml
-# ~/.config/minuta/config.toml
+# ~/.minuta/config.toml
 [llm]
 default = "ollama:<model>"
 ```

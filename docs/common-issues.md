@@ -26,6 +26,11 @@
 - Cause: the project layer is attacker-controlled. Seen as symlink escapes (`templates/x.md -> ~/.ssh/id_rsa`, then `templates -> .` with `summary.md -> .env`, #46), raw control characters in `templates list` and in error messages (#51), and unvalidated model names echoed in hints (#45).
 - Avoid: in the project layer, refuse a symlinked templates dir and require each file's canonical target inside it; pass every untrusted string printed to a terminal through the CLI's `sanitize` (errors go through `render_error`, which does this); validate identifiers with an allowlist and print rejected input with `{:?}`.
 
+## Config or templates ignored after upgrade
+- Symptom: `minuta config show` reports every value as `(default)` after upgrading, or a custom template no longer appears in `templates list`.
+- Cause: the config file and user templates moved from `~/.config/minuta/` to `~/.minuta/` (#149, #150). Nothing is migrated, so the old files are ignored.
+- Avoid: move them once; the README "Upgrading" note has the commands. `minuta config path` shows where the config file is read from.
+
 ## A test reaches a real local service
 - Symptom: tests pass, but `cargo test` sends requests to the developer's real Ollama (or another daemon on a default port).
 - Cause: a new code path reads a default URL from config that the existing test environment never overrode (`doctor` started probing `127.0.0.1:11434` in #51). A "closed port" helper that binds port 0 and drops the listener can also hand that port to a parallel fake server.
