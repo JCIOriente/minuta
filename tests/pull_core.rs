@@ -706,7 +706,7 @@ fn apply_modified_is_skipped_without_force() {
     let mut manifest = manifest_with(&[("alpha", &pulled)]);
     let before = manifest.clone();
     let done = run(&d.dir(), &[&a], false, &mut f, &mut manifest).unwrap();
-    assert_eq!(done[0].outcome, Outcome::Kept(State::Modified));
+    assert_eq!(done[0].outcome, Outcome::KeptModified);
     assert_eq!(
         fs::read_to_string(d.dir().join("alpha.md")).unwrap(),
         edited
@@ -725,7 +725,7 @@ fn apply_up_to_date_is_not_fetched() {
     let mut f = Fetcher::new(&[]);
     let mut manifest = manifest_with(&[("alpha", &text)]);
     let done = run(&d.dir(), &[&a], false, &mut f, &mut manifest).unwrap();
-    assert_eq!(done[0].outcome, Outcome::Kept(State::UpToDate));
+    assert_eq!(done[0].outcome, Outcome::KeptUpToDate);
     assert_eq!(f.calls, Vec::<String>::new());
 }
 
@@ -738,7 +738,7 @@ fn apply_force_on_up_to_date_does_nothing() {
     let mut f = Fetcher::new(&[]);
     let mut manifest = manifest_with(&[("alpha", &text)]);
     let done = run(&d.dir(), &[&a], true, &mut f, &mut manifest).unwrap();
-    assert_eq!(done[0].outcome, Outcome::Kept(State::UpToDate));
+    assert_eq!(done[0].outcome, Outcome::KeptUpToDate);
     assert_eq!(f.calls, Vec::<String>::new());
     assert!(!d.dir().join("alpha.md.bak").exists());
 }
@@ -997,7 +997,7 @@ fn an_invalid_manifest_makes_every_file_modified_and_nothing_is_overwritten() {
     assert!(warning.is_some());
     let mut f = Fetcher::new(&[]);
     let done = run(&d.dir(), &[&a], false, &mut f, &mut manifest).unwrap();
-    assert_eq!(done[0].outcome, Outcome::Kept(State::Modified));
+    assert_eq!(done[0].outcome, Outcome::KeptModified);
     assert_eq!(fs::read_to_string(d.dir().join("alpha.md")).unwrap(), mine);
 }
 
@@ -1141,12 +1141,6 @@ fn pull_end_to_end_against_a_server() {
     )
     .unwrap();
     let outcomes: Vec<Outcome> = done.iter().map(|x| x.outcome).collect();
-    assert_eq!(
-        outcomes,
-        [
-            Outcome::Kept(State::UpToDate),
-            Outcome::Kept(State::UpToDate)
-        ]
-    );
+    assert_eq!(outcomes, [Outcome::KeptUpToDate, Outcome::KeptUpToDate]);
     assert_eq!(server.requests().len(), 3);
 }

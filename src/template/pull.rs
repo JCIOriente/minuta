@@ -18,6 +18,8 @@ use crate::job::write_atomic;
 pub const CATALOG_CAP: u64 = 1024 * 1024;
 /// Largest template file accepted.
 pub const FILE_CAP: u64 = 256 * 1024;
+/// Largest local file (a template, a backup source or the manifest) that is read.
+pub const LOCAL_CAP: u64 = 1024 * 1024;
 
 const GITHUB: &str = "https://raw.githubusercontent.com/JCIOriente/minuta";
 const MANIFEST_FILE: &str = ".pulled.toml";
@@ -246,8 +248,10 @@ pub enum Outcome {
     Updated,
     /// A modified file replaced because of `force`; the old one is in `NAME.md.bak`.
     Overwrote,
-    /// Left alone, in this state (up to date, or modified without `force`).
-    Kept(State),
+    /// Left alone: the file already matches the catalog.
+    KeptUpToDate,
+    /// Left alone: the file was edited (or not written by minuta) and `force` is not set.
+    KeptModified,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -274,9 +278,11 @@ pub fn apply(
         (State::New, _) => Outcome::Created,
         (State::UpdateAvailable, _) => Outcome::Updated,
         (State::Modified, true) => Outcome::Overwrote,
-        (state, _) => Outcome::Kept(state),
+        (State::Modified, false) => Outcome::KeptModified,
+        (State::UpToDate, _) => Outcome::KeptUpToDate,
     };
-    let writes = |item: &Item<'_>| !matches!(outcome(item), Outcome::Kept(_));
+    let writes =
+        |item: &Item<'_>| !matches!(outcome(item), Outcome::KeptUpToDate | Outcome::KeptModified);
 
     let mut fetched: Vec<(&Item<'_>, Vec<u8>)> = Vec::new();
     for item in items.iter().filter(|i| writes(i)) {
