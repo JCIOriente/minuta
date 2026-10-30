@@ -1641,3 +1641,14 @@ fn move_derived_moves_files_without_running() {
     assert!(!requested.move_derived(&ctx(dir.path())).unwrap());
     assert_eq!(b.calls().len(), 1, "no new call");
 }
+
+#[test]
+fn move_derived_removes_a_copy_when_the_normal_file_exists() {
+    let (dir, _) = job();
+    let t = tpl("summary", TEXT);
+    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok("Resumen.".into())]);
+    execute(&run_implicit(&t, &b, true, &[]), dir.path()).unwrap();
+    fs::write(dir.path().join("summary.md"), "Resumen.\n").unwrap();
+    assert!(!run(&t, &b, "es").move_derived(&ctx(dir.path())).unwrap());
+    assert_eq!(files_under(dir.path()), ["summary.md"]);
+}

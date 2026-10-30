@@ -143,7 +143,12 @@ impl TemplateRun<'_> {
             .into_iter()
             .zip(self.artifacts_at(&ctx.dir, false));
         for (derived, normal) in pairs {
-            if !exists(&derived)? || exists(&normal)? {
+            if !exists(&derived)? {
+                continue;
+            }
+            if exists(&normal)? {
+                // The normal file wins; a second copy must not stay behind.
+                fs::remove_file(&derived).map_err(|e| io_error(&derived, e))?;
                 continue;
             }
             let bytes = fs::read(&derived).map_err(|e| io_error(&derived, e))?;
