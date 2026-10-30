@@ -670,6 +670,17 @@ mod tests {
     }
 
     #[test]
+    fn pull_ref_defaults_to_main() {
+        let cli = Cli::try_parse_from(["minuta", "templates", "pull", "alpha"]).unwrap();
+        match cli.command {
+            Command::Templates(TemplatesCommand::Pull(args)) => {
+                assert_eq!(args.reference, "main")
+            }
+            other => panic!("expected templates pull, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn pull_origin_downloads_from_the_repository_at_the_ref() {
         let origin = pull_origin("v1", None).unwrap();
         assert_eq!(

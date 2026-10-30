@@ -408,7 +408,7 @@ fn yes_and_yes_in_words_both_confirm() {
 
 #[test]
 fn any_other_answer_cancels_and_downloads_no_file() {
-    for answer in ["n\n", "\n", "", "no\n", "yy\n", "ok\n"] {
+    for answer in ["n\n", "\n", "no\n", "yy\n", "ok\n"] {
         let d = Dest::new();
         let s = server();
         let mut c = case(names(&["alpha"]));
@@ -784,6 +784,216 @@ fn the_note_escapes_control_characters_from_the_catalog() {
     );
 }
 
+// ---- review follow-ups ----
+
+#[test]
+fn the_numbered_list_escapes_control_characters_from_the_catalog() {
+    let d = Dest::new();
+    let s = server_with(&[("alpha", None, "bad\\u001b[2Jtext", None)]);
+    let mut c = case(Choice::Ask);
+    c.interactive = true;
+    c.input = "\n";
+    let out = c.run(&s, &d.dir());
+    out.result.unwrap();
+    assert_eq!(
+        out.stderr,
+        format!(" 1) alpha  new  bad?[2Jtext\n{ASK}nothing selected\n")
+    );
+}
+
+fn input_server() -> FakeHttp {
+    server_with(&[
+        ("alpha", None, "Alpha", Some("gamma")),
+        ("beta", None, "Beta", Some("delta -> transcript")),
+        ("chain", None, "Chain", Some("x -> y -> transcript")),
+    ])
+}
+
+fn note(name: &str, dep: &str) -> String {
+    format!("note: {name} needs template {dep}, which is not available (pull it too or add it to your templates)\n")
+}
+
+#[test]
+fn every_written_template_with_a_missing_input_gets_its_own_note() {
+    let d = Dest::new();
+    let s = input_server();
+    let mut c = case(names(&["alpha", "beta"]));
+    c.yes = true;
+    let out = c.run(&s, &d.dir());
+    assert_eq!(
+        out.stderr,
+        format!(
+            "alpha.md  written\nbeta.md   written\n{}{}",
+            note("alpha", "gamma"),
+            note("beta", "delta")
+        )
+    );
+}
+
+#[test]
+fn every_missing_template_of_a_chain_gets_a_note() {
+    let d = Dest::new();
+    let s = input_server();
+    let mut c = case(names(&["chain"]));
+    c.yes = true;
+    let out = c.run(&s, &d.dir());
+    assert_eq!(
+        out.stderr,
+        format!(
+            "chain.md  written\n{}{}",
+            note("chain", "x"),
+            note("chain", "y")
+        )
+    );
+}
+
+#[test]
+fn a_file_that_is_up_to_date_gets_no_note() {
+    let d = Dest::new();
+    d.pulled("alpha", &template_text("alpha"));
+    let s = input_server();
+    let mut c = case(names(&["alpha"]));
+    c.yes = true;
+    let out = c.run(&s, &d.dir());
+    assert_eq!(out.stderr, "alpha.md  up to date\nnothing to download\n");
+}
+
+#[test]
+fn a_modified_file_that_is_skipped_gets_no_note() {
+    let d = Dest::new();
+    d.write("alpha.md", "my alpha\n");
+    let s = input_server();
+    let mut c = case(names(&["alpha"]));
+    c.yes = true;
+    let out = c.run(&s, &d.dir());
+    assert_eq!(
+        out.stderr,
+        "alpha.md  skipped (modified; use --force to overwrite)\nnothing to download\n"
+    );
+}
+
+#[test]
+fn an_input_template_already_in_the_destination_is_available() {
+    let d = Dest::new();
+    d.write("gamma.md", "a gamma pulled earlier\n");
+    let s = input_server();
+    let mut c = case(names(&["alpha"]));
+    c.yes = true;
+    let out = c.run(&s, &d.dir());
+    assert_eq!(out.stderr, "alpha.md  written\n");
+}
+
+#[test]
+fn no_note_when_minuta_could_not_find_out_what_it_has() {
+    let d = Dest::new();
+    let s = input_server();
+    let mut c = case(names(&["alpha"]));
+    c.yes = true;
+    c.known = None;
+    let out = c.run(&s, &d.dir());
+    assert_eq!(out.stderr, "alpha.md  written\n");
+}
+
+#[test]
+fn nothing_chosen_and_no_confirmation_without_a_terminal_reports_nothing_selected_first() {
+    let d = Dest::new();
+    let s = server();
+    let out = case(Choice::Ask).run(&s, &d.dir());
+    assert_eq!(
+        usage(&out.result),
+        "nothing selected: name the templates to download, or use --all or --filter TEXT (a list opens only on a terminal)"
+    );
+    assert_eq!(s.requests(), Vec::<String>::new());
+}
+
+#[test]
+fn the_destination_in_the_prompt_is_made_safe_to_print() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dest = tmp.path().join("a\u{1b}[2Jb").join("templates");
+    let s = server();
+    let mut c = case(names(&["alpha"]));
+    c.interactive = true;
+    c.input = "n\n";
+    let out = c.run(&s, &dest);
+    out.result.unwrap();
+    assert!(
+        out.stderr
+            .contains(&format!("into {}/a?[2Jb/templates\n", tmp.path().display())),
+        "{:?}",
+        out.stderr
+    );
+    assert!(!out.stderr.contains('\u{1b}'), "{:?}", out.stderr);
+}
+
+#[test]
+fn end_of_input_at_the_list_ends_the_prompt_line() {
+    let d = Dest::new();
+    let s = server();
+    let mut c = case(Choice::Ask);
+    c.interactive = true;
+    c.input = "";
+    let out = c.run(&s, &d.dir());
+    out.result.unwrap();
+    assert_eq!(out.stderr, format!("{LIST}{ASK}\nnothing selected\n"));
+}
+
+#[test]
+fn end_of_input_at_the_confirmation_ends_the_prompt_line_and_cancels() {
+    let d = Dest::new();
+    let s = server();
+    let mut c = case(names(&["alpha"]));
+    c.interactive = true;
+    c.input = "";
+    let out = c.run(&s, &d.dir());
+    out.result.unwrap();
+    assert_eq!(
+        out.stderr,
+        format!(
+            "minuta will download from:\n  {}/\n  alpha.md  (new)\ninto {}\nContinue? [y/N] \ncancelled\n",
+            s.base(),
+            d.dir().display()
+        )
+    );
+    assert!(!d.dir().exists());
+}
+
+#[test]
+fn an_empty_catalog_says_so_for_all() {
+    let d = Dest::new();
+    let s = server_with(&[]);
+    let mut c = case(Choice::All);
+    c.yes = true;
+    let out = c.run(&s, &d.dir());
+    out.result.unwrap();
+    assert_eq!(out.stderr, "the catalog has no templates\n");
+    assert_eq!(out.stdout, "");
+}
+
+#[test]
+fn an_empty_catalog_says_so_instead_of_opening_the_list() {
+    let d = Dest::new();
+    let s = server_with(&[]);
+    let mut c = case(Choice::Ask);
+    c.interactive = true;
+    c.input = "1\n";
+    let out = c.run(&s, &d.dir());
+    out.result.unwrap();
+    assert_eq!(out.stderr, "the catalog has no templates\n");
+}
+
+#[test]
+fn an_empty_catalog_with_a_name_is_an_unknown_template() {
+    let d = Dest::new();
+    let s = server_with(&[]);
+    let mut c = case(names(&["alpha"]));
+    c.yes = true;
+    let out = c.run(&s, &d.dir());
+    assert_eq!(
+        usage(&out.result),
+        "unknown template \"alpha\" (available: )"
+    );
+}
+
 // ---- the binary ----
 
 struct Env {
@@ -1050,4 +1260,23 @@ fn control_characters_in_the_catalog_never_reach_the_terminal() {
     let out = env.run(&["templates", "pull", "--list"], Some(&s.base()));
     assert_eq!(out.status.code(), Some(0));
     assert!(!text(&out.stderr).contains('\u{1b}'), "{:?}", out.stderr);
+}
+
+#[test]
+fn a_template_folder_that_cannot_be_read_does_not_block_pulling() {
+    let env = Env::new();
+    let s = server();
+    fs::write(env.work().join("templates"), "not a folder").unwrap();
+    let out = env.run(
+        &["templates", "pull", "beta", "--yes", "--to", "out"],
+        Some(&s.base()),
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.starts_with("warning: cannot check which templates minuta already has: "),
+        "{stderr}"
+    );
+    assert!(stderr.ends_with("beta.md  written\n"), "{stderr}");
+    assert!(env.work().join("out/beta.md").is_file());
 }
