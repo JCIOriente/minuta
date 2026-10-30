@@ -2,7 +2,7 @@
 
 - Spec: docs/specs/2026-10-30-templates-pull.md (ADR-0011)
 - Date: 2026-10-30
-- Status: in progress (T1-T5 merged; T7 docs in review; T6 curated templates in progress)
+- Status: in progress (T1-T5 merged; T6 and T7 in progress)
 
 ## Overview
 Cut along new files so tasks do not collide. A pure core first (catalog, manifest, states), then
