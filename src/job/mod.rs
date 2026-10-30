@@ -103,6 +103,7 @@ impl Job {
 
     /// Writes `job.json` atomically.
     pub fn save(&self) -> Result<()> {
+        reject_symlinked_tier(&self.dir.join(layout::STATE_DIR))?;
         self.state.save(&layout::state_file(&self.dir))
     }
 
@@ -246,7 +247,8 @@ fn set_stale<K: Ord>(states: &mut BTreeMap<K, StepState>, key: K, reason: &Reaso
 
 /// Fails with `Error::Job` if `path` is a symlink named like a tier folder (`assets` or
 /// `.minuta`): a link planted there would make writes and the `*.tmp` cleanup reach outside the
-/// job folder. Other names and missing paths pass.
+/// job folder. Other names and missing paths pass. A tier folder that is a symlink on purpose
+/// (to keep `assets/` on another disk, say) is refused on purpose too.
 pub fn reject_symlinked_tier(path: &Path) -> Result<()> {
     let is_tier = path
         .file_name()
@@ -319,9 +321,25 @@ fn is_media_extension(ext: &str) -> bool {
     MEDIA_EXTENSIONS.iter().any(|m| ext.eq_ignore_ascii_case(m))
 }
 
+/// Like [`write_atomic`] for a file inside `job_dir`: it first refuses a symlinked tier folder
+/// (`assets` or `.minuta`) between `job_dir` and `path`. Only folders below `job_dir` count, so
+/// a job folder that is itself a symlink, or lives under one, is fine.
+pub fn write_atomic_in(
+    job_dir: &Path,
+    path: &Path,
+    f: impl FnOnce(&Path) -> Result<()>,
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        for ancestor in parent.ancestors().take_while(|a| *a != job_dir) {
+            reject_symlinked_tier(ancestor)?;
+        }
+    }
+    write_atomic(path, f)
+}
+
 /// Writes an artifact atomically, creating its parent folder when missing: `f` writes to
-/// `<path>.tmp`, which is synced to disk and renamed to `path` only if `f` succeeds. On failure the temp file is removed and `path` is
-/// left untouched.
+/// `<path>.tmp`, which is synced to disk and renamed to `path` only if `f` succeeds. On failure
+/// the temp file is removed and `path` is left untouched.
 ///
 /// Whatever already sits at the temp path is removed first and `f` is not called if that fails.
 /// A job folder can come from elsewhere, and a symlink planted at `<path>.tmp` would otherwise
@@ -330,9 +348,6 @@ fn is_media_extension(ext: &str) -> bool {
 pub fn write_atomic(path: &Path, f: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
     let tmp = tmp_path(path);
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        for ancestor in parent.ancestors() {
-            reject_symlinked_tier(ancestor)?;
-        }
         fs::create_dir_all(parent).map_err(|e| with_path(parent, e))?;
     }
     match fs::remove_file(&tmp) {

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::job::{layout, write_atomic, Ctx, Step, StepName};
+use crate::job::{layout, write_atomic_in, Ctx, Step, StepName};
 use crate::tools::{run, RunOpts, ToolInfo};
 
 /// The first video stream of a source.
@@ -94,7 +94,7 @@ impl Probe {
             .collect::<Result<Vec<_>>>()?;
         let json = serde_json::to_string_pretty(&probes)
             .map_err(|e| Error::Parse(format!("cannot encode probe results: {e}")))?;
-        write_atomic(&layout::probe_file(&ctx.dir), |tmp| {
+        write_atomic_in(&ctx.dir, &layout::probe_file(&ctx.dir), |tmp| {
             fs::write(tmp, json)?;
             Ok(())
         })

@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 use minuta::error::Error;
 use minuta::job::{
     derive_name, fingerprint, layout, plan_stale, source_record, step_fingerprint, template_reason,
-    write_atomic, Ctx, Force, Job, Reason, Source, Status, Step, StepName,
+    write_atomic, write_atomic_in, Ctx, Force, Job, Reason, Source, Status, Step, StepName,
 };
 use tempfile::TempDir;
 
@@ -1410,7 +1410,7 @@ fn clean_tmp_refuses_a_symlinked_tier() {
 fn write_atomic_refuses_a_symlinked_parent() {
     let (_root, job, outside, _victim) = job_with_symlinked_tier(layout::ASSETS_DIR);
     let path = layout::audio_file(&job.dir);
-    let err = write_atomic(&path, |tmp| Ok(fs::write(tmp, b"x")?)).unwrap_err();
+    let err = write_atomic_in(&job.dir, &path, |tmp| Ok(fs::write(tmp, b"x")?)).unwrap_err();
     assert!(matches!(err, Error::Job(_)), "{err}");
     assert!(!outside.join("audio.wav").exists());
 }
@@ -1419,7 +1419,38 @@ fn write_atomic_refuses_a_symlinked_parent() {
 fn write_atomic_does_not_create_through_a_symlinked_ancestor_tier() {
     let (_root, job, outside, _victim) = job_with_symlinked_tier(layout::STATE_DIR);
     let path = layout::call_cache_dir(&job.dir).join("k.txt");
-    let err = write_atomic(&path, |tmp| Ok(fs::write(tmp, b"x")?)).unwrap_err();
+    let err = write_atomic_in(&job.dir, &path, |tmp| Ok(fs::write(tmp, b"x")?)).unwrap_err();
     assert!(matches!(err, Error::Job(_)), "{err}");
     assert!(!outside.join("llm-cache").exists());
+}
+
+#[test]
+fn job_folders_named_like_tiers_or_inside_symlinks_work() {
+    let root = tempfile::tempdir().unwrap();
+    let real = root.path().join("real");
+    fs::create_dir(&real).unwrap();
+    let source = root.path().join("clase-4.mp4");
+    fs::write(&source, b"source bytes").unwrap();
+    // `out` itself is a symlink named `assets`, and the job folder is a symlink named `.minuta`.
+    let linked_out = root.path().join(layout::ASSETS_DIR);
+    std::os::unix::fs::symlink(&real, &linked_out).unwrap();
+    let job = Job::open(&linked_out, "clase-4", std::slice::from_ref(&source), false).unwrap();
+    write_atomic_in(&job.dir, &layout::audio_file(&job.dir), |tmp| {
+        Ok(fs::write(tmp, b"x")?)
+    })
+    .unwrap();
+    job.clean_tmp().unwrap();
+
+    let real_job = root.path().join("real-job");
+    fs::create_dir(&real_job).unwrap();
+    let hidden = root.path().join(layout::STATE_DIR);
+    std::os::unix::fs::symlink(&real_job, &hidden).unwrap();
+    let job = Job::open(root.path(), layout::STATE_DIR, &[source], false).unwrap();
+    assert_eq!(job.dir, fs::canonicalize(&real_job).unwrap());
+    write_atomic_in(&job.dir, &layout::transcript_json(&job.dir), |tmp| {
+        Ok(fs::write(tmp, b"x")?)
+    })
+    .unwrap();
+    job.save().unwrap();
+    job.clean_tmp().unwrap();
 }
