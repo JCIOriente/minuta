@@ -29,7 +29,7 @@ T1 ──> T2
 
 ## Tasks
 
-### T1: `notes` field and built-in `youtube` hashtags
+### T1: `notes` field and built-in `youtube` hashtags  (#181)
 - Priority: 0
 - Depends on: none
 - Owns: `src/fields/**`, `src/template/builtin/youtube.md`, `tests/integration/fields.rs`,
@@ -53,7 +53,7 @@ T1 ──> T2
 - Notes: follow `Field::ThumbnailText`. The model never gets a special instruction for `notes` from
   minuta; templates say what goes in it.
 
-### T2: Curated templates, briefs and evidence
+### T2: Curated templates, briefs and evidence  (#182)
 - Priority: 1
 - Depends on: T1
 - Owns: `templates/**`, `docs/template-briefs/**`
