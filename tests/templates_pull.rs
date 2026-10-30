@@ -1340,7 +1340,7 @@ fn plain_mode_prints_no_bar_and_same_lines() {
     c.mode = Mode::Plain;
     let out = c.run(&server, &dest.dir());
     out.result.unwrap();
-    assert_eq!(out.stderr, "alpha  written\nbeta   written\n");
+    assert_eq!(out.stderr, "alpha.md  written\nbeta.md   written\n");
     assert_eq!(
         out.stdout.lines().count(),
         2,
