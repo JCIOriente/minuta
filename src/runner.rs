@@ -804,13 +804,14 @@ impl TemplatePhase<'_> {
         Ok(ran)
     }
 
-    /// The templates that run only as a dependency, whose files go to `.minuta/derived/`. One
-    /// that an earlier run wrote to its normal places (it was requested then) stays there.
+    /// The templates that run only as a dependency, whose `.md` goes to `assets/`. One that
+    /// an earlier run wrote to the job folder (it was requested then) stays there.
     fn implicit_templates(&self, job: &Job) -> Vec<String> {
         let kept_in_place = |name: &String| {
             let recorded = job.state.templates.get(name);
-            let first = recorded.and_then(|r| r.artifacts.first());
-            first.is_some_and(|artifact| !artifact.starts_with(layout::STATE_DIR))
+            // The `.md` is the last artifact of every kind of template.
+            let md = recorded.and_then(|r| r.artifacts.last());
+            md.is_some_and(|artifact| !artifact.starts_with(layout::ASSETS_DIR))
         };
         let resolved = self.resolved;
         let is_implicit =
@@ -852,7 +853,7 @@ impl TemplatePhase<'_> {
         };
         let fingerprint = run.fingerprint(self.ctx, self.job_name)?;
         let Some(reason) = template_reason(job, name, &fingerprint, forced)? else {
-            if run.move_derived(self.ctx)? {
+            if run.move_implicit(self.ctx)? {
                 let seconds = job.state.templates.get(name).and_then(|t| t.seconds);
                 let artifacts = run.artifacts(&self.ctx.dir);
                 job.mark_template_done(name, &fingerprint, seconds.unwrap_or(0.0), &artifacts)?;

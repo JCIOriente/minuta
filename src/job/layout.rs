@@ -34,11 +34,6 @@ pub fn call_cache_dir(dir: &Path) -> PathBuf {
     state_dir(dir).join("llm-cache")
 }
 
-/// `.minuta/derived`: outputs of templates that ran only because another needed them.
-pub fn derived_dir(dir: &Path) -> PathBuf {
-    state_dir(dir).join("derived")
-}
-
 /// `.minuta/whisper-raw.json`, whisper's own output while transcribing. whisper-cli is given
 /// the same path without `.json` as its output prefix.
 pub fn raw_whisper(dir: &Path) -> PathBuf {
@@ -63,6 +58,12 @@ pub fn audio_file(dir: &Path) -> PathBuf {
 /// `assets/joined.<ext>`.
 pub fn joined_file(dir: &Path, ext: &str) -> PathBuf {
     assets(dir).join(format!("joined.{ext}"))
+}
+
+/// `assets/<name>.md`, the Markdown of template `name` when it ran only because another
+/// needed it. A requested template writes `<name>.md` at the root instead.
+pub fn implicit_md(dir: &Path, name: &str) -> PathBuf {
+    assets(dir).join(format!("{name}.md"))
 }
 
 /// `assets/<name>.json`, the result of template `name`.

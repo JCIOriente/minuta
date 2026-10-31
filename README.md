@@ -241,8 +241,8 @@ depend on run first.
 
 For example, `-t youtube` also runs `chapters`, because `youtube` fills its
 chapters field from it. A template that runs only because another one needs it
-writes its files under `.minuta/derived/`, so `chapters.*` shows up at the top
-and in `assets/` only when you ask for `-t chapters`. `summary` runs only on
+writes its files in `assets/`, so `chapters.md` shows up at the top
+only when you ask for `-t chapters`. `summary` runs only on
 `-t summary`.
 
 ### Where templates come from
@@ -491,7 +491,7 @@ minuta's bookkeeping in a hidden `.minuta/` folder.
 | `assets/joined.<ext>` | The joined recording. Only with several sources; with one, the original file is used as it is |
 | `.minuta/job.json`, `.minuta/probe.json` | What each step used and found; minuta reads them to skip finished work |
 | `.minuta/llm-cache/` | One file per LLM call |
-| `.minuta/derived/` | Output of templates that ran only because another needed them (for example `chapters` under `youtube`) |
+| `assets/<template>.md` | The Markdown of a template that ran only because another needed it (for example `chapters` under `youtube`); it moves to the top if you ask for that template |
 
 For example, after `minuta run standup.mp4 -t linkedin -t youtube -t instagram`:
 
@@ -499,11 +499,9 @@ For example, after `minuta run standup.mp4 -t linkedin -t youtube -t instagram`:
 $ ls minuta-out/standup
 assets  captions.srt  instagram.md  linkedin.md  transcript.txt  youtube.md
 $ ls minuta-out/standup/assets
-audio.wav  instagram.json  linkedin.json  transcript.json  youtube.json
+audio.wav  chapters.json  chapters.md  instagram.json  linkedin.json  transcript.json  youtube.json
 $ ls -A minuta-out/standup/.minuta
-derived  job.json  llm-cache  probe.json
-$ ls minuta-out/standup/.minuta/derived
-chapters.json  chapters.md
+job.json  llm-cache  probe.json
 ```
 
 Job folders made by an earlier version are not migrated: the next run in one

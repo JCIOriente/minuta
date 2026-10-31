@@ -103,11 +103,11 @@ pub struct TemplateRun<'a> {
     /// Repair calls after a rejected fields or chapters answer (`llm.repairs`); unused for
     /// Markdown.
     pub repairs: u32,
-    /// The template runs only because another one needs it: its files go to
-    /// `.minuta/derived/` instead of the job folder and `assets/`.
+    /// The template runs only because another one needs it: its `.md` goes to `assets/`
+    /// instead of the job folder.
     pub implicit: bool,
     /// The templates of this run that are implicit. A template that reads one of them (as its
-    /// input or as the chapters it fills in) finds its files in `.minuta/derived/`.
+    /// input or as the chapters it fills in) finds its `.md` in `assets/`.
     pub implicit_inputs: &'a [String],
 }
 
@@ -115,7 +115,7 @@ impl TemplateRun<'_> {
     /// The artifacts the template writes in the job folder `dir`, in write order: `<name>.md`,
     /// or `<name>.json` then `<name>.md` for a fields template (ADR-0007), or `chapters.json`
     /// then `<name>.md` for the chapters template (ADR-0009). The `.md` is in `dir` and the
-    /// `.json` in `assets/`; an implicit template keeps both in `.minuta/derived/`.
+    /// `.json` in `assets/`; an implicit template keeps its `.md` in `assets/` too.
     pub fn artifacts(&self, dir: &Path) -> Vec<PathBuf> {
         self.artifacts_at(dir, self.implicit)
     }
@@ -124,16 +124,16 @@ impl TemplateRun<'_> {
         let md = md_path(dir, &self.template.name, implicit);
         match self.template.output {
             Output::Markdown => vec![md],
-            Output::Fields(_) => vec![json_path(dir, &self.template.name, implicit), md],
-            Output::Chapters(_) => vec![json_path(dir, chapters::NAME, implicit), md],
+            Output::Fields(_) => vec![json_path(dir, &self.template.name), md],
+            Output::Chapters(_) => vec![json_path(dir, chapters::NAME), md],
         }
     }
 
-    /// A requested template whose files an earlier run left in `.minuta/derived/` (it ran as
-    /// an implicit dependency then) gets them moved to their normal places, so an unchanged
-    /// template needs no new run. Returns whether any file moved or was removed, so the caller records the new paths. Does nothing for an
-    /// implicit template.
-    pub fn move_derived(&self, ctx: &Ctx) -> Result<bool> {
+    /// A requested template whose `.md` an earlier run left in `assets/` (it ran as an
+    /// implicit dependency then) gets it moved to the job folder, so an unchanged template
+    /// needs no new run. Returns whether a file moved or was removed, so the caller records
+    /// the new paths. Does nothing for an implicit template.
+    pub fn move_implicit(&self, ctx: &Ctx) -> Result<bool> {
         if self.implicit {
             return Ok(false);
         }
@@ -143,7 +143,8 @@ impl TemplateRun<'_> {
             .into_iter()
             .zip(self.artifacts_at(&ctx.dir, false));
         for (derived, normal) in pairs {
-            if !exists(&derived)? {
+            // A `.json` is in `assets/` either way.
+            if derived == normal || !exists(&derived)? {
                 continue;
             }
             if exists(&normal)? {
@@ -349,17 +350,21 @@ impl TemplateRun<'_> {
             }
             written.push(path);
         }
-        self.remove_derived(ctx)?;
+        self.remove_implicit(ctx)?;
         Ok(generated)
     }
 
-    /// A requested template supersedes the copies it left in `.minuta/derived/` while it was
-    /// an implicit dependency.
-    fn remove_derived(&self, ctx: &Ctx) -> Result<()> {
+    /// A requested template supersedes the `.md` it left in `assets/` while it was an implicit
+    /// dependency.
+    fn remove_implicit(&self, ctx: &Ctx) -> Result<()> {
         if self.implicit {
             return Ok(());
         }
+        let normal = self.artifacts_at(&ctx.dir, false);
         for path in self.artifacts_at(&ctx.dir, true) {
+            if normal.contains(&path) {
+                continue;
+            }
             match fs::remove_file(&path) {
                 Ok(()) => {}
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {}
@@ -504,11 +509,7 @@ impl TemplateRun<'_> {
     }
 
     fn read_chapters_json(&self, ctx: &Ctx) -> Result<Vec<u8>> {
-        let path = json_path(
-            &ctx.dir,
-            chapters::NAME,
-            self.is_implicit_input(chapters::NAME),
-        );
+        let path = json_path(&ctx.dir, chapters::NAME);
         self.read_job_file(&path, JSON_FILE)
     }
 
@@ -537,23 +538,18 @@ impl TemplateRun<'_> {
     }
 }
 
-/// `<name>.md`: in the job folder, or in `.minuta/derived/` for an implicit template.
+/// `<name>.md`: in the job folder, or in `assets/` for an implicit template.
 fn md_path(dir: &Path, name: &str, implicit: bool) -> PathBuf {
-    let home = if implicit {
-        layout::derived_dir(dir)
+    if implicit {
+        layout::implicit_md(dir, name)
     } else {
-        dir.to_path_buf()
-    };
-    home.join(format!("{name}.md"))
+        dir.join(format!("{name}.md"))
+    }
 }
 
-/// `<name>.json`: in `assets/`, or in `.minuta/derived/` for an implicit template.
-fn json_path(dir: &Path, name: &str, implicit: bool) -> PathBuf {
-    if implicit {
-        layout::derived_dir(dir).join(format!("{name}.json"))
-    } else {
-        layout::template_json(dir, name)
-    }
+/// `<name>.json`: always in `assets/`.
+fn json_path(dir: &Path, name: &str) -> PathBuf {
+    layout::template_json(dir, name)
 }
 
 fn exists(path: &Path) -> Result<bool> {

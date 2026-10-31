@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-//! Opt-in: `run -t summary` and `run -t youtube` (which also runs `chapters`, whose files go to `.minuta/derived/`) against the real
+//! Opt-in: `run -t summary` and `run -t youtube` (which also runs `chapters`, whose files go to `assets/`) against the real
 //! local Ollama. Set `MINUTA_E2E_LLM=1`; the model is `ollama:gemma4:26b` unless
 //! `MINUTA_E2E_LLM_MODEL` names another. The transcript comes from the fake whisper, so no
 //! whisper model is needed; ffmpeg and a running Ollama are.
@@ -210,10 +210,9 @@ fn e2e_chapters_and_youtube_limits() {
     let Some((_tmp, job)) = run_real("youtube", Some(CLASS_FIXTURE)) else {
         return;
     };
-    let chapters: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(format!("{job}/.minuta/derived/chapters.json")).unwrap(),
-    )
-    .unwrap();
+    let chapters: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(format!("{job}/assets/chapters.json")).unwrap())
+            .unwrap();
     assert_chapter_rules(&chapters);
 
     let artifact: serde_json::Value =

@@ -9,7 +9,7 @@ use minuta::error::Error;
 use minuta::fields::prompt::{fields_block, repair_system, repair_user, schema};
 use minuta::fields::{FieldsSpec, Violation, FIELDS_VERSION};
 use minuta::generate::{backend_id, output_lang, TemplateRun};
-use minuta::job::layout::{derived_dir, template_json};
+use minuta::job::layout::{implicit_md, template_json};
 use minuta::job::{fingerprint, Ctx};
 use minuta::llm::call::Policy;
 use minuta::llm::chunk::{language_instruction, transcript_text, Event, PROMPT_VERSION};
@@ -1547,7 +1547,7 @@ fn requested_template_writes_md_at_root_and_json_in_assets() {
 }
 
 #[test]
-fn implicit_dependency_writes_to_derived() {
+fn implicit_dependency_writes_to_assets() {
     let (dir, _) = job();
     let t = tpl("social", FIELDS);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
@@ -1555,39 +1555,39 @@ fn implicit_dependency_writes_to_derived() {
     execute(&r, dir.path()).unwrap();
     assert_eq!(
         files_under(dir.path()),
-        [".minuta/derived/social.json", ".minuta/derived/social.md"]
+        ["assets/social.json", "assets/social.md"]
     );
-    let derived = derived_dir(dir.path());
     assert_eq!(
         r.artifacts(dir.path()),
-        vec![derived.join("social.json"), derived.join("social.md")]
+        vec![
+            template_json(dir.path(), "social"),
+            implicit_md(dir.path(), "social")
+        ]
     );
     assert_eq!(
-        fs::read_to_string(derived.join("social.json")).unwrap(),
+        fs::read_to_string(template_json(dir.path(), "social")).unwrap(),
         SOCIAL_JSON
     );
     assert_eq!(
-        fs::read_to_string(derived.join("social.md")).unwrap(),
+        fs::read_to_string(implicit_md(dir.path(), "social")).unwrap(),
         "Hola\n\nCorto.\n"
     );
 }
 
 #[test]
-fn implicit_markdown_dependency_writes_only_md_to_derived() {
+fn implicit_markdown_dependency_writes_only_md_to_assets() {
     let (dir, _) = job();
     let t = tpl("summary", TEXT);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok("Resumen.".into())]);
     execute(&run_implicit(&t, &b, true, &[]), dir.path()).unwrap();
-    assert_eq!(files_under(dir.path()), [".minuta/derived/summary.md"]);
+    assert_eq!(files_under(dir.path()), ["assets/summary.md"]);
 }
 
 #[test]
-fn dependent_reads_implicit_inputs_from_derived() {
+fn dependent_reads_implicit_inputs_from_assets() {
     let (dir, _) = job();
-    let derived = derived_dir(dir.path());
-    fs::create_dir_all(&derived).unwrap();
-    fs::write(derived.join("chapters.json"), CHAPTERS_ARTIFACT).unwrap();
-    fs::write(derived.join("summary.md"), "El resumen.\n").unwrap();
+    fs::write(template_json(dir.path(), "chapters"), CHAPTERS_ARTIFACT).unwrap();
+    fs::write(implicit_md(dir.path(), "summary"), "El resumen.\n").unwrap();
     let implicit = ["chapters".to_string(), "summary".to_string()];
 
     let youtube = tpl("youtube", YOUTUBE);
@@ -1624,7 +1624,7 @@ fn dependent_reads_implicit_inputs_from_derived() {
 }
 
 #[test]
-fn requesting_a_derived_template_moves_its_outputs() {
+fn requesting_an_implicit_template_moves_its_outputs() {
     let (dir, _) = job();
     let t = tpl("social", FIELDS);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into()), Ok(VALID.into())]);
@@ -1635,60 +1635,39 @@ fn requesting_a_derived_template_moves_its_outputs() {
 }
 
 #[test]
-fn move_derived_moves_files_without_running() {
+fn move_implicit_moves_files_without_running() {
     let (dir, _) = job();
     let t = tpl("social", FIELDS);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
     execute(&run_implicit(&t, &b, true, &[]), dir.path()).unwrap();
     let requested = run(&t, &b, "es");
-    assert!(requested.move_derived(&ctx(dir.path())).unwrap());
+    assert!(requested.move_implicit(&ctx(dir.path())).unwrap());
     assert_eq!(files_under(dir.path()), ["assets/social.json", "social.md"]);
     assert_eq!(
         fs::read_to_string(template_json(dir.path(), "social")).unwrap(),
         SOCIAL_JSON
     );
-    assert!(!requested.move_derived(&ctx(dir.path())).unwrap());
+    assert!(!requested.move_implicit(&ctx(dir.path())).unwrap());
     assert_eq!(b.calls().len(), 1, "no new call");
 }
 
 #[test]
-fn move_derived_removes_a_copy_when_the_normal_file_exists() {
+fn move_implicit_removes_a_copy_when_the_normal_file_exists() {
     let (dir, _) = job();
     let t = tpl("summary", TEXT);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok("Resumen.".into())]);
     execute(&run_implicit(&t, &b, true, &[]), dir.path()).unwrap();
     fs::write(dir.path().join("summary.md"), "Resumen.\n").unwrap();
-    assert!(run(&t, &b, "es").move_derived(&ctx(dir.path())).unwrap());
+    assert!(run(&t, &b, "es").move_implicit(&ctx(dir.path())).unwrap());
     assert_eq!(files_under(dir.path()), ["summary.md"]);
 }
 
 #[test]
-fn move_derived_handles_each_file_of_a_pair_on_its_own() {
+fn implicit_copy_that_cannot_be_removed_is_an_error() {
     let (dir, _) = job();
     let t = tpl("social", FIELDS);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
-    execute(&run_implicit(&t, &b, true, &[]), dir.path()).unwrap();
-    // The json already sits in assets/; only the md still has to move.
-    fs::create_dir_all(template_json(dir.path(), "social").parent().unwrap()).unwrap();
-    fs::write(template_json(dir.path(), "social"), "kept\n").unwrap();
-    assert!(run(&t, &b, "es").move_derived(&ctx(dir.path())).unwrap());
-    assert_eq!(files_under(dir.path()), ["assets/social.json", "social.md"]);
-    assert_eq!(
-        fs::read_to_string(template_json(dir.path(), "social")).unwrap(),
-        "kept\n"
-    );
-    assert_eq!(
-        fs::read_to_string(dir.path().join("social.md")).unwrap(),
-        "Hola\n\nCorto.\n"
-    );
-}
-
-#[test]
-fn derived_copy_that_cannot_be_removed_is_an_error() {
-    let (dir, _) = job();
-    let t = tpl("social", FIELDS);
-    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
-    let blocker = derived_dir(dir.path()).join("social.json");
+    let blocker = implicit_md(dir.path(), "social");
     fs::create_dir_all(&blocker).unwrap();
     let err = execute(&run(&t, &b, "es"), dir.path()).unwrap_err();
     assert!(
@@ -1698,14 +1677,14 @@ fn derived_copy_that_cannot_be_removed_is_an_error() {
 }
 
 #[test]
-fn derived_copy_that_cannot_be_read_is_an_error() {
+fn implicit_copy_that_cannot_be_read_is_an_error() {
     let (dir, _) = job();
     let t = tpl("social", FIELDS);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
-    let blocker = derived_dir(dir.path()).join("social.json");
+    let blocker = implicit_md(dir.path(), "social");
     fs::create_dir_all(&blocker).unwrap();
     let err = run(&t, &b, "es")
-        .move_derived(&ctx(dir.path()))
+        .move_implicit(&ctx(dir.path()))
         .unwrap_err();
     assert!(
         matches!(err, Error::Io(ref e) if e.to_string().starts_with(&format!("{}: ", blocker.display()))),
@@ -1738,16 +1717,4 @@ fn outputs_refuse_a_symlinked_assets_folder() {
     assert!(execute(&run(&t, &b, "es"), dir.path()).is_err());
     assert_eq!(files_under(outside.path()), ["transcript.json"]);
     assert!(!dir.path().join("social.md").try_exists().unwrap());
-}
-
-#[cfg(unix)]
-#[test]
-fn moving_derived_files_refuses_a_symlinked_assets_folder() {
-    let (dir, _) = job();
-    let t = tpl("social", FIELDS);
-    let b = ScriptedBackend::new(ID, CONTEXT, vec![Ok(VALID.into())]);
-    execute(&run_implicit(&t, &b, true, &[]), dir.path()).unwrap();
-    let outside = symlink_assets(dir.path());
-    assert!(run(&t, &b, "es").move_derived(&ctx(dir.path())).is_err());
-    assert_eq!(files_under(outside.path()), ["transcript.json"]);
 }

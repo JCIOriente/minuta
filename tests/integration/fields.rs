@@ -422,13 +422,12 @@ fn fields_chained_reads_md() {
     let out = run_class(&env, &["run", "a.mp4", "-t", "post"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     let job = env.job_dir("a");
-    // youtube ran only because post reads it: its files are in `.minuta/derived/`.
-    let derived = minuta::job::layout::derived_dir(&job);
+    // youtube ran only because post reads it: its files are in `assets/`.
     assert!(!job.join("youtube.md").exists());
-    let youtube_md = fs::read_to_string(derived.join("youtube.md")).unwrap();
+    let youtube_md = fs::read_to_string(minuta::job::layout::implicit_md(&job, "youtube")).unwrap();
     assert_eq!(youtube_md, VALID_YOUTUBE_MD);
     assert_eq!(
-        read_json(derived.join("youtube.json")),
+        read_json(minuta::job::layout::template_json(&job, "youtube")),
         valid_youtube_json()
     );
     let sent = chats(&fake);
@@ -493,8 +492,10 @@ fn fields_limit_edit_reruns() {
     cached.sort();
     assert_eq!(cached, ["other", "summary"], "{}", stderr(&out));
     assert_eq!(
-        read_json(minuta::job::layout::derived_dir(&env.job_dir("a")).join("youtube.json"))
-            ["fields"]["title"],
+        read_json(minuta::job::layout::template_json(
+            &env.job_dir("a"),
+            "youtube"
+        ))["fields"]["title"],
         "Title 90"
     );
 }
