@@ -77,7 +77,6 @@ fn layout_single_source_social_run() {
         names(&job),
         names(&job.join("assets")),
         names(&job.join(".minuta")),
-        names(&job.join(".minuta/derived")),
     );
     assert_eq!(
         listings,
@@ -93,13 +92,14 @@ fn layout_single_source_social_run() {
             ]),
             strs(&[
                 "audio.wav",
+                "chapters.json",
+                "chapters.md",
                 "instagram.json",
                 "linkedin.json",
                 "transcript.json",
                 "youtube.json",
             ]),
-            strs(&["derived", "job.json", "llm-cache", "probe.json"]),
-            strs(&["chapters.json", "chapters.md"]),
+            strs(&["job.json", "llm-cache", "probe.json"]),
         )
     );
     let stray: Vec<String> = all_files(&job)
@@ -140,30 +140,26 @@ fn layout_two_sources_has_joined_in_assets() {
 }
 
 #[test]
-fn layout_chapters_moves_out_of_derived_when_requested() {
+fn layout_chapters_moves_out_of_assets_when_requested() {
     require_ffmpeg!();
     let env = env_with_clip();
     let fake = social_fake();
     let out = run_class(&env, &["run", "a.mp4", "-t", "youtube"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     let job = env.job_dir("a");
+    let assets = names(&job.join("assets"));
     assert_eq!(
         (
-            names(&job.join(".minuta/derived")),
-            names(&job.join("assets")).contains(&"chapters.json".to_string()),
+            assets.contains(&"chapters.json".to_string()),
+            assets.contains(&"chapters.md".to_string()),
             names(&job).contains(&"chapters.md".to_string()),
         ),
-        (strs(&["chapters.json", "chapters.md"]), false, false)
+        (true, true, false)
     );
     let out = run_class(&env, &["run", "a.mp4", "-t", "chapters"], &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
-        (
-            names(&job),
-            names(&job.join("assets")),
-            job.join(".minuta/derived").try_exists().unwrap()
-                && !names(&job.join(".minuta/derived")).is_empty(),
-        ),
+        (names(&job), names(&job.join("assets"))),
         (
             strs(&[
                 ".minuta",
@@ -179,7 +175,6 @@ fn layout_chapters_moves_out_of_derived_when_requested() {
                 "transcript.json",
                 "youtube.json",
             ]),
-            false,
         ),
         "{}",
         stderr(&out)

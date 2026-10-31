@@ -14,7 +14,7 @@ A job folder holds documents users read next to bookkeeping they never need: `jo
 3. **Dot-prefix each internal file in place** (`.job.json`, `.llm-cache/`): no new folder, but the root still has several hidden entries and no single place to exclude or delete.
 
 ## Decision
-Option 1. Root: `transcript.txt`, `captions.srt`, `<template>.md`. `assets/`: every JSON result (`transcript.json`, `<template>.json`), `audio.wav`, `joined.<ext>`. `.minuta/`: `job.json`, `probe.json`, `llm-cache/` and temporary whisper output. With one source there is no joined file (never a duplicate of the original). Templates that run only as another's dependency write under `.minuta/derived/`. All paths come from one layout module. Jobs made by earlier versions are not migrated; a run in one starts fresh.
+Option 1. Root: `transcript.txt`, `captions.srt`, `<template>.md`. `assets/`: every JSON result (`transcript.json`, `<template>.json`), `audio.wav`, `joined.<ext>`. `.minuta/`: `job.json`, `probe.json`, `llm-cache/` and temporary whisper output. With one source there is no joined file (never a duplicate of the original). Templates that run only as another's dependency write their `.md` and `.json` to `assets/` (there is no `.minuta/derived/`); requesting one moves its `.md` to the root. All paths come from one layout module. Jobs made by earlier versions are not migrated; a run in one starts fresh.
 
 ## Consequences
 - Easier: a readable default listing; one folder to ignore, sync-exclude or delete for bookkeeping; one place that defines every path.

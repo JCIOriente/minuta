@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- A template that runs only because another needs it (for example `chapters` under `youtube`)
+  writes its files to `assets/`, not to `.minuta/derived/`, which no longer exists. Asking for
+  it with `-t` moves its `.md` to the top of the job folder.
+
+### Fixed
+- `minuta templates pull` no longer hangs on an interactive terminal when it draws the
+  progress bar.
+
 ## 0.5.0
 
 ### Changed (breaking)

@@ -1290,7 +1290,10 @@ fn layout_paths_are_under_minuta_and_assets() {
         (layout::state_file(dir), "/jobs/talk/.minuta/job.json"),
         (layout::probe_file(dir), "/jobs/talk/.minuta/probe.json"),
         (layout::call_cache_dir(dir), "/jobs/talk/.minuta/llm-cache"),
-        (layout::derived_dir(dir), "/jobs/talk/.minuta/derived"),
+        (
+            layout::implicit_md(dir, "youtube"),
+            "/jobs/talk/assets/youtube.md",
+        ),
         (
             layout::raw_whisper(dir),
             "/jobs/talk/.minuta/whisper-raw.json",

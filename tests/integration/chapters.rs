@@ -571,9 +571,9 @@ in the input.
     );
 }
 
-/// Where the files of template `name` ended up, as (root, assets, derived) listings of the
+/// Where the files of template `name` ended up, as (root, assets) listings of the
 /// `<name>.*` files.
-fn homes(job: &Path, name: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
+fn homes(job: &Path, name: &str) -> (Vec<String>, Vec<String>) {
     let listing = |dir: std::path::PathBuf| {
         let mut files: Vec<String> = match fs::read_dir(&dir) {
             Ok(entries) => entries
@@ -589,7 +589,6 @@ fn homes(job: &Path, name: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
     (
         listing(job.to_path_buf()),
         listing(job.join(minuta::job::layout::ASSETS_DIR)),
-        listing(minuta::job::layout::derived_dir(job)),
     )
 }
 
@@ -612,8 +611,7 @@ fn requested_template_writes_md_at_root_and_json_in_assets() {
         (
             (
                 vec!["chapters.md".to_string()],
-                vec!["chapters.json".to_string()],
-                Vec::new()
+                vec!["chapters.json".to_string()]
             ),
             VALID_CHAPTERS_JSON.to_string(),
             VALID_CHAPTERS_MD.to_string(),
@@ -632,11 +630,10 @@ fn youtube_run_leaves_no_chapters_at_root() {
     let out = run_class(&env, &ARGS_YOUTUBE, &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     let job = env.job_dir("a");
-    let derived = minuta::job::layout::derived_dir(&job);
     let outcome = (
         homes(&job, "chapters"),
-        read(&derived.join("chapters.json")),
-        read(&derived.join("chapters.md")),
+        read(&minuta::job::layout::template_json(&job, "chapters")),
+        read(&minuta::job::layout::implicit_md(&job, "chapters")),
         homes(&job, "youtube"),
         read(&job.join("youtube.md")),
         job_json(&job)["templates"]["chapters"]["artifacts"].clone(),
@@ -646,21 +643,16 @@ fn youtube_run_leaves_no_chapters_at_root() {
         (
             (
                 Vec::new(),
-                Vec::new(),
                 vec!["chapters.json".to_string(), "chapters.md".to_string()]
             ),
             VALID_CHAPTERS_JSON.to_string(),
             VALID_CHAPTERS_MD.to_string(),
             (
                 vec!["youtube.md".to_string()],
-                vec!["youtube.json".to_string()],
-                Vec::new()
+                vec!["youtube.json".to_string()]
             ),
             VALID_YOUTUBE_MD.to_string(),
-            serde_json::json!([
-                ".minuta/derived/chapters.json",
-                ".minuta/derived/chapters.md"
-            ]),
+            serde_json::json!(["assets/chapters.json", "assets/chapters.md"]),
         ),
         "{}",
         stderr(&out)
@@ -712,8 +704,7 @@ fn unchanged_templates_are_skipped_after_move() {
             0,
             (
                 vec!["chapters.md".to_string()],
-                vec!["chapters.json".to_string()],
-                Vec::new()
+                vec!["chapters.json".to_string()]
             ),
             serde_json::json!(["assets/chapters.json", "chapters.md"]),
         ),
@@ -723,13 +714,13 @@ fn unchanged_templates_are_skipped_after_move() {
 }
 
 #[test]
-fn requesting_a_derived_template_moves_its_outputs() {
+fn requesting_an_implicit_template_moves_its_outputs() {
     require_ffmpeg!();
     let env = env_with_clip();
     let fake = scripted(|_| valid_chapters(), "unused");
     let out = run_class(&env, &ARGS_YOUTUBE, &fake);
     assert!(out.status.success(), "{}", stderr(&out));
-    // Forcing runs the template again, now as a requested one: the derived copies go away.
+    // Forcing runs the template again, now as a requested one: the copy in assets/ moves.
     let out = run_class(
         &env,
         &["run", "a.mp4", "-t", "chapters", "--force", "chapters"],
@@ -747,8 +738,7 @@ fn requesting_a_derived_template_moves_its_outputs() {
         (
             (
                 vec!["chapters.md".to_string()],
-                vec!["chapters.json".to_string()],
-                Vec::new()
+                vec!["chapters.json".to_string()]
             ),
             VALID_CHAPTERS_JSON.to_string(),
             VALID_CHAPTERS_MD.to_string(),
@@ -771,7 +761,6 @@ fn force_does_not_make_an_implicit_template_requested() {
         (homes(&job, "chapters"), done_templates(&stderr(&out))),
         (
             (
-                Vec::new(),
                 Vec::new(),
                 vec!["chapters.json".to_string(), "chapters.md".to_string()]
             ),

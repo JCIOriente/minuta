@@ -11,8 +11,8 @@ code, specs and issues. When a term is ambiguous or keeps needing explanation, a
 | Step | One fixed stage of the pipeline (`probe`, `join`, `audio`, `transcribe`, `outputs`) with declared inputs and outputs. | A template step, which is user-defined and recorded under `templates` in `.minuta/job.json` |
 | Artifact | A file a step produces and stores in the job folder. | |
 | Assets folder | `assets/` in the job folder: machine-readable results and media (`transcript.json`, `<template>.json`, `audio.wav`, `joined.<ext>` with several sources). Visible on purpose, for scripts and reuse. | The State folder, and the documents at the root |
-| State folder | `.minuta/` in the job folder (hidden): `job.json`, `probe.json`, `llm-cache/`, `derived/`. Minuta's own bookkeeping. | The Assets folder; the Home folder `~/.minuta/` |
-| Derived output | The files of a template that ran only because another needed it (for example `chapters` under `youtube`), in `.minuta/derived/`. Asking for that template moves them to the normal place. | A requested template's output |
+| State folder | `.minuta/` in the job folder (hidden): `job.json`, `probe.json`, `llm-cache/`. Minuta's own bookkeeping. | The Assets folder; the Home folder `~/.minuta/` |
+| Implicit output | The files of a template that ran only because another needed it (for example `chapters` under `youtube`), all in `assets/`. Asking for that template moves its `.md` to the job folder. | A requested template's output |
 | Fingerprint | Hash of a step's inputs, parameters and tool version. A mismatch makes the step stale. For a template step it includes the hash of its input's content. | A checksum of the output |
 | Stale | A step whose recorded fingerprint differs from the current one, or whose output is missing. | Failed |
 | Speech language | The language whisper transcribes. `auto` or a code. | Output language and prompt language |
@@ -29,7 +29,7 @@ code, specs and issues. When a term is ambiguous or keeps needing explanation, a
 | Violation | One way an answer fails validation: not JSON, missing key, wrong type, empty, over a limit, or (for `chapters`) a broken chapter rule. | A transient call failure, which is retried without telling the model |
 | Repair call | A call that sends the previous answer and its violations back to the model to fix. Up to `llm.repairs` per template run. | A retry, which repeats the same call after a transient error |
 | Format | How a fields template's values are rendered to `<name>.md`: `plain` (paste-ready, no Markdown) or `markdown`. | The output kind (`markdown` or `fields`) |
-| Chapters | The built-in template `chapters` (`output: chapters`) and what it writes: `assets/chapters.json` (versioned, whole-second starts) and `chapters.md` (chapter lines), or both under `.minuta/derived/` when it runs only for another template. Computed once per job from the transcript. | Transcript blocks, the 30 s `[hh:mm:ss]` lines sent to the model |
+| Chapters | The built-in template `chapters` (`output: chapters`) and what it writes: `assets/chapters.json` (versioned, whole-second starts) and `chapters.md` (chapter lines), or both in `assets/` when it runs only for another template. Computed once per job from the transcript. | Transcript blocks, the 30 s `[hh:mm:ss]` lines sent to the model |
 | Chapter | One entry of a chapter list: `start` in whole seconds from the start of the joined media, and a one-line `title`. | A transcript segment |
 | Chapter line | `<stamp> <title>`, the form YouTube reads in a description: `m:ss` below one hour, `h:mm:ss` from one hour. | The `[hh:mm:ss]` stamps in transcript blocks |
 | Chapter rules | YouTube's rules for a chapter list: first at 0:00, at least 3, ascending, each at least 10 s (the last up to the transcript end), plus the template's `max` and `max_chars`. | Limits of a fields template |
