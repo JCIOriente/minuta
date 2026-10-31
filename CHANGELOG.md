@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- The curated `youtube` template in the catalog now fills `chapters` and `hashtags` like the
+  built-in one. Before, a pulled copy replaced the built-in and the video description came
+  out with no chapter list. Pull it again with `minuta templates pull youtube --force`.
+
 ## 0.6.0
 
 ### Changed
