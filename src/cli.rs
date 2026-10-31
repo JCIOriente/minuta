@@ -517,8 +517,10 @@ fn templates_pull(args: PullArgs) -> Result<()> {
         &mut pull_cmd::Terminal {
             interactive,
             input: &mut stdin.lock(),
-            stdout: &mut std::io::stdout().lock(),
-            stderr: &mut std::io::stderr().lock(),
+            // Not locked: the progress bar's ticker thread writes to stderr too, and a lock
+            // held here for the whole run would block it while it holds the bar's state.
+            stdout: &mut std::io::stdout(),
+            stderr: &mut std::io::stderr(),
         },
     )
 }
