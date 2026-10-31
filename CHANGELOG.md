@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
 ### Changed
 - A template that runs only because another needs it (for example `chapters` under `youtube`)
