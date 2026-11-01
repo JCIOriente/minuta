@@ -7,7 +7,8 @@ post.
 minuta joins your recordings, transcribes them on your machine with
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp), then runs prompt
 **templates** on the transcript through a local [Ollama](https://ollama.com)
-model or [Claude Code](https://claude.com/claude-code). Every step is cached, so
+model, [Claude Code](https://claude.com/claude-code) or
+[Codex](https://github.com/openai/codex). Every step is cached, so
 running the same command again only redoes what changed.
 
 ```console
@@ -23,7 +24,7 @@ minuta's own bookkeeping is in a hidden `.minuta/` folder
 
 - **Local by default.** Transcription always runs on your machine. Documents
   stay local with a local Ollama, and leave the machine only if you choose
-  Claude or a remote Ollama.
+  Claude, Codex or a remote Ollama.
 - **Templates are plain Markdown files.** Write your own, and chain them: one
   template's output can be another's input.
 - **Resumable.** Interrupt a run or change a template, and the next run picks up
@@ -62,11 +63,11 @@ minuta calls a few external tools. Install them once:
 | `ffmpeg` and `ffprobe` | Reading, joining and converting media | `brew install ffmpeg` |
 | `whisper-cli` | Transcription | `brew install whisper-cpp` |
 | A whisper model | Transcription | `minuta models pull base` |
-| Ollama *or* Claude Code | Templates only (`run -t ...`) | `brew install ollama`, start it with `ollama serve`, then `ollama pull gemma4:26b` |
+| Ollama, Claude Code *or* Codex | Templates only (`run -t ...`) | `brew install ollama`, start it with `ollama serve`, then `ollama pull gemma4:26b` |
 
 **[Read the full installation guide](https://github.com/JCIOriente/minuta/blob/main/docs/install.md)**
 for Linux package managers, building whisper.cpp from source, choosing a
-model, setting up Ollama or Claude Code, and voice activity detection.
+model, setting up Ollama, Claude Code or Codex, and voice activity detection.
 
 Then check your setup:
 
@@ -168,7 +169,7 @@ Run `minuta help <command>` for the full usage of any command.
 | Option | Description |
 | --- | --- |
 | `-t, --template NAME` | Generate a document with this template. Repeat it for more templates |
-| `--llm ID` | Backend for every template in this run: `ollama:<model>`, `claude` or `claude:<model>` |
+| `--llm ID` | Backend for every template in this run: `ollama:<model>`, `claude`, `claude:<model>`, `codex` or `codex:<model>` |
 | `--output-lang CODE` | Language the documents are written in. Default: the detected speech language |
 
 Only the job folder's path goes to stdout. Progress, warnings and errors go to
@@ -399,7 +400,7 @@ Every key is optional. Unknown keys are an error.
 | `fields` | With `output: fields`, the fields to generate | none |
 | `limits` | With `output: fields`, the limits for each field: `{ max_chars: N, max: N }` | none |
 | `format` | With `output: fields`, how fields render in the `.md` file: `plain` or `markdown` | `plain` |
-| `llm` | The backend for this template, such as `ollama:qwen3:14b` or `claude` | the configured default |
+| `llm` | The backend for this template, such as `ollama:qwen3:14b`, `claude` or `codex` | the configured default |
 | `lang` | The language this template writes in, such as `en`. `--output-lang` overrides it | `llm.output_lang`, else the detected speech language |
 
 The `chapters` template is special: it uses `output: chapters`, which no other
@@ -456,6 +457,8 @@ Write a short post about "{{job_name}}" from the transcript in the input.
 | `ollama:<model>` | A model served by your local Ollama, such as `ollama:gemma4:26b` |
 | `claude` | Claude Code (`claude -p`) with its default model |
 | `claude:<model>` | Claude Code with a given model, such as `claude:sonnet` |
+| `codex` | Codex (`codex exec`) with its default model |
+| `codex:<model>` | Codex with a given model, such as `codex:gpt-5.1` |
 
 The backend is chosen in this order: the `--llm` flag, then the template's
 `llm` key, then `llm.default`, set in the config file or with `MINUTA_LLM`
@@ -467,6 +470,12 @@ runs Claude without tools, sessions or MCP servers, from an empty temporary
 directory. Claude sends the transcript to Anthropic, and minuta prints a notice
 whenever a template uses it. Ollama keeps it on your machine, unless
 `ollama.url` points to another machine.
+
+With Codex, minuta runs `codex exec` using your existing Codex login (run
+`codex login` once). It runs Codex with a read-only sandbox, no session files
+and none of your `~/.codex/config.toml` settings, from an empty temporary
+directory, so plain `codex` uses Codex's built-in default model. Codex sends the
+transcript to OpenAI, and minuta prints a notice whenever a template uses it.
 
 Long transcripts are split to fit the model's context window and then
 combined. For Ollama, the window is the smaller of `ollama.num_ctx` and the
@@ -592,6 +601,7 @@ num_ctx = 16384
 | `ollama.url` | `MINUTA_OLLAMA_URL` | | `http://127.0.0.1:11434` |
 | `ollama.num_ctx` | `MINUTA_OLLAMA_NUM_CTX` | | `16384` |
 | `claude.bin` | `MINUTA_CLAUDE_BIN` | | `claude` |
+| `codex.bin` | `MINUTA_CODEX_BIN` | | `codex` |
 
 The `*.bin` keys take a command name to look up on your `PATH`, or a full path.
 
