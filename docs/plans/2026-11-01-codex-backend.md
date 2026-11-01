@@ -2,7 +2,7 @@
 
 - Spec: docs/specs/2026-11-01-codex-backend.md
 - Date: 2026-11-01
-- Status: in backlog
+- Status: complete (T1-T6 merged)
 
 ## Overview
 Cut along files so the early tasks run in parallel. Three independent foundations first: the

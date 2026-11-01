@@ -133,4 +133,10 @@ codex version prints more to stdout, switch to `-o <file>` in the scratch direct
 None.
 
 ## Implementation status
-- [ ] plan and issues (not yet created)
+Plan: [2026-11-01-codex-backend.md](../plans/2026-11-01-codex-backend.md)
+- [x] T1: backend id and provider labels (#203, PR #209)
+- [x] T2: shared subprocess helpers (#204, PR #210)
+- [x] T4: `codex.bin` setting (#205, PR #211)
+- [x] T3: the Codex backend (#206, PR #212)
+- [x] T5: runner, `doctor` and notice (#207, PR #213)
+- [x] T6: docs (#208, PR #214)
