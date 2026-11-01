@@ -1,0 +1,32 @@
+#!/bin/sh
+# Fake `codex` for the tests. Records what it was given and prints a canned reply.
+#   FAKE_CODEX_ARGV    file that gets the argv, one argument per line
+#   FAKE_CODEX_STDIN   file that gets stdin
+#   FAKE_CODEX_CWD     file that gets `pwd -P`, then the names in the working directory
+#   FAKE_CODEX_REPLY   stdout (an empty value prints nothing; default: "fake codex reply")
+#   FAKE_CODEX_STDERR  text for stderr
+#   FAKE_CODEX_EXIT    exit status (default 0)
+#   FAKE_CODEX_HANG    when set, hang until killed
+#   FAKE_CODEX_PID     file that gets the fake's pid once it is running (kept by HANG)
+#   FAKE_CODEX_CALLS   file that gets one line appended per invocation
+#   FAKE_CODEX_SIGNAL  signal name (e.g. KILL): the fake kills itself with it
+if [ "$1" = "--version" ]; then echo "codex-cli 0.0.0-fake"; exit 0; fi
+if [ -n "$FAKE_CODEX_CALLS" ]; then echo call >> "$FAKE_CODEX_CALLS"; fi
+if [ -n "$FAKE_CODEX_ARGV" ]; then
+  : > "$FAKE_CODEX_ARGV"
+  for a in "$@"; do printf '%s\n' "$a" >> "$FAKE_CODEX_ARGV"; done
+fi
+if [ -n "$FAKE_CODEX_CWD" ]; then
+  { pwd -P; ls -A; } > "$FAKE_CODEX_CWD"
+fi
+if [ -n "$FAKE_CODEX_PID" ]; then echo $$ > "$FAKE_CODEX_PID.tmp" && mv "$FAKE_CODEX_PID.tmp" "$FAKE_CODEX_PID"; fi
+if [ -n "$FAKE_CODEX_SIGNAL" ]; then kill -s "$FAKE_CODEX_SIGNAL" $$; exit 99; fi
+if [ -n "$FAKE_CODEX_HANG" ]; then exec /bin/sleep 300; fi
+if [ -n "$FAKE_CODEX_STDIN" ]; then cat > "$FAKE_CODEX_STDIN"; else cat > /dev/null; fi
+if [ -n "$FAKE_CODEX_STDERR" ]; then printf '%s\n' "$FAKE_CODEX_STDERR" >&2; fi
+if [ "${FAKE_CODEX_REPLY+set}" = set ]; then
+  [ -n "$FAKE_CODEX_REPLY" ] && printf '%s\n' "$FAKE_CODEX_REPLY"
+else
+  echo "fake codex reply"
+fi
+exit "${FAKE_CODEX_EXIT:-0}"

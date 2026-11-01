@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 pub mod call;
 pub mod chunk;
 pub mod claude;
+pub mod codex;
 #[doc(hidden)] // Not cfg(test): integration tests in tests/ need it.
 pub mod fake;
 pub mod ollama;
