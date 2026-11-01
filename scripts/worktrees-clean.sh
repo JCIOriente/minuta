@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Remove stale git worktrees: clean, unlocked ones whose branch has a merged or
-# closed PR. Deletes the local branch, then prunes dangling worktree records.
+# closed PR and no commits beyond it. Deletes the local branch, then prunes
+# dangling worktree records.
 # Run from any checkout of the repo. Needs `gh`.
 set -euo pipefail
 
@@ -16,9 +17,15 @@ check() {
   if [ -n "$(git -C "$path" status --porcelain)" ]; then
     echo "keep   $path (uncommitted changes)"; return 0
   fi
-  state=$(gh pr list --head "$branch" --state all --json state --jq '.[0].state // "NONE"')
+  # Newest PR for the branch: "<STATE> <head sha>", or "NONE" when it has none.
+  pr=$(gh pr list --head "$branch" --state all --json state,headRefOid \
+    --jq '(.[0] // {state: "NONE"}) | "\(.state) \(.headRefOid // "")"')
+  read -r state head <<<"$pr"
   case "$state" in
     MERGED|CLOSED)
+      if [ "$(git rev-parse "refs/heads/$branch")" != "$head" ]; then
+        echo "keep   $path (local commits not in PR)"; return 0
+      fi
       git worktree remove "$path"
       git branch -D "$branch" >/dev/null
       echo "remove $path ($branch, PR $state)" ;;
