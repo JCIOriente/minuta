@@ -14,7 +14,7 @@ const DEFAULT_LANG: &str = "auto";
 const DEFAULT_MODELS_DIR: &str = "~/.minuta/models";
 
 /// Every environment variable minuta reads.
-const ENV_NAMES: [&str; 18] = [
+const ENV_NAMES: [&str; 19] = [
     "MINUTA_CONFIG",
     "MINUTA_OUT_DIR",
     "MINUTA_WHISPER_BIN",
@@ -33,6 +33,7 @@ const ENV_NAMES: [&str; 18] = [
     "MINUTA_OLLAMA_URL",
     "MINUTA_OLLAMA_NUM_CTX",
     "MINUTA_CLAUDE_BIN",
+    "MINUTA_CODEX_BIN",
 ];
 
 /// Where a resolved value came from, highest precedence first.
@@ -90,6 +91,7 @@ pub struct Config {
     pub ollama_url: Setting,
     pub ollama_num_ctx: Setting,
     pub claude_bin: Setting,
+    pub codex_bin: Setting,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -102,6 +104,7 @@ struct FileConfig {
     llm: Option<LlmTable>,
     ollama: Option<OllamaTable>,
     claude: Option<BinTable>,
+    codex: Option<BinTable>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -231,6 +234,7 @@ impl Config {
         let llm = from_file.llm.unwrap_or_default();
         let ollama = from_file.ollama.unwrap_or_default();
         let claude = from_file.claude.unwrap_or_default();
+        let codex = from_file.codex.unwrap_or_default();
 
         let config = Config {
             path,
@@ -323,6 +327,7 @@ impl Config {
                 "16384",
             ),
             claude_bin: pick(None, env("MINUTA_CLAUDE_BIN"), claude.bin, "claude"),
+            codex_bin: pick(None, env("MINUTA_CODEX_BIN"), codex.bin, "codex"),
         };
         config.check_numbers()?;
         Ok(config)
@@ -392,6 +397,7 @@ impl Config {
             ("ollama.url", Some(&self.ollama_url)),
             ("ollama.num_ctx", Some(&self.ollama_num_ctx)),
             ("claude.bin", Some(&self.claude_bin)),
+            ("codex.bin", Some(&self.codex_bin)),
         ]
     }
 }

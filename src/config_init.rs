@@ -49,6 +49,9 @@ pub const TEMPLATE: &str = r##"# minuta configuration, written by `minuta config
 
 # [claude]
 # bin = "claude"
+
+# [codex]
+# bin = "codex"
 "##;
 
 /// What [`write`] did.
