@@ -8,8 +8,9 @@ programs, which you install once:
 | [ffmpeg and ffprobe](#ffmpeg-and-ffprobe) | Reading, joining and converting media | Always |
 | [whisper.cpp](#whispercpp) (`whisper-cli`) | Transcription | Always |
 | [A whisper model](#a-whisper-model) | Transcription | Always |
-| [Ollama](#ollama) | Generating documents locally | For templates, unless you use Claude |
+| [Ollama](#ollama) | Generating documents locally | For templates, unless you use Claude or Codex |
 | [Claude Code](#claude-code) | Generating documents with Claude | When a template uses a `claude` backend |
+| [Codex](#codex) | Generating documents with Codex | When a template uses a `codex` backend |
 
 `minuta transcribe` needs only the first three. `minuta run -t ...` also needs
 the LLM backend that its templates use.
@@ -195,6 +196,30 @@ minuta run meeting.mp4 -t summary --llm claude
 
 To use Claude for every run, set `default = "claude"` under `[llm]`. With
 Claude, the transcript is sent to Anthropic. minuta prints a notice each time
+that happens.
+
+## Codex
+
+minuta can also generate documents with OpenAI's
+[Codex](https://github.com/openai/codex) CLI. It uses your existing Codex
+login, so there is no API key to configure. Install it with one of these:
+
+```sh
+npm install -g @openai/codex                       # npm
+brew install --cask codex                          # Homebrew
+```
+
+Run `codex login` once, then use it from minuta:
+
+```sh
+minuta run meeting.mp4 -t summary --llm codex
+minuta run meeting.mp4 -t summary --llm codex:<model>   # a given model
+```
+
+To use Codex for every run, set `default = "codex"` under `[llm]`. minuta runs
+Codex with a read-only sandbox, no session files and without your
+`~/.codex/config.toml`, so plain `codex` uses Codex's built-in default model.
+With Codex, the transcript is sent to OpenAI. minuta prints a notice each time
 that happens.
 
 ## Check your setup
