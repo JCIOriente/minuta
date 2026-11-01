@@ -2,7 +2,7 @@
 
 - Spec: docs/specs/2026-11-01-codex-backend.md
 - Date: 2026-11-01
-- Status: draft
+- Status: in backlog
 
 ## Overview
 Cut along files so the early tasks run in parallel. Three independent foundations first: the
@@ -34,7 +34,7 @@ Can start immediately in parallel: T1, T2, T4.
 
 ## Tasks
 
-### T1: Codex backend id and provider labels
+### T1: Codex backend id and provider labels  (#203)
 - Priority: 0
 - Depends on: none
 - Owns: `src/llm/mod.rs`
@@ -48,7 +48,7 @@ Can start immediately in parallel: T1, T2, T4.
 - Tests first: `backend_id_parses_codex`, `backend_id_parses_codex_model`, `backend_id_rejects_invalid_codex`, `backend_id_display_round_trips` (extended), `codex_sends_off_machine`, `provider_names`
 - Notes: follow the existing tests in `src/llm/mod.rs`. Until T5 the runner arms return a usage error ("codex backend is not wired yet"); T5 replaces them.
 
-### T2: Share the subprocess helpers
+### T2: Share the subprocess helpers  (#204)
 - Priority: 0
 - Depends on: none
 - Owns: `src/llm/subprocess.rs` (new), `src/llm/claude.rs`
@@ -60,7 +60,7 @@ Can start immediately in parallel: T1, T2, T4.
 - Tests first: `scratch_dir_is_private_and_removed_on_drop` (unit, moved or added in `subprocess.rs`), `scratch_dir_prefix_is_used`
 - Notes: pure refactor; do not touch `argv` or `reply` logic in `claude.rs`.
 
-### T3: The Codex backend
+### T3: The Codex backend  (#206)
 - Priority: 0
 - Depends on: T1, T2
 - Owns: `src/llm/codex.rs`, `tests/codex.rs`, `tests/fixtures/bin/codex`
@@ -74,7 +74,7 @@ Can start immediately in parallel: T1, T2, T4.
 - Tests first: `codex_argv_without_model`, `codex_argv_with_model`, `codex_system_prompt_is_toml_escaped`, `codex_sends_user_on_stdin_from_empty_cwd`, `codex_nonzero_exit_is_transient_with_stderr`, `codex_empty_output_is_transient`, `codex_interrupt_returns_interrupted`, `codex_signal_without_interrupt_is_transient`, `codex_check_missing_has_hint`, `codex_check_reports_version`
 - Notes: mirror `src/llm/claude.rs` and `tests/claude.rs`; the fake is `tests/fixtures/bin/claude` with `FAKE_CODEX_*` variables. `complete_json` keeps the trait default.
 
-### T4: `codex.bin` setting
+### T4: `codex.bin` setting  (#205)
 - Priority: 1
 - Depends on: none
 - Owns: `src/config.rs`, `src/config_init.rs`, `tests/config.rs`, `tests/config_init.rs`
@@ -86,7 +86,7 @@ Can start immediately in parallel: T1, T2, T4.
 - Tests first: `codex_bin_default`, `codex_bin_from_file`, `codex_bin_env_overrides_file`, `codex_unknown_key_rejected`, `config_show_lists_codex_bin`, `config_init_documents_codex_bin`
 - Notes: copy the `claude_bin` handling (`src/config.rs:92,104,233,325,394`) and the init text at `src/config_init.rs:50`.
 
-### T5: Wire into the runner, `doctor` and the notice
+### T5: Wire into the runner, `doctor` and the notice  (#207)
 - Priority: 0
 - Depends on: T1, T3, T4
 - Owns: `src/runner.rs`, `tests/cli.rs`
@@ -101,7 +101,7 @@ Can start immediately in parallel: T1, T2, T4.
 - Tests first: `run_with_codex_backend_writes_output`, `missing_codex_is_reported_with_hint`, `doctor_reports_codex_ok`, `doctor_reports_codex_not_reachable`, `notice_names_codex_openai`, `notice_for_claude_unchanged`, `codex_binary_located_once`
 - Notes: follow `locate_claude` (`src/runner.rs:382`); generalise it rather than copying if it stays readable.
 
-### T6: Docs
+### T6: Docs  (#208)
 - Priority: 2
 - Depends on: T5
 - Owns: `README.md`, `docs/install.md`, `docs/specs/2026-11-01-codex-backend.md` (status section)
