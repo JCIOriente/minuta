@@ -8,7 +8,7 @@ programs, which you install once:
 | [ffmpeg and ffprobe](#ffmpeg-and-ffprobe) | Reading, joining and converting media | Always |
 | [whisper.cpp](#whispercpp) (`whisper-cli`) | Transcription | Always |
 | [A whisper model](#a-whisper-model) | Transcription | Always |
-| [Ollama](#ollama) | Generating documents locally | For templates, unless you use Claude |
+| [Ollama](#ollama) | Generating documents locally | For templates, unless you use Claude or Codex |
 | [Claude Code](#claude-code) | Generating documents with Claude | When a template uses a `claude` backend |
 | [Codex](#codex) | Generating documents with Codex | When a template uses a `codex` backend |
 
