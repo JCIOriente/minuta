@@ -1796,15 +1796,15 @@ fn doctor_reports_codex() {
 
     let out = env.run_cmd({
         let mut cmd = env.llm_command(&["doctor"], &fake);
-        cmd.env("MINUTA_LLM", "codex:gpt-x").env(
-            "MINUTA_CODEX_BIN",
-            env.path("no-codex").display().to_string(),
-        );
+        cmd.env("MINUTA_LLM", "codex:gpt-x")
+            .env("MINUTA_CODEX_BIN", "minuta-no-such-codex");
         cmd
     });
     out.clone().assert().success();
     assert!(
-        stdout(&out).contains("llm          codex:gpt-x (not reachable: "),
+        stdout(&out).contains(
+            "llm          codex:gpt-x (not reachable: install Codex: npm install -g @openai/codex)"
+        ),
         "{}",
         stdout(&out)
     );

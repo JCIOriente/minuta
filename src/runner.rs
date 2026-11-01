@@ -211,6 +211,9 @@ impl Resolved {
             .iter()
             .filter_map(|name| {
                 let id = &self.backends[name];
+                if !id.sends_off_machine() {
+                    return None;
+                }
                 let provider = id.provider()?;
                 let tool = id.to_string();
                 let tool = tool.split(':').next().unwrap_or_default();
