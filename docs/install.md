@@ -213,7 +213,7 @@ Run `codex login` once, then use it from minuta:
 
 ```sh
 minuta run meeting.mp4 -t summary --llm codex
-minuta run meeting.mp4 -t summary --llm codex:gpt-5.1   # a given model
+minuta run meeting.mp4 -t summary --llm codex:<model>   # a given model
 ```
 
 To use Codex for every run, set `default = "codex"` under `[llm]`. minuta runs

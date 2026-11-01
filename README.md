@@ -458,7 +458,7 @@ Write a short post about "{{job_name}}" from the transcript in the input.
 | `claude` | Claude Code (`claude -p`) with its default model |
 | `claude:<model>` | Claude Code with a given model, such as `claude:sonnet` |
 | `codex` | Codex (`codex exec`) with its default model |
-| `codex:<model>` | Codex with a given model, such as `codex:gpt-5.1` |
+| `codex:<model>` | Codex with a given model, one your Codex account supports |
 
 The backend is chosen in this order: the `--llm` flag, then the template's
 `llm` key, then `llm.default`, set in the config file or with `MINUTA_LLM`
