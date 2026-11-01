@@ -12,6 +12,7 @@ pub mod claude;
 #[doc(hidden)] // Not cfg(test): integration tests in tests/ need it.
 pub mod fake;
 pub mod ollama;
+mod subprocess;
 
 pub const DEFAULT_LLM: &str = "ollama:gemma4:26b";
 
