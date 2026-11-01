@@ -81,6 +81,10 @@ impl Fixture {
     }
 
     fn run(&self) -> String {
+        self.run_in(&self.repo)
+    }
+
+    fn run_in(&self, cwd: &Path) -> String {
         let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/worktrees-clean.sh");
         let path = format!("{}:{}", self.stub.display(), std::env::var("PATH").unwrap());
         let out = Command::new(script)
@@ -204,6 +208,15 @@ fn keeps_branch_with_commits_the_pr_never_had() {
         )),
         "{out}"
     );
+}
+
+#[test]
+fn removes_the_worktree_it_was_started_from() {
+    let f = Fixture::new();
+    let wt = f.worktree("current");
+    f.pr("current", "MERGED", &f.tip("current"));
+    let out = f.run_in(&wt);
+    assert!(!wt.exists() && !f.has_branch("current"), "{out}");
 }
 
 #[test]
