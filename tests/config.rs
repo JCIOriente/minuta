@@ -410,6 +410,7 @@ fn env_snapshot_covers_every_minuta_name() {
         ("MINUTA_OLLAMA_URL", "env-ou".into()),
         ("MINUTA_OLLAMA_NUM_CTX", "4096".into()),
         ("MINUTA_CLAUDE_BIN", "env-cb".into()),
+        ("MINUTA_CODEX_BIN", "env-cx".into()),
     ];
     let read = |k: &str| {
         values

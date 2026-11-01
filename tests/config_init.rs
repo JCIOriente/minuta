@@ -320,3 +320,11 @@ fn resolve_uncommented() -> Config {
     std::fs::write(&path, uncommented(TEMPLATE)).unwrap();
     Config::resolve(Overrides::default(), &|_| None, Some(path.as_path())).unwrap()
 }
+
+#[test]
+fn config_init_documents_codex_bin() {
+    assert!(
+        TEMPLATE.contains("# [codex]\n# bin = \"codex\"\n"),
+        "{TEMPLATE}"
+    );
+}

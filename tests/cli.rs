@@ -877,7 +877,8 @@ fn config_show_lists_values_and_sources() {
         let mut cmd = env.command(&["config", "show"]);
         cmd.env_remove("MINUTA_WHISPER_MODEL")
             .env("MINUTA_FFMPEG_BIN", "/opt/ffmpeg")
-            .env("MINUTA_WHISPER_VAD_MODEL", "silero-v5.1.2");
+            .env("MINUTA_WHISPER_VAD_MODEL", "silero-v5.1.2")
+            .env("MINUTA_CODEX_BIN", "/opt/codex");
         cmd
     });
     out.clone().assert().success();
@@ -900,7 +901,7 @@ fn config_show_lists_values_and_sources() {
          ollama.url = http://127.0.0.1:11434 (default)\n\
          ollama.num_ctx = 16384 (default)\n\
          claude.bin = claude (default)\n\
-         codex.bin = codex (default)\n"
+         codex.bin = /opt/codex (env)\n"
     );
 }
 

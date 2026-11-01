@@ -14,7 +14,7 @@ const DEFAULT_LANG: &str = "auto";
 const DEFAULT_MODELS_DIR: &str = "~/.minuta/models";
 
 /// Every environment variable minuta reads.
-const ENV_NAMES: [&str; 18] = [
+const ENV_NAMES: [&str; 19] = [
     "MINUTA_CONFIG",
     "MINUTA_OUT_DIR",
     "MINUTA_WHISPER_BIN",
@@ -33,6 +33,7 @@ const ENV_NAMES: [&str; 18] = [
     "MINUTA_OLLAMA_URL",
     "MINUTA_OLLAMA_NUM_CTX",
     "MINUTA_CLAUDE_BIN",
+    "MINUTA_CODEX_BIN",
 ];
 
 /// Where a resolved value came from, highest precedence first.
