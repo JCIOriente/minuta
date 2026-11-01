@@ -980,6 +980,7 @@ use fake_ollama::{FakeOllama, Reply};
 use std::sync::Arc;
 
 const FAKE_CLAUDE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/claude");
+const FAKE_CODEX: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/codex");
 
 /// A fake Ollama serving the default model; every chat gets `reply`.
 fn ollama(reply: &'static str) -> FakeOllama {
@@ -1011,7 +1012,8 @@ impl Env {
         cmd.env("MINUTA_OLLAMA_URL", fake.url())
             .env("MINUTA_LLM_BACKOFF_MS", "0")
             .env("MINUTA_CLAUDE_BIN", FAKE_CLAUDE)
-            // The fake `claude` needs `cat`; the fake tools in `bin/` still come first.
+            .env("MINUTA_CODEX_BIN", FAKE_CODEX)
+            // The fake `claude` and `codex` need `cat`; the fake tools in `bin/` still come first.
             .env("PATH", format!("{}:/usr/bin:/bin", self.bin().display()));
         cmd
     }
@@ -1327,6 +1329,85 @@ fn off_machine_note_printed_once() {
         "fake claude reply\n"
     );
     assert_eq!(fake.chat_count(), 1, "only summary uses Ollama");
+}
+
+#[test]
+fn run_with_codex_backend_writes_output() {
+    let env = Env::new();
+    let fake = ollama("unused");
+    let out = env.minuta_llm(
+        &[
+            "run",
+            "clase-4.mp4",
+            "-t",
+            "summary",
+            "--llm",
+            "codex:gpt-x",
+        ],
+        &fake,
+    );
+    out.clone().assert().success();
+    assert!(fake.requests().is_empty(), "no Ollama check for codex");
+    let err = stderr(&out);
+    assert_eq!(
+        err.matches("note: summary sends its input to codex (OpenAI)")
+            .count(),
+        1,
+        "{err}"
+    );
+    assert!(
+        err.contains("[6/6] summary     codex:gpt-x  1 call  "),
+        "{err}"
+    );
+    assert_eq!(
+        fs::read_to_string(env.job_dir("clase-4").join("summary.md")).unwrap(),
+        "fake codex reply\n"
+    );
+}
+
+#[test]
+fn notice_for_claude_model_still_names_anthropic() {
+    let env = Env::new();
+    let fake = ollama("unused");
+    let out = env.minuta_llm(
+        &[
+            "run",
+            "clase-4.mp4",
+            "-t",
+            "summary",
+            "--llm",
+            "claude:sonnet",
+        ],
+        &fake,
+    );
+    out.clone().assert().success();
+    let err = stderr(&out);
+    assert!(
+        err.contains("note: summary sends its input to claude (Anthropic)"),
+        "{err}"
+    );
+    assert!(!err.contains("codex"), "{err}");
+}
+
+#[test]
+fn missing_codex_is_reported_with_hint() {
+    let env = Env::new();
+    let fake = ollama("unused");
+    let out = env.run_cmd({
+        let mut cmd = env.llm_command(
+            &["run", "clase-4.mp4", "-t", "summary", "--llm", "codex"],
+            &fake,
+        );
+        cmd.env("MINUTA_CODEX_BIN", "minuta-no-such-codex");
+        cmd
+    });
+    out.clone().assert().code(1);
+    let err = stderr(&out);
+    assert!(
+        err.contains("  codex: install Codex: npm install -g @openai/codex"),
+        "{err}"
+    );
+    assert!(!env.path("minuta-out").exists());
 }
 
 #[test]
@@ -1692,6 +1773,38 @@ fn doctor_reports_llm_without_affecting_exit_code() {
     out.clone().assert().success();
     assert!(
         stdout(&out).contains("llm          ollama:gemma4:26b (not reachable: "),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn doctor_reports_codex() {
+    let env = Env::new();
+    let fake = ollama("unused");
+    let out = env.run_cmd({
+        let mut cmd = env.llm_command(&["doctor"], &fake);
+        cmd.env("MINUTA_LLM", "codex");
+        cmd
+    });
+    out.clone().assert().success();
+    assert!(
+        stdout(&out).contains("llm          codex (ok)"),
+        "{}",
+        stdout(&out)
+    );
+
+    let out = env.run_cmd({
+        let mut cmd = env.llm_command(&["doctor"], &fake);
+        cmd.env("MINUTA_LLM", "codex:gpt-x").env(
+            "MINUTA_CODEX_BIN",
+            env.path("no-codex").display().to_string(),
+        );
+        cmd
+    });
+    out.clone().assert().success();
+    assert!(
+        stdout(&out).contains("llm          codex:gpt-x (not reachable: "),
         "{}",
         stdout(&out)
     );
