@@ -88,7 +88,7 @@ impl Fixture {
         let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/worktrees-clean.sh");
         let path = format!("{}:{}", self.stub.display(), std::env::var("PATH").unwrap());
         let out = Command::new(script)
-            .current_dir(&self.repo)
+            .current_dir(cwd)
             .env("PATH", path)
             .output()
             .unwrap();

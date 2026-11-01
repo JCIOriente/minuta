@@ -7,6 +7,9 @@ set -euo pipefail
 
 main=$(git worktree list --porcelain | awk '/^worktree /{print substr($0, 10); exit}')
 
+# We may be started inside a worktree we are about to remove.
+cd "$main"
+
 git worktree prune
 
 path=""; branch=""; locked=0
