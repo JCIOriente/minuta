@@ -472,7 +472,7 @@ fn entries_map_each_key_to_its_own_file_value() {
     let dir = tempfile::tempdir().unwrap();
     let file = write_config(
         &dir,
-        "out_dir = \"out-v\"\n[whisper]\nbin = \"wb-v\"\nmodel = \"wm-v\"\nlang = \"wl-v\"\nvad_model = \"wv-v\"\nmodels_dir = \"md-v\"\n[ffmpeg]\nbin = \"ff-v\"\n[ffprobe]\nbin = \"fp-v\"\n[llm]\ndefault = \"ld-v\"\noutput_lang = \"lo-v\"\nconcurrency = 3\nretries = 4\nbackoff_ms = 150\nrepairs = 6\n[ollama]\nurl = \"ou-v\"\nnum_ctx = 8192\n[claude]\nbin = \"cb-v\"\n",
+        "out_dir = \"out-v\"\n[whisper]\nbin = \"wb-v\"\nmodel = \"wm-v\"\nlang = \"wl-v\"\nvad_model = \"wv-v\"\nmodels_dir = \"md-v\"\n[ffmpeg]\nbin = \"ff-v\"\n[ffprobe]\nbin = \"fp-v\"\n[llm]\ndefault = \"ld-v\"\noutput_lang = \"lo-v\"\nconcurrency = 3\nretries = 4\nbackoff_ms = 150\nrepairs = 6\n[ollama]\nurl = \"ou-v\"\nnum_ctx = 8192\n[claude]\nbin = \"cb-v\"\n[codex]\nbin = \"cx-v\"\n",
     );
     let cfg = Config::resolve(Overrides::default(), &no_env, Some(file.as_path())).unwrap();
     let want = [
@@ -493,6 +493,7 @@ fn entries_map_each_key_to_its_own_file_value() {
         ("ollama.url", "ou-v"),
         ("ollama.num_ctx", "8192"),
         ("claude.bin", "cb-v"),
+        ("codex.bin", "cx-v"),
     ];
     let entries = cfg.entries();
     assert_eq!(entries.len(), want.len());
@@ -650,6 +651,15 @@ fn new_cases() -> Vec<NewCase> {
             default: Some("claude"),
             get: |c| Some(&c.claude_bin),
         },
+        NewCase {
+            key: "codex.bin",
+            toml: "[codex]\nbin = \"file\"\n",
+            file_value: "file",
+            env: "MINUTA_CODEX_BIN",
+            env_value: "env",
+            default: Some("codex"),
+            get: |c| Some(&c.codex_bin),
+        },
     ]
 }
 
@@ -774,6 +784,7 @@ fn entries_list_new_keys() {
             "ollama.url",
             "ollama.num_ctx",
             "claude.bin",
+            "codex.bin",
         ]
     );
 }
@@ -784,6 +795,7 @@ fn unknown_llm_key_rejected() {
         ("llm", "[llm]\ndefualt = \"x\"\n"),
         ("ollama", "[ollama]\nurl2 = \"x\"\n"),
         ("claude", "[claude]\nbinary = \"x\"\n"),
+        ("codex", "[codex]\nbinary = \"x\"\n"),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let file = write_config(&dir, toml);

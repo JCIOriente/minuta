@@ -899,7 +899,8 @@ fn config_show_lists_values_and_sources() {
          llm.repairs = 2 (default)\n\
          ollama.url = http://127.0.0.1:11434 (default)\n\
          ollama.num_ctx = 16384 (default)\n\
-         claude.bin = claude (default)\n"
+         claude.bin = claude (default)\n\
+         codex.bin = codex (default)\n"
     );
 }
 
