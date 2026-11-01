@@ -2,16 +2,14 @@
 //! directory, no tools, no session persistence, no settings files).
 
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::error::{Error, Missing, Result};
+use crate::llm::subprocess::{run_interruptible, ScratchDir};
 use crate::llm::Backend;
-use crate::tools::{self, RunOpts, ToolInfo};
+use crate::tools::{self, ToolInfo};
 
-const WATCH_INTERVAL: Duration = Duration::from_millis(10);
 const CONTEXT_TOKENS: usize = 150_000;
 const INSTALL_HINT: &str = "install Claude Code: https://claude.com/claude-code";
 
@@ -100,82 +98,6 @@ impl Claude {
     }
 }
 
-/// A fresh, empty, private directory, removed on drop. Cleanup is best effort on every
-/// path: a failure to remove it never discards a successful reply and never masks the
-/// primary error.
-struct ScratchDir(PathBuf);
-
-impl ScratchDir {
-    fn create() -> std::io::Result<ScratchDir> {
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let name = format!(
-            "minuta-claude-{}-{nanos}-{}",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::SeqCst)
-        );
-        let path = std::env::temp_dir().join(name);
-        let mut builder = std::fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        builder.create(&path)?;
-        Ok(ScratchDir(path))
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for ScratchDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-/// Sets the flag on drop, so the watcher stops even if the call panics.
-struct SetOnDrop<'a>(&'a AtomicBool);
-
-impl Drop for SetOnDrop<'_> {
-    fn drop(&mut self) {
-        self.0.store(true, Ordering::SeqCst);
-    }
-}
-
-/// `tools` wants an owned flag, the trait hands over a borrowed one: a watcher thread
-/// mirrors the caller's flag for the duration of the call.
-fn run_interruptible(
-    argv: &[OsString],
-    stdin: &[u8],
-    cwd: &Path,
-    interrupt: &AtomicBool,
-) -> Result<String> {
-    let mirror = Arc::new(AtomicBool::new(false));
-    let done = AtomicBool::new(false);
-    let opts = RunOpts {
-        cwd: Some(cwd.to_path_buf()),
-        interrupt: Some(Arc::clone(&mirror)),
-    };
-    std::thread::scope(|scope| {
-        scope.spawn(|| {
-            while !done.load(Ordering::SeqCst) {
-                if interrupt.load(Ordering::SeqCst) {
-                    mirror.store(true, Ordering::SeqCst);
-                    return;
-                }
-                std::thread::sleep(WATCH_INTERVAL);
-            }
-        });
-        let _stop = SetOnDrop(&done);
-        tools::run_capture(argv, stdin, opts, &mut |_| {})
-    })
-}
-
 impl Backend for Claude {
     fn id(&self) -> &str {
         &self.id
@@ -186,7 +108,7 @@ impl Backend for Claude {
     }
 
     fn complete(&self, system: &str, user: &str, interrupt: &AtomicBool) -> Result<String> {
-        let scratch = ScratchDir::create().map_err(|e| {
+        let scratch = ScratchDir::create("minuta-claude").map_err(|e| {
             Error::Io(std::io::Error::new(
                 e.kind(),
                 format!("cannot create a temporary directory for claude: {e}"),
