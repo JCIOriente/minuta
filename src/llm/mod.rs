@@ -262,17 +262,28 @@ mod tests {
 
     #[test]
     fn backend_id_rejects_invalid_codex() {
-        for bad in ["codex:", "codex:-x", "codex:a b"] {
-            let err = bad.parse::<BackendId>().unwrap_err();
-            assert!(matches!(err, Error::Usage(_)), "{bad:?}: {err}");
-        }
-        let err = "codex:".parse::<BackendId>().unwrap_err().to_string();
-        assert!(
-            err.contains(
-                "valid forms: ollama:<model>, claude, claude:<model>, codex, codex:<model>"
+        let forms = "valid forms: ollama:<model>, claude, claude:<model>, codex, codex:<model>";
+        let chars = "model names may contain only letters, digits and `._:/-[]@`, and may not start with `-`";
+        for (bad, want) in [
+            (
+                "codex:",
+                format!("invalid LLM backend \"codex:\" ({forms})"),
             ),
-            "{err}"
-        );
+            (
+                "codex:-x",
+                format!("invalid LLM backend \"codex:-x\": {chars}"),
+            ),
+            (
+                "codex:a b",
+                format!("invalid LLM backend \"codex:a b\": {chars}"),
+            ),
+        ] {
+            let err = bad.parse::<BackendId>().unwrap_err();
+            assert!(
+                matches!(&err, Error::Usage(m) if *m == want),
+                "{bad:?}: {err}"
+            );
+        }
     }
 
     #[test]
