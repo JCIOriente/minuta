@@ -163,7 +163,7 @@ fn interrupt_when_started<T: Send + std::fmt::Debug + 'static>(
 }
 
 #[test]
-fn codex_argv_flags() {
+fn codex_argv_with_model() {
     let dir = tempfile::tempdir().unwrap();
     let argv = dir.path().join("argv");
     let mut env = Env::new();
@@ -188,7 +188,7 @@ fn codex_argv_flags() {
 }
 
 #[test]
-fn codex_argv_has_no_model_by_default() {
+fn codex_argv_without_model() {
     let dir = tempfile::tempdir().unwrap();
     let argv = dir.path().join("argv");
     let mut env = Env::new();
@@ -196,7 +196,19 @@ fn codex_argv_has_no_model_by_default() {
     codex(None)
         .complete("s", "u", &AtomicBool::new(false))
         .unwrap();
-    assert!(!lines(&argv).iter().any(|a| a.starts_with("--model")));
+    assert_eq!(
+        lines(&argv),
+        [
+            "exec",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--sandbox=read-only",
+            "--config=developer_instructions=\"s\"",
+            "-",
+        ]
+    );
 }
 
 #[test]
@@ -214,7 +226,7 @@ fn codex_model_starting_with_dash_stays_one_argument() {
 }
 
 #[test]
-fn codex_input_on_stdin() {
+fn codex_sends_user_on_stdin_from_empty_cwd() {
     let dir = tempfile::tempdir().unwrap();
     let stdin = dir.path().join("stdin");
     let mut env = Env::new();
@@ -239,6 +251,8 @@ fn codex_runs_in_empty_cwd() {
     let got = lines(&cwd);
     assert_eq!(got.len(), 1, "working directory was not empty: {got:?}");
     let used = PathBuf::from(&got[0]);
+    let name = used.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(name.starts_with("minuta-codex-"), "{name}");
     assert_ne!(
         used,
         fs::canonicalize(std::env::current_dir().unwrap()).unwrap()
@@ -269,7 +283,8 @@ fn codex_empty_output_is_transient() {
         .complete("s", "u", &AtomicBool::new(false))
         .unwrap_err();
     assert!(
-        matches!(&err, Error::Llm { backend, transient: true, .. } if backend == "codex:opus"),
+        matches!(&err, Error::Llm { backend, message, transient: true }
+            if backend == "codex:opus" && message == "codex returned no output"),
         "{err:?}"
     );
 }
@@ -388,14 +403,14 @@ fn codex_reports_id_and_context() {
 }
 
 #[test]
-fn check_finds_configured_binary_and_version() {
+fn codex_check_reports_version() {
     let info = check(FAKE).unwrap();
     assert_eq!(info.path, PathBuf::from(FAKE));
     assert_eq!(info.version, "codex-cli 0.0.0-fake");
 }
 
 #[test]
-fn check_missing_codex_hints_install() {
+fn codex_check_missing_has_hint() {
     let missing = check("minuta-no-such-codex-binary").unwrap_err();
     assert_eq!(missing.name, "codex");
     assert_eq!(missing.hint, "install Codex: npm install -g @openai/codex");
@@ -409,7 +424,7 @@ fn check_missing_configured_path_is_missing() {
 }
 
 #[test]
-fn codex_system_prompt_is_a_toml_string() {
+fn codex_system_prompt_is_toml_escaped() {
     let dir = tempfile::tempdir().unwrap();
     let argv = dir.path().join("argv");
     let mut env = Env::new();
