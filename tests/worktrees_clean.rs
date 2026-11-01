@@ -48,10 +48,11 @@ impl Fixture {
         git(&repo, &["commit", "-q", "--allow-empty", "-m", "init"]);
         // The stub prints what the script's `--jq` would print for the branch
         // after `--head`: `<STATE> <headRefOid>`, read from `stub/<branch>`.
+        // It fails without `--state all`, as real gh then lists only open PRs.
         let gh = stub.join("gh");
         fs::write(
             &gh,
-            "#!/bin/sh\nwhile [ \"$1\" != --head ]; do shift; done\ncat \"$(dirname \"$0\")/$2\" 2>/dev/null || echo NONE\n",
+            "#!/bin/sh\ncase \" $* \" in *\" --state all \"*) ;; *) exit 1;; esac\nwhile [ \"$1\" != --head ]; do shift; done\ncat \"$(dirname \"$0\")/$2\" 2>/dev/null || echo NONE\n",
         )
         .unwrap();
         fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
