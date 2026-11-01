@@ -358,6 +358,9 @@ pub(crate) fn preflight(config: &Config, backends: &[BackendId]) -> Result<Ready
                 let bin = claude_bin.clone().expect("located above");
                 bin.map(|bin| Box::new(Claude::new(bin, model.clone())) as _)
             }
+            BackendId::Codex { .. } => {
+                return Err(Error::Usage("codex backend is not wired yet".into()));
+            }
         };
         match backend {
             Ok(backend) => {
@@ -417,6 +420,7 @@ pub fn llm_status(config: &Config) -> String {
             Ok(_) => "ok".to_string(),
             Err(m) => format!("not reachable: {}", m.hint),
         },
+        BackendId::Codex { .. } => "invalid: codex backend is not wired yet".to_string(),
     }
 }
 
@@ -890,7 +894,7 @@ impl TemplatePhase<'_> {
 fn concurrency(config: &Config, id: &BackendId) -> usize {
     config.concurrency().unwrap_or(match id {
         BackendId::Ollama { .. } => 1,
-        BackendId::Claude { .. } => 3,
+        BackendId::Claude { .. } | BackendId::Codex { .. } => 3,
     })
 }
 
