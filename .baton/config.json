@@ -10,7 +10,7 @@
   "git": {
     "baseBranch": "main",
     "branchPrefix": "task",
-    "worktreeRoot": "../{repo}-worktrees",
+    "worktreeRoot": ".worktrees",
     "mergeStrategy": "squash"
   },
   "setup": [],
