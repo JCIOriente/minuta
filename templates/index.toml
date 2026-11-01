@@ -71,8 +71,8 @@ sha256 = "ab525270aa6abf43c076203031164542068aba388267f002d6235cb9177036a2"
 
 [[template]]
 name = "youtube"
-description = "YouTube title, description, tags and thumbnail text"
+description = "YouTube title, description, chapters, hashtags, tags and thumbnail text"
 platform = "youtube"
 tags = ["video", "seo", "thumbnail"]
 input = "transcript"
-sha256 = "3ccdff37bec064262e971dededf4538e29e1ba3c5bf657395743c83ff7f0f048"
+sha256 = "4693723bc3286b23dab068df2e4e2590a20ee8d9f3c57b5802ed34aedd730b86"

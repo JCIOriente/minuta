@@ -147,7 +147,7 @@ pub struct RunArgs {
     /// Generate a document with this template (repeatable)
     #[arg(short = 't', long = "template", value_name = "TEMPLATE")]
     pub templates: Vec<String>,
-    /// Backend for every template: ollama:<model>, claude or claude:<model>
+    /// Backend for every template: ollama:<model>, claude, claude:<model>, codex or codex:<model>
     #[arg(long, value_name = "ID")]
     pub llm: Option<String>,
     /// Language the documents are written in (default: the detected speech language)

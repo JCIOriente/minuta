@@ -20,6 +20,7 @@ use crate::job::{
 use crate::lang;
 use crate::llm::call::{CallCache, Policy};
 use crate::llm::claude::{self, Claude};
+use crate::llm::codex::{self, Codex};
 use crate::llm::ollama::{self, Ollama};
 use crate::llm::{Backend, BackendId};
 use crate::models::{self, ModelKind};
@@ -29,7 +30,7 @@ use crate::steps::{plan_join, Audio, Join, Mode, Outputs, Probe, Transcribe};
 use crate::template::discover::{discover, Catalog, Dirs};
 use crate::template::graph;
 use crate::template::{Input, Output};
-use crate::tools::{self, Report, RunOpts, ToolPaths, Toolchain};
+use crate::tools::{self, Report, RunOpts, ToolInfo, ToolPaths, Toolchain};
 use crate::transcript::Transcript;
 
 /// What `run` and `transcribe` were asked to do, besides the settings in [`Config`]. The
@@ -111,8 +112,8 @@ pub fn run(
     );
     let steps: [&dyn Runnable; 5] = [&probe, &join, &audio, &transcribe, &Outputs];
 
-    for name in resolved.off_machine() {
-        progress.notice(&format!("{name} sends its input to claude (Anthropic)"));
+    for (name, target) in resolved.off_machine() {
+        progress.notice(&format!("{name} sends its input to {target}"));
     }
 
     let mut job = Job::open(
@@ -203,12 +204,21 @@ impl Resolved {
         ids
     }
 
-    /// The templates whose backend sends their input off the machine, each once.
-    fn off_machine(&self) -> Vec<&str> {
+    /// The templates whose backend sends their input off the machine, each once, with
+    /// where it goes, such as `claude (Anthropic)`.
+    fn off_machine(&self) -> Vec<(&str, String)> {
         self.order
             .iter()
-            .filter(|name| self.backends[*name].sends_off_machine())
-            .map(String::as_str)
+            .filter_map(|name| {
+                let id = &self.backends[name];
+                if !id.sends_off_machine() {
+                    return None;
+                }
+                let provider = id.provider()?;
+                let tool = id.to_string();
+                let tool = tool.split(':').next().unwrap_or_default();
+                Some((name.as_str(), format!("{tool} ({provider})")))
+            })
             .collect()
     }
 }
@@ -343,6 +353,7 @@ pub(crate) fn preflight(config: &Config, backends: &[BackendId]) -> Result<Ready
     missing = with_pull_hint(missing, config);
     let mut ready: BTreeMap<String, Box<dyn Backend>> = BTreeMap::new();
     let mut claude_bin: Option<std::result::Result<PathBuf, Missing>> = None;
+    let mut codex_bin: Option<std::result::Result<PathBuf, Missing>> = None;
     for id in backends {
         let backend: std::result::Result<Box<dyn Backend>, Missing> = match id {
             BackendId::Ollama { model } => {
@@ -353,10 +364,17 @@ pub(crate) fn preflight(config: &Config, backends: &[BackendId]) -> Result<Ready
             BackendId::Claude { model } => {
                 // One binary serves every claude model: look for it once.
                 if claude_bin.is_none() {
-                    claude_bin = Some(locate_claude(&config.claude_bin.value)?);
+                    claude_bin = Some(locate_bin(claude::check, &config.claude_bin.value)?);
                 }
                 let bin = claude_bin.clone().expect("located above");
                 bin.map(|bin| Box::new(Claude::new(bin, model.clone())) as _)
+            }
+            BackendId::Codex { model } => {
+                if codex_bin.is_none() {
+                    codex_bin = Some(locate_bin(codex::check, &config.codex_bin.value)?);
+                }
+                let bin = codex_bin.clone().expect("located above");
+                bin.map(|bin| Box::new(Codex::new(bin, model.clone())) as _)
             }
         };
         match backend {
@@ -377,10 +395,13 @@ pub(crate) fn preflight(config: &Config, backends: &[BackendId]) -> Result<Ready
     }
 }
 
-/// The `claude` binary as an absolute path: the backend runs it from a temporary directory,
+/// A backend's binary as an absolute path: the backend runs it from a temporary directory,
 /// where a relative path would not resolve.
-fn locate_claude(bin: &str) -> Result<std::result::Result<PathBuf, Missing>> {
-    let info = match claude::check(bin) {
+fn locate_bin(
+    check: fn(&str) -> std::result::Result<ToolInfo, Missing>,
+    bin: &str,
+) -> Result<std::result::Result<PathBuf, Missing>> {
+    let info = match check(bin) {
         Ok(info) => info,
         Err(m) => return Ok(Err(m)),
     };
@@ -414,6 +435,10 @@ pub fn llm_status(config: &Config) -> String {
             Err(m) => format!("not reachable: {}", m.hint),
         },
         BackendId::Claude { .. } => match claude::check(&config.claude_bin.value) {
+            Ok(_) => "ok".to_string(),
+            Err(m) => format!("not reachable: {}", m.hint),
+        },
+        BackendId::Codex { .. } => match codex::check(&config.codex_bin.value) {
             Ok(_) => "ok".to_string(),
             Err(m) => format!("not reachable: {}", m.hint),
         },
@@ -886,11 +911,11 @@ impl TemplatePhase<'_> {
 }
 
 /// Parallel calls within a template: `llm.concurrency`, or 1 for Ollama (one local model
-/// serves one request at a time) and 3 for Claude.
+/// serves one request at a time) and 3 for Claude and Codex.
 fn concurrency(config: &Config, id: &BackendId) -> usize {
     config.concurrency().unwrap_or(match id {
         BackendId::Ollama { .. } => 1,
-        BackendId::Claude { .. } => 3,
+        BackendId::Claude { .. } | BackendId::Codex { .. } => 3,
     })
 }
 
@@ -1336,7 +1361,7 @@ mod tests {
                 BackendId::Claude { model: None }
             ]
         );
-        assert_eq!(r.off_machine(), ["c"]);
+        assert_eq!(r.off_machine(), [("c", "claude (Anthropic)".to_string())]);
     }
 
     #[test]

@@ -304,6 +304,7 @@ fn config_init_template_parses_when_uncommented() {
         ("ollama.url", "http://127.0.0.1:11434"),
         ("ollama.num_ctx", "16384"),
         ("claude.bin", "claude"),
+        ("codex.bin", "codex"),
     ];
     let got: Vec<(&str, &str)> = config
         .entries()
@@ -318,4 +319,12 @@ fn resolve_uncommented() -> Config {
     let path = dir.path().join("config.toml");
     std::fs::write(&path, uncommented(TEMPLATE)).unwrap();
     Config::resolve(Overrides::default(), &|_| None, Some(path.as_path())).unwrap()
+}
+
+#[test]
+fn config_init_documents_codex_bin() {
+    assert!(
+        TEMPLATE.contains("# [codex]\n# bin = \"codex\"\n"),
+        "{TEMPLATE}"
+    );
 }

@@ -9,9 +9,11 @@ use crate::error::{Error, Result};
 pub mod call;
 pub mod chunk;
 pub mod claude;
+pub mod codex;
 #[doc(hidden)] // Not cfg(test): integration tests in tests/ need it.
 pub mod fake;
 pub mod ollama;
+mod subprocess;
 
 pub const DEFAULT_LLM: &str = "ollama:gemma4:26b";
 
@@ -39,9 +41,11 @@ pub trait Backend: Send + Sync {
 pub enum BackendId {
     Ollama { model: String },
     Claude { model: Option<String> },
+    Codex { model: Option<String> },
 }
 
-const VALID_FORMS: &str = "valid forms: ollama:<model>, claude, claude:<model>";
+const VALID_FORMS: &str =
+    "valid forms: ollama:<model>, claude, claude:<model>, codex, codex:<model>";
 
 fn invalid(s: &str) -> Error {
     Error::Usage(format!("invalid LLM backend {s:?} ({VALID_FORMS})"))
@@ -59,6 +63,9 @@ impl FromStr for BackendId {
         if s == "claude" {
             return Ok(BackendId::Claude { model: None });
         }
+        if s == "codex" {
+            return Ok(BackendId::Codex { model: None });
+        }
         match s.split_once(':') {
             Some((_, model)) if model.starts_with('-') || !model.chars().all(is_model_char) => {
                 Err(Error::Usage(format!(
@@ -69,6 +76,9 @@ impl FromStr for BackendId {
                 model: model.to_string(),
             }),
             Some(("claude", model)) if !model.is_empty() => Ok(BackendId::Claude {
+                model: Some(model.to_string()),
+            }),
+            Some(("codex", model)) if !model.is_empty() => Ok(BackendId::Codex {
                 model: Some(model.to_string()),
             }),
             _ => Err(invalid(s)),
@@ -82,6 +92,8 @@ impl fmt::Display for BackendId {
             BackendId::Ollama { model } => write!(f, "ollama:{model}"),
             BackendId::Claude { model: None } => write!(f, "claude"),
             BackendId::Claude { model: Some(m) } => write!(f, "claude:{m}"),
+            BackendId::Codex { model: None } => write!(f, "codex"),
+            BackendId::Codex { model: Some(m) } => write!(f, "codex:{m}"),
         }
     }
 }
@@ -91,7 +103,16 @@ impl BackendId {
     pub fn sends_off_machine(&self) -> bool {
         match self {
             BackendId::Ollama { .. } => false,
-            BackendId::Claude { .. } => true,
+            BackendId::Claude { .. } | BackendId::Codex { .. } => true,
+        }
+    }
+
+    /// The company that receives the transcript, for backends that send it off this machine.
+    pub fn provider(&self) -> Option<&'static str> {
+        match self {
+            BackendId::Ollama { .. } => None,
+            BackendId::Claude { .. } => Some("Anthropic"),
+            BackendId::Codex { .. } => Some("OpenAI"),
         }
     }
 }
@@ -212,9 +233,78 @@ mod tests {
 
     #[test]
     fn backend_id_display_round_trips() {
-        for s in ["ollama:gemma4:26b", "claude", "claude:sonnet"] {
+        for s in [
+            "ollama:gemma4:26b",
+            "claude",
+            "claude:sonnet",
+            "codex",
+            "codex:gpt-5",
+        ] {
             assert_eq!(s.parse::<BackendId>().unwrap().to_string(), s);
         }
+    }
+
+    #[test]
+    fn backend_id_parses_codex() {
+        assert_eq!(
+            "codex".parse::<BackendId>().unwrap(),
+            BackendId::Codex { model: None }
+        );
+    }
+
+    #[test]
+    fn backend_id_parses_codex_model() {
+        assert_eq!(
+            "codex:gpt-5".parse::<BackendId>().unwrap(),
+            BackendId::Codex {
+                model: Some("gpt-5".into())
+            }
+        );
+    }
+
+    #[test]
+    fn backend_id_rejects_invalid_codex() {
+        let forms = "valid forms: ollama:<model>, claude, claude:<model>, codex, codex:<model>";
+        let chars = "model names may contain only letters, digits and `._:/-[]@`, and may not start with `-`";
+        for (bad, want) in [
+            (
+                "codex:",
+                format!("invalid LLM backend \"codex:\" ({forms})"),
+            ),
+            (
+                "codex:-x",
+                format!("invalid LLM backend \"codex:-x\": {chars}"),
+            ),
+            (
+                "codex:a b",
+                format!("invalid LLM backend \"codex:a b\": {chars}"),
+            ),
+        ] {
+            let err = bad.parse::<BackendId>().unwrap_err();
+            assert!(
+                matches!(&err, Error::Usage(m) if *m == want),
+                "{bad:?}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn codex_sends_off_machine() {
+        assert!("codex".parse::<BackendId>().unwrap().sends_off_machine());
+        assert!("codex:gpt-5"
+            .parse::<BackendId>()
+            .unwrap()
+            .sends_off_machine());
+    }
+
+    #[test]
+    fn provider_names() {
+        let provider = |s: &str| s.parse::<BackendId>().unwrap().provider();
+        assert_eq!(provider("claude"), Some("Anthropic"));
+        assert_eq!(provider("claude:opus"), Some("Anthropic"));
+        assert_eq!(provider("codex"), Some("OpenAI"));
+        assert_eq!(provider("codex:gpt-5"), Some("OpenAI"));
+        assert_eq!(provider("ollama:x"), None);
     }
 
     #[test]
