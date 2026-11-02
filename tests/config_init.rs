@@ -328,3 +328,46 @@ fn config_init_documents_codex_bin() {
         "{TEMPLATE}"
     );
 }
+
+#[test]
+fn config_init_documents_endpoints() {
+    assert!(TEMPLATE.ends_with(
+        "# Any OpenAI-compatible server, such as LM Studio or Colibri. Name it here, then use\n\
+         # `--llm lmstudio:<model>`. Repeat the table for each server.\n\
+         #\n\
+         # [endpoints.lmstudio]\n\
+         #   Base URL, including /v1. Required.\n\
+         #   url = \"http://127.0.0.1:1234/v1\"\n\
+         #   Prompt and reply budget per call. Must fit the context the server gives the model.\n\
+         #   context_tokens = 16384\n\
+         #   Seconds to wait for one reply. Raise it for slow models.\n\
+         #   timeout_secs = 600\n\
+         #   The name of the environment variable holding the API key, never the key itself.\n\
+         #   api_key_env = \"MY_SERVER_KEY\"\n"
+    ));
+}
+
+#[test]
+fn config_init_endpoint_example_parses_once_uncommented() {
+    let example = TEMPLATE
+        .split_once("# [endpoints.lmstudio]")
+        .map(|(_, rest)| format!("[endpoints.lmstudio]{rest}"))
+        .unwrap();
+    let text: String = example
+        .lines()
+        .filter(|line| !line.starts_with("#   ") || line.contains(" = "))
+        .map(|line| line.strip_prefix("#   ").unwrap_or(line))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, text).unwrap();
+    let cfg = Config::resolve(Overrides::default(), &|_| None, Some(&path)).unwrap();
+    let endpoint = &cfg.endpoints["lmstudio"];
+    assert_eq!(endpoint.url.value, "http://127.0.0.1:1234/v1");
+    assert_eq!(endpoint.context_tokens(), 16384);
+    assert_eq!(
+        endpoint.api_key_env.as_ref().unwrap().value,
+        "MY_SERVER_KEY"
+    );
+}

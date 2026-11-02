@@ -52,6 +52,19 @@ pub const TEMPLATE: &str = r##"# minuta configuration, written by `minuta config
 
 # [codex]
 # bin = "codex"
+
+# Any OpenAI-compatible server, such as LM Studio or Colibri. Name it here, then use
+# `--llm lmstudio:<model>`. Repeat the table for each server.
+#
+# [endpoints.lmstudio]
+#   Base URL, including /v1. Required.
+#   url = "http://127.0.0.1:1234/v1"
+#   Prompt and reply budget per call. Must fit the context the server gives the model.
+#   context_tokens = 16384
+#   Seconds to wait for one reply. Raise it for slow models.
+#   timeout_secs = 600
+#   The name of the environment variable holding the API key, never the key itself.
+#   api_key_env = "MY_SERVER_KEY"
 "##;
 
 /// What [`write`] did.

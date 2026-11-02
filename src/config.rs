@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
@@ -7,11 +8,14 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use crate::error::{Error, Result};
+use crate::llm::{is_endpoint_name, RESERVED_ENDPOINT_NAMES};
 
 const DEFAULT_OUT_DIR: &str = "./minuta-out";
 const DEFAULT_LANG: &str = "auto";
 /// Kept as written (with `~`) until [`expand_tilde`] runs against the home directory.
 const DEFAULT_MODELS_DIR: &str = "~/.minuta/models";
+const DEFAULT_ENDPOINT_CONTEXT_TOKENS: &str = "16384";
+const DEFAULT_ENDPOINT_TIMEOUT_SECS: &str = "600";
 
 /// Every environment variable minuta reads.
 const ENV_NAMES: [&str; 19] = [
@@ -92,6 +96,45 @@ pub struct Config {
     pub ollama_num_ctx: Setting,
     pub claude_bin: Setting,
     pub codex_bin: Setting,
+    /// OpenAI-compatible servers by name. Only the config file declares them.
+    pub endpoints: BTreeMap<String, Endpoint>,
+}
+
+/// An OpenAI-compatible server. Valid by construction in `Config::resolve`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Endpoint {
+    pub url: Setting,
+    pub context_tokens: Setting,
+    pub timeout_secs: Setting,
+    /// The name of the variable holding the API key, never the key.
+    pub api_key_env: Option<Setting>,
+    host: String,
+}
+
+impl Endpoint {
+    /// Prompt + output budget per call.
+    pub fn context_tokens(&self) -> usize {
+        parse_checked(&self.context_tokens)
+    }
+
+    /// Read timeout for one request.
+    pub fn timeout(&self) -> Duration {
+        Duration::from_secs(parse_checked(&self.timeout_secs))
+    }
+
+    /// The URL's host, as the off-machine notice shows it.
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// True when requests stay on this machine. A LAN address does not count.
+    pub fn is_local(&self) -> bool {
+        let unbracketed = self.host.trim_start_matches('[').trim_end_matches(']');
+        self.host == "localhost"
+            || unbracketed
+                .parse::<IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -105,6 +148,7 @@ struct FileConfig {
     ollama: Option<OllamaTable>,
     claude: Option<BinTable>,
     codex: Option<BinTable>,
+    endpoints: Option<BTreeMap<String, EndpointTable>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -123,6 +167,15 @@ struct LlmTable {
 struct OllamaTable {
     url: Option<String>,
     num_ctx: Option<Scalar>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EndpointTable {
+    url: Option<String>,
+    context_tokens: Option<Scalar>,
+    timeout_secs: Option<Scalar>,
+    api_key_env: Option<String>,
 }
 
 /// A numeric key may be written as a TOML integer or as a string. Any other TOML value
@@ -235,6 +288,12 @@ impl Config {
         let ollama = from_file.ollama.unwrap_or_default();
         let claude = from_file.claude.unwrap_or_default();
         let codex = from_file.codex.unwrap_or_default();
+        let endpoints = from_file
+            .endpoints
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, table)| Ok((name.clone(), endpoint(&name, table)?)))
+            .collect::<Result<_>>()?;
 
         let config = Config {
             path,
@@ -328,6 +387,7 @@ impl Config {
             ),
             claude_bin: pick(None, env("MINUTA_CLAUDE_BIN"), claude.bin, "claude"),
             codex_bin: pick(None, env("MINUTA_CODEX_BIN"), codex.bin, "codex"),
+            endpoints,
         };
         config.check_numbers()?;
         Ok(config)
@@ -366,6 +426,17 @@ impl Config {
         parse_checked(&self.ollama_num_ctx)
     }
 
+    /// The endpoint called `name`. A missing one is a usage error showing what to add.
+    pub fn endpoint(&self, name: &str) -> Result<&Endpoint> {
+        self.endpoints.get(name).ok_or_else(|| {
+            Error::Usage(format!(
+                "unknown endpoint {name:?}; add it to the config file (`minuta config path`):\n  \
+                 [endpoints.{name}]\n  \
+                 url = \"http://127.0.0.1:1234/v1\"  # your server's base URL"
+            ))
+        })
+    }
+
     /// Parallel LLM calls, or `None` to let the backend decide.
     pub fn concurrency(&self) -> Option<usize> {
         self.llm_concurrency.as_ref().map(parse_checked)
@@ -400,6 +471,84 @@ impl Config {
             ("codex.bin", Some(&self.codex_bin)),
         ]
     }
+
+    /// Every key of every endpoint, by endpoint name. An unset `api_key_env` is left out.
+    pub fn endpoint_entries(&self) -> Vec<(String, &Setting)> {
+        let mut entries = Vec::new();
+        for (name, endpoint) in &self.endpoints {
+            for (key, setting) in [
+                ("url", Some(&endpoint.url)),
+                ("context_tokens", Some(&endpoint.context_tokens)),
+                ("timeout_secs", Some(&endpoint.timeout_secs)),
+                ("api_key_env", endpoint.api_key_env.as_ref()),
+            ] {
+                if let Some(setting) = setting {
+                    entries.push((format!("endpoints.{name}.{key}"), setting));
+                }
+            }
+        }
+        entries
+    }
+}
+
+/// Validates one `[endpoints.<name>]` table.
+fn endpoint(name: &str, table: EndpointTable) -> Result<Endpoint> {
+    if RESERVED_ENDPOINT_NAMES.contains(&name) {
+        return Err(Error::Config(format!(
+            "endpoint name {name:?} is reserved for a built-in backend"
+        )));
+    }
+    if !is_endpoint_name(name) {
+        return Err(Error::Config(format!(
+            "endpoint name {name:?} must start with a lowercase letter and use only lowercase \
+             letters, digits, `-` and `_`"
+        )));
+    }
+    let url = pick_opt(None, None, table.url)
+        .ok_or_else(|| Error::Config(format!("endpoints.{name}.url is required")))?;
+    let host = endpoint_host(name, &url.value)?;
+    let context_tokens = pick(
+        None,
+        None,
+        table.context_tokens.map(Scalar::into_text),
+        DEFAULT_ENDPOINT_CONTEXT_TOKENS,
+    );
+    let timeout_secs = pick(
+        None,
+        None,
+        table.timeout_secs.map(Scalar::into_text),
+        DEFAULT_ENDPOINT_TIMEOUT_SECS,
+    );
+    let key = format!("endpoints.{name}.context_tokens");
+    int_setting::<usize>(&context_tokens, &key, 1)?;
+    let key = format!("endpoints.{name}.timeout_secs");
+    int_setting::<u64>(&timeout_secs, &key, 1)?;
+    Ok(Endpoint {
+        url,
+        context_tokens,
+        timeout_secs,
+        api_key_env: pick_opt(None, None, table.api_key_env),
+        host,
+    })
+}
+
+/// The host of an endpoint URL. Credentials are refused before the URL can reach any message.
+fn endpoint_host(name: &str, url: &str) -> Result<String> {
+    if url.contains('@') {
+        return Err(Error::Config(format!(
+            "endpoints.{name}.url must not hold credentials; use endpoints.{name}.api_key_env"
+        )));
+    }
+    ureq::get(url)
+        .request_url()
+        .ok()
+        .filter(|parsed| matches!(parsed.as_url().scheme(), "http" | "https"))
+        .and_then(|parsed| parsed.as_url().host_str().map(str::to_string))
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "endpoints.{name}.url is {url:?}: not an http or https URL"
+            ))
+        })
 }
 
 /// Expands a leading `~` or `~/` against `home`. Any other value is returned as written,

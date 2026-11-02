@@ -10,6 +10,7 @@ pub mod call;
 pub mod chunk;
 pub mod claude;
 pub mod codex;
+pub mod endpoint;
 #[doc(hidden)] // Not cfg(test): integration tests in tests/ need it.
 pub mod fake;
 mod http;
@@ -40,13 +41,35 @@ pub trait Backend: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackendId {
-    Ollama { model: String },
-    Claude { model: Option<String> },
-    Codex { model: Option<String> },
+    Ollama {
+        model: String,
+    },
+    Claude {
+        model: Option<String>,
+    },
+    Codex {
+        model: Option<String>,
+    },
+    /// A server named in `[endpoints.<name>]`. Whether it exists is checked against the config.
+    Endpoint {
+        name: String,
+        model: String,
+    },
 }
 
 const VALID_FORMS: &str =
-    "valid forms: ollama:<model>, claude, claude:<model>, codex, codex:<model>";
+    "valid forms: ollama:<model>, claude, claude:<model>, codex, codex:<model>, <endpoint>:<model>";
+
+/// Backend names an endpoint may not take: `ollama:m` must keep meaning the Ollama backend.
+pub const RESERVED_ENDPOINT_NAMES: [&str; 3] = ["ollama", "claude", "codex"];
+
+/// Endpoint names come from the config and from untrusted template frontmatter.
+pub fn is_endpoint_name(name: &str) -> bool {
+    name.starts_with(|c: char| c.is_ascii_lowercase())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'))
+}
 
 fn invalid(s: &str) -> Error {
     Error::Usage(format!("invalid LLM backend {s:?} ({VALID_FORMS})"))
@@ -82,6 +105,12 @@ impl FromStr for BackendId {
             Some(("codex", model)) if !model.is_empty() => Ok(BackendId::Codex {
                 model: Some(model.to_string()),
             }),
+            Some((name, model)) if !model.is_empty() && is_endpoint_name(name) => {
+                Ok(BackendId::Endpoint {
+                    name: name.to_string(),
+                    model: model.to_string(),
+                })
+            }
             _ => Err(invalid(s)),
         }
     }
@@ -95,23 +124,25 @@ impl fmt::Display for BackendId {
             BackendId::Claude { model: Some(m) } => write!(f, "claude:{m}"),
             BackendId::Codex { model: None } => write!(f, "codex"),
             BackendId::Codex { model: Some(m) } => write!(f, "codex:{m}"),
+            BackendId::Endpoint { name, model } => write!(f, "{name}:{model}"),
         }
     }
 }
 
 impl BackendId {
-    /// True when transcripts leave this machine.
+    /// True when transcripts leave this machine. An endpoint counts until its URL says
+    /// otherwise, which only the config knows: see `Endpoint::is_local`.
     pub fn sends_off_machine(&self) -> bool {
         match self {
             BackendId::Ollama { .. } => false,
-            BackendId::Claude { .. } | BackendId::Codex { .. } => true,
+            BackendId::Claude { .. } | BackendId::Codex { .. } | BackendId::Endpoint { .. } => true,
         }
     }
 
     /// The company that receives the transcript, for backends that send it off this machine.
     pub fn provider(&self) -> Option<&'static str> {
         match self {
-            BackendId::Ollama { .. } => None,
+            BackendId::Ollama { .. } | BackendId::Endpoint { .. } => None,
             BackendId::Claude { .. } => Some("Anthropic"),
             BackendId::Codex { .. } => Some("OpenAI"),
         }
@@ -176,7 +207,7 @@ mod tests {
 
     #[test]
     fn backend_id_rejects_invalid() {
-        for bad in ["ollama:", "ollama", "claude:", "gpt:x", ""] {
+        for bad in ["ollama:", "ollama", "claude:", "gpt", ""] {
             let err = bad.parse::<BackendId>().unwrap_err();
             assert!(
                 matches!(err, Error::Usage(ref m) if m.contains("ollama:<model>")),
@@ -240,6 +271,7 @@ mod tests {
             "claude:sonnet",
             "codex",
             "codex:gpt-5",
+            "lmstudio:google/gemma-4-26b-a4b",
         ] {
             assert_eq!(s.parse::<BackendId>().unwrap().to_string(), s);
         }
@@ -265,7 +297,7 @@ mod tests {
 
     #[test]
     fn backend_id_rejects_invalid_codex() {
-        let forms = "valid forms: ollama:<model>, claude, claude:<model>, codex, codex:<model>";
+        let forms = "valid forms: ollama:<model>, claude, claude:<model>, codex, codex:<model>, <endpoint>:<model>";
         let chars = "model names may contain only letters, digits and `._:/-[]@`, and may not start with `-`";
         for (bad, want) in [
             (
@@ -306,6 +338,56 @@ mod tests {
         assert_eq!(provider("codex"), Some("OpenAI"));
         assert_eq!(provider("codex:gpt-5"), Some("OpenAI"));
         assert_eq!(provider("ollama:x"), None);
+    }
+
+    #[test]
+    fn backend_id_parses_endpoint_with_slash_and_colon_in_model() {
+        assert_eq!(
+            "lmstudio:a/b:c".parse::<BackendId>().unwrap(),
+            BackendId::Endpoint {
+                name: "lmstudio".into(),
+                model: "a/b:c".into()
+            }
+        );
+    }
+
+    #[test]
+    fn backend_id_parses_endpoint_name_with_digit_dash_and_underscore() {
+        assert_eq!(
+            "my-box_2:m".parse::<BackendId>().unwrap(),
+            BackendId::Endpoint {
+                name: "my-box_2".into(),
+                model: "m".into()
+            }
+        );
+    }
+
+    #[test]
+    fn backend_id_rejects_endpoint_bad_names() {
+        let forms = "valid forms: ollama:<model>, claude, claude:<model>, codex, codex:<model>, <endpoint>:<model>";
+        for bad in ["Bad:x", "1a:x", "a b:x", "x:", ":x", "-a:x", "a.b:x"] {
+            let err = bad.parse::<BackendId>().unwrap_err();
+            let want = format!("invalid LLM backend {bad:?} ({forms})");
+            assert!(
+                matches!(&err, Error::Usage(m) if *m == want),
+                "{bad:?}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn backend_id_rejects_endpoint_unsafe_model() {
+        let err = "lmstudio:a b".parse::<BackendId>().unwrap_err();
+        assert!(
+            matches!(err, Error::Usage(ref m) if m.contains("`._:/-[]@`")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn endpoint_has_no_fixed_provider() {
+        let id = "lmstudio:m".parse::<BackendId>().unwrap();
+        assert_eq!(id.provider(), None);
     }
 
     #[test]
