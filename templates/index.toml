@@ -16,19 +16,27 @@ sha256 = "e0d6bf388ebe318e55e95fb085f33b873743f366aa4116d6e33ac410c03c436c"
 
 [[template]]
 name = "instagram"
-description = "Instagram caption with a hook and focused hashtags"
+description = "Instagram publishing kit with caption, hashtags, cover text, alt text and on-screen hook"
 platform = "instagram"
 tags = ["social", "short-form", "hashtags"]
 input = "transcript"
-sha256 = "0ef9e576652be4a039d1cc933e25b7bf0c18f9f042859b9cad2ee6392b3a2396"
+sha256 = "e25b14489cd4eb59868a6f2ba62bcd68b9535e5f58db1b8971a3aae742b80bb1"
+
+[[template]]
+name = "instagram-carousel"
+description = "Instagram carousel kit with cover text, slide copy, caption and hashtags"
+platform = "instagram"
+tags = ["social", "carousel", "hashtags"]
+input = "transcript"
+sha256 = "cb386ebbd7276e88e34c6c134dfea58a6ddb55b187e28a152e1d41bba911de1e"
 
 [[template]]
 name = "linkedin"
-description = "Specific, useful LinkedIn post from the recording"
+description = "LinkedIn publishing kit with post, topic hashtags and first comment"
 platform = "linkedin"
 tags = ["social", "professional"]
 input = "transcript"
-sha256 = "c5a1b87c2490e707f787c31a3f54e64930275a52ecc16fd1545d3e320fc89a99"
+sha256 = "ff430322dd19cf28c36884d3663fbce912b67007f89701ff957677ca14bdff49"
 
 [[template]]
 name = "meeting-minutes"
@@ -55,19 +63,19 @@ sha256 = "e3944b7718560e8fd336ae834605d6512d36c66cc16fe24bc5a7e43ae2cc58a1"
 
 [[template]]
 name = "tiktok"
-description = "TikTok caption with a conversation hook and focused hashtags"
+description = "TikTok publishing kit with caption, hashtags, cover text and on-screen hook"
 platform = "tiktok"
 tags = ["social", "short-form", "hashtags"]
 input = "transcript"
-sha256 = "dc971351eb969fb7f15bbfac113d53c0ebfb103e6e6cfc1242eac199fd5e8e1b"
+sha256 = "0b8bd22364f0f9965719bca11059a63e849bc8bf5fbd921d36181a9e4ac55659"
 
 [[template]]
 name = "x-thread"
-description = "X thread with a sharp hook and one clear idea per post"
+description = "X thread with a standalone hook and concise, grounded posts"
 platform = "x"
 tags = ["social", "thread"]
 input = "transcript"
-sha256 = "ab525270aa6abf43c076203031164542068aba388267f002d6235cb9177036a2"
+sha256 = "1dd378512a5491fa2c89d6ce0db30cc1d19728c4c182d2c625859d8a4daae9dd"
 
 [[template]]
 name = "youtube"
