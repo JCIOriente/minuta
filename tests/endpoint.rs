@@ -1,3 +1,5 @@
+use std::io::Write;
+use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -12,6 +14,10 @@ use serde_json::{json, Value};
 #[path = "support/fake_ollama.rs"]
 mod fake_ollama;
 use fake_ollama::{FakeOllama, Reply, Request};
+
+#[path = "support/fake_http.rs"]
+mod fake_http;
+use fake_http::{FakeHttp, Route};
 
 const CHAT: &str = "/v1/chat/completions";
 const MODELS: &str = "/v1/models";
@@ -832,13 +838,97 @@ fn endpoint_chat_refuses_an_invalid_port() {
     assert!(!transient);
 }
 
+/// A listener that answers every connection with `reply`, paced by `chunks` every `pause`.
+fn raw_server(reply: Vec<Vec<u8>>, pause: Duration) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            for chunk in &reply {
+                if stream.write_all(chunk).is_err() {
+                    break;
+                }
+                thread::sleep(pause);
+            }
+        }
+    });
+    url
+}
+
 #[test]
-fn endpoint_failed_tls_handshake_is_transient() {
-    let fake = server(|_| Reply::Status(200, "plain http".into()));
-    let url = fake.url().replacen("http://", "https://", 1);
+fn endpoint_tls_rejected_by_the_client_is_transient() {
+    // The pause keeps the connection open while the client reads the record and rejects it.
+    let plain = vec![b"HTTP/1.1 200 OK\r\n\r\n".to_vec()];
+    let url = raw_server(plain, Duration::from_secs(2));
+    let url = url.replacen("http://", "https://", 1);
     let backend = OpenAiCompatible::new("box", "m", &url, None, 1000, Duration::from_secs(5));
     let (message, transient) = llm_err(backend.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert_eq!(
+        message,
+        format!(
+            "request failed: {url}/chat/completions: io: received corrupt message of type \
+             InvalidContentType"
+        )
+    );
     assert!(transient, "{message}");
+}
+
+/// The timeout bounds each read, not the body: a slow reply that keeps coming must finish.
+#[test]
+fn endpoint_read_timeout_restarts_with_each_read() {
+    let body =
+        json!({"choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}]}).to_string();
+    let mut reply = vec![format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .into_bytes()];
+    let pieces = body.len().div_ceil(15);
+    reply.extend(body.as_bytes().chunks(pieces).map(<[u8]>::to_vec));
+    let url = raw_server(reply, Duration::from_millis(200));
+    let backend = OpenAiCompatible::new("box", "m", &url, None, 1000, Duration::from_secs(2));
+    assert_eq!(backend.complete("s", "u", &no_interrupt()).unwrap(), "hi");
+}
+
+#[test]
+fn endpoint_keeps_a_non_utf8_reply() {
+    let server = FakeHttp::start(vec![Route::ok(
+        "/templates/chat/completions",
+        b"{\"choices\":[{\"message\":{\"content\":\"a\xffb\"},\"finish_reason\":\"stop\"}]}"
+            .to_vec(),
+    )]);
+    let backend = OpenAiCompatible::new(
+        "box",
+        "m",
+        &server.base(),
+        None,
+        1000,
+        Duration::from_secs(5),
+    );
+    assert_eq!(
+        backend.complete("s", "u", &no_interrupt()).unwrap(),
+        "a\u{fffd}b"
+    );
+}
+
+#[test]
+fn endpoint_error_body_that_is_not_utf8_is_surfaced() {
+    let server = FakeHttp::start(vec![Route::status(
+        "/templates/chat/completions",
+        502,
+        b"bad\xffgateway".to_vec(),
+    )]);
+    let backend = OpenAiCompatible::new(
+        "box",
+        "m",
+        &server.base(),
+        None,
+        1000,
+        Duration::from_secs(5),
+    );
+    let (message, transient) = llm_err(backend.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert_eq!(message, "HTTP 502: bad\u{fffd}gateway");
+    assert!(transient);
 }
 
 #[test]
@@ -852,7 +942,14 @@ fn endpoint_read_timeout_is_transient() {
         4096,
         Duration::from_millis(200),
     );
-    let (_, transient) = llm_err(c.complete("SYS", "USER", &no_interrupt()).unwrap_err());
+    let (message, transient) = llm_err(c.complete("SYS", "USER", &no_interrupt()).unwrap_err());
+    assert_eq!(
+        message,
+        format!(
+            "request failed: {}/v1/chat/completions: timeout: per read",
+            fake.url()
+        )
+    );
     assert!(transient);
 }
 

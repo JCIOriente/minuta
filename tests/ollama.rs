@@ -227,7 +227,11 @@ fn read_timeout_is_transient() {
     let fake = FakeOllama::start(&["m"], show(None, false), responder);
     let o = Ollama::new(&fake.url(), "m", 1024, &info(None, false))
         .with_timeout(Duration::from_millis(200));
-    let (_, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    let (message, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert_eq!(
+        message,
+        format!("request failed: {}/api/chat: timeout: per read", fake.url())
+    );
     assert!(transient);
 }
 
@@ -359,6 +363,57 @@ fn chat_refuses_a_proxy_scheme() {
     assert_eq!(message, "request failed: not an http or https URL");
     assert!(!transient);
     assert!(fake.requests().is_empty());
+}
+
+#[test]
+fn check_strips_control_characters_from_a_redirect_error() {
+    let server = FakeHttp::start(vec![Route::redirect(
+        "/templates/api/tags",
+        "/caf\u{e9}\u{9b}x",
+    )]);
+    let base = server.base();
+    assert_eq!(
+        check(&base, "m").unwrap_err().hint,
+        format!(
+            "start Ollama (`ollama serve`); protocol: location header is malformed: /caf\u{e9}x at {base}"
+        )
+    );
+}
+
+#[test]
+fn chat_keeps_a_non_utf8_reply() {
+    let server = FakeHttp::start(vec![Route::ok(
+        "/templates/api/chat",
+        b"{\"message\":{\"content\":\"a\xffb\"},\"done\":true}".to_vec(),
+    )]);
+    let o = Ollama::new(&server.base(), "m", 1024, &info(None, false));
+    assert_eq!(o.complete("s", "u", &no_interrupt()).unwrap(), "a\u{fffd}b");
+}
+
+#[test]
+fn error_body_that_is_not_utf8_is_surfaced() {
+    let server = FakeHttp::start(vec![Route::status(
+        "/templates/api/chat",
+        400,
+        b"bad\xffbody".to_vec(),
+    )]);
+    let o = Ollama::new(&server.base(), "m", 1024, &info(None, false));
+    let (message, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert_eq!(message, "HTTP 400: bad\u{fffd}body");
+    assert!(!transient);
+}
+
+#[test]
+fn chat_answered_with_a_307_is_not_transient() {
+    let responder: Responder = Arc::new(|_| Reply::Redirect("/elsewhere".into()));
+    let fake = FakeOllama::start(&["m"], show(None, false), responder);
+    let o = Ollama::new(&fake.url(), "m", 1024, &info(None, false));
+    let (message, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert_eq!(
+        message,
+        format!("request failed: {}/api/chat: redirect failed", fake.url())
+    );
+    assert!(!transient);
 }
 
 #[test]

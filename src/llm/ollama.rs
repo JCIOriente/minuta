@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use super::http::{self, base, describe, excerpt, read_json, Response};
+use super::http::{self, base, describe, excerpt, read_json, read_text, Response};
 use super::Backend;
 use crate::error::{Error, Missing, Result};
 
@@ -32,10 +32,10 @@ pub fn check(url: &str, model: &str) -> std::result::Result<OllamaInfo, Missing>
         hint: why,
     };
 
-    let url =
-        http::request_url(&format!("{base}/api/tags")).map_err(|e| server_down(e.to_string()))?;
+    let target = http::request_url(base).map_err(server_down)?;
+    let target = http::base(&target);
     let tags = agent
-        .get(&url)
+        .get(&format!("{target}/api/tags"))
         .call()
         .map_err(|e| server_down(describe(&e)))?;
     let tags = read_json(tags)
@@ -54,10 +54,8 @@ pub fn check(url: &str, model: &str) -> std::result::Result<OllamaInfo, Missing>
         return Err(model_problem(format!("ollama pull {model}")));
     }
 
-    let url = http::request_url(&format!("{base}/api/show"))
-        .map_err(|e| model_problem(format!("ollama show {model} failed: {e}")))?;
     let shown = agent
-        .post(&url)
+        .post(&format!("{target}/api/show"))
         .header("Content-Type", "application/json")
         .send(json!({ "model": model }).to_string())
         .map_err(|e| model_problem(format!("ollama show {model} failed: {}", describe(&e))))?;
@@ -157,7 +155,7 @@ impl Ollama {
             Ok(r) => r,
             Err(e) => {
                 let transient = http::is_transient(&e);
-                return Err(self.error(format!("request failed: {e}"), transient));
+                return Err(self.error(format!("request failed: {url}: {e}"), transient));
             }
         };
         let parsed = read_json(response).map_err(|e| {
@@ -179,7 +177,7 @@ impl Ollama {
     }
 
     fn status_error(&self, code: u16, mut response: Response, structured: bool) -> Error {
-        let detail = match response.body_mut().read_to_string() {
+        let detail = match read_text(&mut response) {
             Ok(text) => {
                 let from_json = serde_json::from_str::<Value>(&text)
                     .ok()

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use super::http::{self, base, excerpt, read_json, Response};
+use super::http::{self, base, excerpt, read_json, read_text, Response};
 use super::Backend;
 use crate::config::Endpoint;
 use crate::error::{Error, Missing, Result};
@@ -271,7 +271,7 @@ impl OpenAiCompatible {
             Ok(r) => r,
             Err(e) => {
                 let transient = http::is_transient(&e);
-                let message = format!("request failed: {}", self.scrub(&e.to_string()));
+                let message = format!("request failed: {url}: {}", self.scrub(&e.to_string()));
                 return Err(failed(self.error(message, transient)));
             }
         };
@@ -329,7 +329,7 @@ impl OpenAiCompatible {
 
     fn status_error(&self, code: u16, mut response: Response) -> Error {
         let name = &self.name;
-        let detail = match response.body_mut().read_to_string() {
+        let detail = match read_text(&mut response) {
             Ok(text) => {
                 let parsed = serde_json::from_str::<Value>(&text).unwrap_or_default();
                 let shown = self.scrub(error_text(&parsed).unwrap_or(&text));

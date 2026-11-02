@@ -153,7 +153,7 @@ fn download_follows_redirects() {
     );
 }
 
-/// `hops` redirects in a row, ending at the file. Returns the routes and the first path.
+/// `hops` redirects in a row, ending at the file.
 fn redirect_chain(hops: usize) -> Vec<Route> {
     let mut routes: Vec<Route> = (0..hops)
         .map(|hop| {

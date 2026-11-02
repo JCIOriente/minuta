@@ -12,6 +12,8 @@ use crate::error::{Error, Result};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
+/// The most of a response kept in memory.
+const BODY_LIMIT: u64 = 10 * 1024 * 1024;
 /// How many redirects a client that follows them takes before it gives up.
 pub(crate) const MAX_REDIRECTS: u32 = 4;
 
@@ -62,11 +64,19 @@ impl BodyError {
     }
 }
 
-pub(super) fn read_json(mut response: Response) -> std::result::Result<Value, BodyError> {
-    let text = response
+/// The body as text. Bytes that are not UTF-8 are replaced: ureq does that only for a `text/*`
+/// content type, and a reply must not be lost to one bad byte.
+pub(super) fn read_text(response: &mut Response) -> std::result::Result<String, ureq::Error> {
+    let bytes = response
         .body_mut()
-        .read_to_string()
-        .map_err(|e| BodyError::Read(e.to_string()))?;
+        .with_config()
+        .limit(BODY_LIMIT)
+        .read_to_vec()?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+pub(super) fn read_json(mut response: Response) -> std::result::Result<Value, BodyError> {
+    let text = read_text(&mut response).map_err(|e| BodyError::Read(e.to_string()))?;
     serde_json::from_str(&text).map_err(|e| BodyError::NotJson(e.to_string()))
 }
 
@@ -82,7 +92,8 @@ pub(super) fn excerpt(text: &str) -> String {
 pub(super) fn describe(e: &ureq::Error) -> String {
     match e {
         ureq::Error::StatusCode(code) => format!("HTTP status {code}"),
-        other => other.to_string(),
+        // The text can quote a header the server sent.
+        other => excerpt(&other.to_string()),
     }
 }
 
