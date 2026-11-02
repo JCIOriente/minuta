@@ -1,8 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.9.0
+
+### Added
+- Codex as an LLM backend: `--llm codex` or `codex:<model>`, using your existing Codex login.
+  The transcript goes to OpenAI, and minuta prints a notice when a template uses it. Point
+  `codex.bin` or `MINUTA_CODEX_BIN` at the binary to use a specific one.
+- OpenAI-compatible servers such as LM Studio, Colibri or a cloud service. Name one under
+  `[endpoints.<name>]` in the config file and use `<endpoint>:<model>` as the backend. An API
+  key is read from the variable named in `api_key_env`, never from the config file. minuta
+  prints a notice when the URL is not on your machine.
+- The docs have a Spanish version, and the installation guide has steps for macOS, Linux and
+  Windows through WSL2.
 
 ### Changed
+- The README is now a short path to a first document. Templates and reference material moved
+  to `docs/templates.md` and `docs/reference.md`.
 - minuta now needs Rust 1.88 or newer, up from 1.80. All dependencies are on their latest
   versions.
 - The HTTP client changed, so some error text differs. A connection timeout to an LLM server
