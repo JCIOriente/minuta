@@ -124,7 +124,7 @@ The reply is `choices[0].message.content`. `reasoning` and `reasoning_content` a
 
 ## Behavior & edge cases
 Behavior marked *probed* was seen on 2026-11-01 against Ollama (`/v1`) and LM Studio with
-`gemma4` 26b. Colibri is from its `docs/api.md`, not from a run.
+`gemma4` 26b, and on Colibri with Qwen3.8-Flash-Next, whose engine `qwen38` is the one quoted below.
 
 - **Local or remote:** the URL's host is local when it is `localhost`, in `127.0.0.0/8`, or `::1`.
   Everything else counts as off-machine, LAN addresses included.
@@ -135,8 +135,9 @@ Behavior marked *probed* was seen on 2026-11-01 against Ollama (`/v1`) and LM St
   characters are dropped as for every server text.
 - **Structured output refused:** on HTTP 400 or 422 to a `complete_json` call, minuta sends the
   same request once more without `response_format`. Templates already handle a backend without
-  structured output (`claude`, `codex`). Colibri's docs do not mention `response_format`, so this
-  is the path it may take. A context error also lands here and fails again with its own message.
+  structured output (`claude`, `codex`). Colibri takes this path (*probed*: `response_format`
+  grammars are not supported by the qwen38 engine yet). A context error also lands here and fails
+  again with its own message.
 - **Prompt beyond the context:** HTTP 400 surfaces with the server's message (*probed* on LM
   Studio: `request (8021 tokens) exceeds the available context size (4096 tokens)`), and is not
   transient. minuta does not read the server's context size, because no standard API gives it.
@@ -162,7 +163,7 @@ Behavior marked *probed* was seen on 2026-11-01 against Ollama (`/v1`) and LM St
   request at a time, and Colibri's queue times out after 300 s by default.
 - **Interrupt:** as in `ollama.rs`, the request runs on a worker thread that Ctrl-C abandons.
 - **Timeouts:** the request is not streamed, so `timeout_secs` must cover a whole reply. Slow
-  servers need a higher value (Colibri reports 0.2 to 3.5 tok/s on some CPU setups).
+  servers need a higher value: on Colibri a 5-minute transcript took 15 minutes per call (*probed*).
 
 ## Data & migrations
 None. Existing config files stay valid, and `[endpoints]` is optional. The call cache keys on the
@@ -178,8 +179,7 @@ at another server under the same name reuses cached calls until `--force`.
 - CLI (`tests/cli.rs`): full `run -t summary --llm <endpoint>:<model>`; unknown endpoint; missing
   key variable; `doctor` for ok, model missing and not reachable; notice for remote and none for
   local; `config show` and `config init`.
-- Manual: a run against real LM Studio before the PR. Colibri stays untested on a real server and
-  the docs say so.
+- Manual: a run against real LM Studio before the PR, and one against real Colibri after it.
 - `make ci` passes.
 
 ## Decisions

@@ -260,9 +260,11 @@ every key.
 
 1. Set up [Colibri](https://github.com/JustVugg/colibri) by following its README,
    and start it with `coli serve`.
-2. Run `coli status` to get the model id.
-3. Add the server to the config file. Large models can be slow, so give them more
-   time:
+2. Run `coli status` to get the model id, or look it up at
+   `http://127.0.0.1:8000/v1/models`. It can differ from the name you started the
+   model with: Qwen3.8-Flash-Next is `qwen3.8-flash-next-colibri`.
+3. Add the server to the config file. Colibri can be much slower than the default
+   10-minute limit, so raise `timeout_secs`:
 
    ```toml
    [endpoints.colibri]
@@ -273,13 +275,13 @@ every key.
 4. Use it:
 
    ```sh
-   minuta run meeting.mp4 -t summary --llm colibri:<model id>
+   minuta run meeting.mp4 -t summary --llm colibri:qwen3.8-flash-next-colibri
    ```
 
-minuta has been tested against LM Studio but not yet against a running Colibri;
-this setup comes from Colibri's API documentation. Colibri does not document
-`response_format`. If it refuses the field, minuta sends the request again
-without it.
+minuta has been tested with Qwen3.8-Flash-Next on Colibri. A 5-minute transcript
+took about 15 minutes per call on that setup, so expect long runs. Its `qwen38`
+engine refuses `response_format`, so minuta sends those requests again without
+it.
 
 ### Another server
 
