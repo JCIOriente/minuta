@@ -1,18 +1,16 @@
 //! Ollama HTTP backend.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use super::http::{self, base, describe, excerpt, read_json};
 use super::Backend;
 use crate::error::{Error, Missing, Result};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
 const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 /// What `/api/show` says about a model.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,22 +19,10 @@ pub struct OllamaInfo {
     pub thinking: bool,
 }
 
-fn agent(read_timeout: Duration) -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(CONNECT_TIMEOUT)
-        .timeout_read(read_timeout)
-        .timeout_write(CONNECT_TIMEOUT)
-        .build()
-}
-
-fn base(url: &str) -> &str {
-    url.trim_end_matches('/')
-}
-
 /// Verifies the server is reachable and `model` is pulled, then reads its limits.
 pub fn check(url: &str, model: &str) -> std::result::Result<OllamaInfo, Missing> {
     let base = base(url);
-    let agent = agent(CHECK_TIMEOUT);
+    let agent = http::agent(CHECK_TIMEOUT).build();
     let server_down = |why: String| Missing {
         name: "ollama".into(),
         hint: format!("start Ollama (`ollama serve`); {why} at {base}"),
@@ -91,49 +77,6 @@ pub fn check(url: &str, model: &str) -> std::result::Result<OllamaInfo, Missing>
 /// A bare name (no tag) matches `name:latest`.
 fn name_matches(listed: &str, wanted: &str) -> bool {
     listed == wanted || (!wanted.contains(':') && listed == format!("{wanted}:latest"))
-}
-
-/// Why a response body could not be used.
-enum BodyError {
-    /// Reading the body failed (I/O, timeout).
-    Read(String),
-    /// The body was read but is not JSON.
-    NotJson(String),
-}
-
-impl BodyError {
-    fn is_transient(&self) -> bool {
-        matches!(self, BodyError::Read(_))
-    }
-
-    fn message(&self) -> &str {
-        match self {
-            BodyError::Read(m) | BodyError::NotJson(m) => m,
-        }
-    }
-}
-
-fn read_json(response: ureq::Response) -> std::result::Result<Value, BodyError> {
-    let text = response
-        .into_string()
-        .map_err(|e| BodyError::Read(e.to_string()))?;
-    serde_json::from_str(&text).map_err(|e| BodyError::NotJson(e.to_string()))
-}
-
-/// At most 200 characters of untrusted text, without control characters, for messages.
-fn excerpt(text: &str) -> String {
-    text.trim()
-        .chars()
-        .filter(|c| !c.is_control())
-        .take(200)
-        .collect()
-}
-
-fn describe(e: &ureq::Error) -> String {
-    match e {
-        ureq::Error::Status(code, _) => format!("HTTP status {code}"),
-        ureq::Error::Transport(t) => t.to_string(),
-    }
 }
 
 #[derive(Clone)]
@@ -192,7 +135,8 @@ impl Ollama {
 
     /// One blocking round trip; runs on a worker thread.
     fn request(&self, body: Value, structured: bool) -> Result<String> {
-        let response = agent(self.timeout)
+        let response = http::agent(self.timeout)
+            .build()
             .post(&format!("{}/api/chat", self.url))
             .set("Content-Type", "application/json")
             .send_string(&body.to_string());
@@ -200,13 +144,7 @@ impl Ollama {
             Ok(r) => r,
             Err(ureq::Error::Status(code, r)) => return Err(self.status_error(code, r, structured)),
             Err(ureq::Error::Transport(t)) => {
-                let transient = matches!(
-                    t.kind(),
-                    ureq::ErrorKind::ConnectionFailed
-                        | ureq::ErrorKind::Dns
-                        | ureq::ErrorKind::Io
-                        | ureq::ErrorKind::ProxyConnect
-                );
+                let transient = http::transport_is_transient(&t);
                 return Err(self.error(format!("request failed: {t}"), transient));
             }
         };
@@ -291,22 +229,10 @@ impl Ollama {
     /// Sends `body` on a worker thread so an interrupt can abandon it.
     fn chat(&self, body: Value, structured: bool, interrupt: &AtomicBool) -> Result<String> {
         let worker = self.clone();
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(worker.request(body, structured));
-        });
-        loop {
-            if interrupt.load(Ordering::SeqCst) {
-                // The worker is abandoned; it ends at its read timeout.
-                return Err(Error::Interrupted);
-            }
-            match rx.recv_timeout(POLL_INTERVAL) {
-                Ok(result) => return result,
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(self.error("request thread died".into(), true))
-                }
-            }
-        }
+        http::on_worker(
+            move || worker.request(body, structured),
+            interrupt,
+            || self.error("request thread died".into(), true),
+        )
     }
 }

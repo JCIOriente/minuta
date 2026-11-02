@@ -20,11 +20,16 @@ pub struct Request {
     pub path: String,
     pub body: Value,
     pub chat_index: Option<usize>,
+    pub authorization: Option<String>,
 }
 
 pub enum Reply {
     /// Any status with a raw body.
     Status(u16, String),
+    /// A 307 to `location`.
+    Redirect(String),
+    /// These bytes, verbatim, whatever they are.
+    Raw(String),
     /// Never answer; the connection is closed when the server is dropped.
     Hang,
 }
@@ -167,6 +172,7 @@ fn handle(stream: TcpStream, shared: &Shared) -> std::io::Result<()> {
     let method = parts.next().unwrap_or_default().to_string();
     let path = parts.next().unwrap_or_default().to_string();
     let mut length = 0usize;
+    let mut authorization = None;
     loop {
         let mut header = String::new();
         reader.read_line(&mut header)?;
@@ -177,6 +183,9 @@ fn handle(stream: TcpStream, shared: &Shared) -> std::io::Result<()> {
         if let Some((name, value)) = header.split_once(':') {
             if name.eq_ignore_ascii_case("content-length") {
                 length = value.trim().parse().unwrap_or(0);
+            }
+            if name.eq_ignore_ascii_case("authorization") {
+                authorization = Some(value.trim().to_string());
             }
         }
     }
@@ -191,6 +200,7 @@ fn handle(stream: TcpStream, shared: &Shared) -> std::io::Result<()> {
         path,
         body,
         chat_index,
+        authorization,
     };
     shared
         .requests
@@ -233,6 +243,17 @@ fn handle(stream: TcpStream, shared: &Shared) -> std::io::Result<()> {
                 "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             )?;
+            stream.flush()
+        }
+        Reply::Redirect(location) => {
+            write!(
+                stream,
+                "HTTP/1.1 307 X\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )?;
+            stream.flush()
+        }
+        Reply::Raw(bytes) => {
+            stream.write_all(bytes.as_bytes())?;
             stream.flush()
         }
         Reply::Hang => {

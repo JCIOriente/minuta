@@ -63,11 +63,12 @@ minuta calls a few external tools. Install them once:
 | `ffmpeg` and `ffprobe` | Reading, joining and converting media | `brew install ffmpeg` |
 | `whisper-cli` | Transcription | `brew install whisper-cpp` |
 | A whisper model | Transcription | `minuta models pull base` |
-| Ollama, Claude Code *or* Codex | Templates only (`run -t ...`) | `brew install ollama`, start it with `ollama serve`, then `ollama pull gemma4:26b` |
+| Ollama, Claude Code, Codex *or* an OpenAI-compatible server | Templates only (`run -t ...`) | `brew install ollama`, start it with `ollama serve`, then `ollama pull gemma4:26b` |
 
 **[Read the full installation guide](https://github.com/JCIOriente/minuta/blob/main/docs/install.md)**
 for Linux package managers, building whisper.cpp from source, choosing a
-model, setting up Ollama, Claude Code or Codex, and voice activity detection.
+model, setting up Ollama, Claude Code, Codex or an OpenAI-compatible server, and
+voice activity detection.
 
 Then check your setup:
 
@@ -169,7 +170,7 @@ Run `minuta help <command>` for the full usage of any command.
 | Option | Description |
 | --- | --- |
 | `-t, --template NAME` | Generate a document with this template. Repeat it for more templates |
-| `--llm ID` | Backend for every template in this run: `ollama:<model>`, `claude`, `claude:<model>`, `codex` or `codex:<model>` |
+| `--llm ID` | Backend for every template in this run: `ollama:<model>`, `claude`, `claude:<model>`, `codex`, `codex:<model>` or `<endpoint>:<model>` |
 | `--output-lang CODE` | Language the documents are written in. Default: the detected speech language |
 
 Only the job folder's path goes to stdout. Progress, warnings and errors go to
@@ -459,6 +460,7 @@ Write a short post about "{{job_name}}" from the transcript in the input.
 | `claude:<model>` | Claude Code with a given model, such as `claude:sonnet` |
 | `codex` | Codex (`codex exec`) with its default model |
 | `codex:<model>` | Codex with a given model, one your Codex account supports |
+| `<endpoint>:<model>` | A model on an [OpenAI-compatible server](#openai-compatible-servers) you named in the config, such as `lmstudio:google/gemma-4-26b-a4b` |
 
 The backend is chosen in this order: the `--llm` flag, then the template's
 `llm` key, then `llm.default`, set in the config file or with `MINUTA_LLM`
@@ -479,7 +481,58 @@ transcript to OpenAI, and minuta prints a notice whenever a template uses it.
 
 Long transcripts are split to fit the model's context window and then
 combined. For Ollama, the window is the smaller of `ollama.num_ctx` and the
-model's own limit.
+model's own limit. For an endpoint, it is `context_tokens`.
+
+### OpenAI-compatible servers
+
+minuta can use any server with an OpenAI-compatible API, such as
+[LM Studio](https://lmstudio.ai), [Colibri](https://github.com/JustVugg/colibri),
+llama.cpp or vLLM, or a cloud service. Name the server once in the config file
+(`minuta config path` shows where it is):
+
+```toml
+[endpoints.lmstudio]
+url = "http://127.0.0.1:1234/v1"
+```
+
+Then use `<endpoint>:<model>` anywhere a backend goes:
+
+```sh
+minuta run meeting.mp4 -t summary --llm lmstudio:google/gemma-4-26b-a4b
+```
+
+The same id works in a template's `llm` key, in `llm.default` and in
+`MINUTA_LLM`. To check the server and the model, set it as the default and run
+`minuta doctor`. If the model is wrong, `doctor` lists what the server offers.
+
+| Key under `[endpoints.<name>]` | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `url` | yes | | Base URL as the server documents it, including `/v1` |
+| `context_tokens` | no | `16384` | Prompt and reply budget per call. It must fit the context the server gives the model |
+| `timeout_secs` | no | `600` | Seconds to wait for one reply. Raise it for slow models |
+| `api_key_env` | no | | The name of the environment variable holding the API key |
+
+`<name>` starts with a lowercase letter and uses lowercase letters, digits, `-`
+and `_`. It can be anything except `ollama`, `claude` or `codex`. Declare as many
+endpoints as you like.
+
+**API keys** never go in the config file. Point `api_key_env` at a variable, and
+minuta sends its value as `Authorization: Bearer`:
+
+```toml
+[endpoints.openrouter]
+url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+```
+
+**Privacy.** A URL on `localhost`, `127.0.0.0/8` or `::1` keeps the transcript on
+your machine. With any other URL, a LAN address included, minuta prints a notice
+such as `summary sends its input to openrouter (openrouter.ai)`.
+
+Endpoints make one call at a time unless you set `llm.concurrency`. minuta asks
+for structured output with `response_format` and, if the server refuses it, sends
+the request again without it. See [setup for LM Studio and
+Colibri](docs/install.md#openai-compatible-servers).
 
 ## The job folder
 
@@ -605,6 +658,9 @@ num_ctx = 16384
 
 The `*.bin` keys take a command name to look up on your `PATH`, or a full path.
 
+`[endpoints.<name>]` tables are read from the file only. See
+[OpenAI-compatible servers](#openai-compatible-servers) for their keys.
+
 ## Troubleshooting
 
 **`missing required tools: model`.** No whisper model is configured. Run
@@ -621,6 +677,20 @@ Ollama runs on another host or port, set `ollama.url`.
 
 **An Ollama reply is cut off.** The prompt does not fit the context window.
 Raise `ollama.num_ctx`, if the model supports a larger one.
+
+**`unknown endpoint`.** The part before the `:` in the backend id is not a table
+in the config file. Add `[endpoints.<name>]` with its `url`, or check the
+spelling.
+
+**An endpoint says the model is `not offered by the server`.** The id must match
+the server's model id exactly. The message lists what the server offers.
+
+**An endpoint answers `exceeds the available context size`, or a reply is cut
+off.** `context_tokens` is larger than the context the server gave the model.
+Load the model with a larger context, or lower `context_tokens`.
+
+**A request to an endpoint times out.** Slow models need more than the default
+10 minutes. Raise `timeout_secs`.
 
 **The transcript repeats phrases during silences.** Turn on
 [voice activity detection](#whisper-models).

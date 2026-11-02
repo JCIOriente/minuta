@@ -21,6 +21,7 @@ use crate::lang;
 use crate::llm::call::{CallCache, Policy};
 use crate::llm::claude::{self, Claude};
 use crate::llm::codex::{self, Codex};
+use crate::llm::endpoint::{self, Problem};
 use crate::llm::ollama::{self, Ollama};
 use crate::llm::{Backend, BackendId};
 use crate::models::{self, ModelKind};
@@ -112,7 +113,7 @@ pub fn run(
     );
     let steps: [&dyn Runnable; 5] = [&probe, &join, &audio, &transcribe, &Outputs];
 
-    for (name, target) in resolved.off_machine() {
+    for (name, target) in resolved.off_machine(config) {
         progress.notice(&format!("{name} sends its input to {target}"));
     }
 
@@ -205,14 +206,19 @@ impl Resolved {
     }
 
     /// The templates whose backend sends their input off the machine, each once, with
-    /// where it goes, such as `claude (Anthropic)`.
-    fn off_machine(&self) -> Vec<(&str, String)> {
+    /// where it goes, such as `claude (Anthropic)` or `openrouter (openrouter.ai)`.
+    fn off_machine(&self, config: &Config) -> Vec<(&str, String)> {
         self.order
             .iter()
             .filter_map(|name| {
                 let id = &self.backends[name];
                 if !id.sends_off_machine() {
                     return None;
+                }
+                if let BackendId::Endpoint { name: endpoint, .. } = id {
+                    let found = config.endpoints.get(endpoint)?;
+                    return (!found.is_local())
+                        .then(|| (name.as_str(), format!("{endpoint} ({})", found.host())));
                 }
                 let provider = id.provider()?;
                 let tool = id.to_string();
@@ -235,6 +241,10 @@ fn resolve(options: &Options, config: &Config) -> Result<Resolved> {
     let llm_flag = from_flag(&config.llm_default)
         .map(str::parse::<BackendId>)
         .transpose()?;
+    // Without a template the flag reaches no backend, so preflight would not see a typo.
+    if let Some(BackendId::Endpoint { name, .. }) = &llm_flag {
+        config.endpoint(name)?;
+    }
     let flag_lang = config
         .llm_output_lang
         .as_ref()
@@ -376,6 +386,11 @@ pub(crate) fn preflight(config: &Config, backends: &[BackendId]) -> Result<Ready
                 let bin = codex_bin.clone().expect("located above");
                 bin.map(|bin| Box::new(Codex::new(bin, model.clone())) as _)
             }
+            BackendId::Endpoint { name, model } => {
+                endpoint::connect(name, config.endpoint(name)?, model)
+                    .map(|backend| Box::new(backend) as _)
+                    .map_err(Problem::into_missing)
+            }
         };
         match backend {
             Ok(backend) => {
@@ -421,8 +436,7 @@ fn locate_bin(
 pub fn llm_status(config: &Config) -> String {
     let id = match config.llm_default.value.parse::<BackendId>() {
         Ok(id) => id,
-        Err(Error::Usage(message)) => return format!("invalid: {message}"),
-        Err(e) => return format!("invalid: {e}"),
+        Err(e) => return invalid_status(e),
     };
     match &id {
         BackendId::Ollama { model } => match ollama::check(&config.ollama_url.value, model) {
@@ -442,6 +456,21 @@ pub fn llm_status(config: &Config) -> String {
             Ok(_) => "ok".to_string(),
             Err(m) => format!("not reachable: {}", m.hint),
         },
+        BackendId::Endpoint { name, model } => match config.endpoint(name) {
+            Ok(found) => match endpoint::connect(name, found, model) {
+                Ok(_) => "ok".to_string(),
+                Err(Problem::ModelMissing(m)) => format!("model missing: {}", m.hint),
+                Err(Problem::Unreachable(m)) => format!("not reachable: {}", m.hint),
+            },
+            Err(e) => invalid_status(e),
+        },
+    }
+}
+
+fn invalid_status(error: Error) -> String {
+    match error {
+        Error::Usage(message) => format!("invalid: {message}"),
+        other => format!("invalid: {other}"),
     }
 }
 
@@ -910,11 +939,11 @@ impl TemplatePhase<'_> {
     }
 }
 
-/// Parallel calls within a template: `llm.concurrency`, or 1 for Ollama (one local model
-/// serves one request at a time) and 3 for Claude and Codex.
+/// Parallel calls within a template: `llm.concurrency`, or 1 for Ollama and endpoints (one
+/// local model serves one request at a time) and 3 for Claude and Codex.
 fn concurrency(config: &Config, id: &BackendId) -> usize {
     config.concurrency().unwrap_or(match id {
-        BackendId::Ollama { .. } => 1,
+        BackendId::Ollama { .. } | BackendId::Endpoint { .. } => 1,
         BackendId::Claude { .. } | BackendId::Codex { .. } => 3,
     })
 }
@@ -1361,7 +1390,67 @@ mod tests {
                 BackendId::Claude { model: None }
             ]
         );
-        assert_eq!(r.off_machine(), [("c", "claude (Anthropic)".to_string())]);
+        assert_eq!(
+            r.off_machine(&config(&[])),
+            [("c", "claude (Anthropic)".to_string())]
+        );
+    }
+
+    fn off_machine_for(url: &str) -> Vec<(String, String)> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, format!("[endpoints.box]\nurl = \"{url}\"\n")).unwrap();
+        let config = Config::resolve(Overrides::default(), &|_| None, Some(&path)).unwrap();
+        let mut r = chain();
+        let id = BackendId::Endpoint {
+            name: "box".into(),
+            model: "m".into(),
+        };
+        r.backends.insert("c".to_string(), id);
+        r.off_machine(&config)
+            .into_iter()
+            .map(|(name, target)| (name.to_string(), target))
+            .collect()
+    }
+
+    #[test]
+    fn notice_for_endpoint_names_it_and_its_host() {
+        assert_eq!(
+            off_machine_for("https://openrouter.ai/api/v1"),
+            [("c".to_string(), "box (openrouter.ai)".to_string())]
+        );
+    }
+
+    #[test]
+    fn notice_for_endpoint_on_the_lan() {
+        assert_eq!(
+            off_machine_for("http://192.168.1.20:1234/v1"),
+            [("c".to_string(), "box (192.168.1.20)".to_string())]
+        );
+    }
+
+    #[test]
+    fn notice_for_endpoint_absent_on_loopback() {
+        for url in [
+            "http://localhost:1234/v1",
+            "http://127.0.0.1:1234/v1",
+            "http://[::1]:1234/v1",
+        ] {
+            assert_eq!(off_machine_for(url), [], "{url}");
+        }
+    }
+
+    #[test]
+    fn endpoint_concurrency_defaults_to_one() {
+        let id = BackendId::Endpoint {
+            name: "box".into(),
+            model: "m".into(),
+        };
+        assert_eq!(concurrency(&config(&[]), &id), 1);
+        assert_eq!(
+            concurrency(&config(&[("MINUTA_LLM_CONCURRENCY", "4")]), &id),
+            4
+        );
     }
 
     #[test]
