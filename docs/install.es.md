@@ -86,6 +86,10 @@ Estos comandos son para Debian y Ubuntu. En otra distribución, consulta
    brew install ffmpeg whisper.cpp
    ```
 
+   Esto descarga muchos paquetes y puede tardar varios minutos. Si se detiene con
+   un error de descarga, ejecuta el mismo comando otra vez: Homebrew continúa donde
+   se quedó.
+
    Para usar una GPU, como CUDA o Vulkan, compila whisper.cpp tú mismo con las
    [opciones de compilación de whisper.cpp](https://github.com/ggml-org/whisper.cpp#readme)
    y define `whisper.bin` con la ruta de tu `whisper-cli`.
