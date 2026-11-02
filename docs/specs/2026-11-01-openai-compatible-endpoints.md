@@ -84,7 +84,7 @@ n/a. Single-user CLI. Output language is already handled by the prompt (`llm.out
 
 Invariants:
 - An endpoint name matches `[a-z][a-z0-9_-]*` and is not `ollama`, `claude` or `codex`.
-- `url` parses, uses `http` or `https`, and holds no credentials (no `@`).
+- `url` parses, uses `http` or `https`, and holds no credentials (no `@`), query or fragment.
 - `context_tokens` and `timeout_secs` are at least 1.
 
 ## Interfaces
@@ -141,13 +141,17 @@ Behavior marked *probed* was seen on 2026-11-01 against Ollama (`/v1`) and LM St
   transient. minuta does not read the server's context size, because no standard API gives it.
 - **Cut off:** `finish_reason: "length"` is a non-transient error telling the user to give the
   model a larger context on the server (*probed* on both).
+- **Ended early:** `finish_reason` `content_filter` is a non-transient error and `error` a
+  transient one, so partial text is never saved as a document.
 - **Empty reply:** missing or empty `content` with any other finish reason is a transient error.
+  It carries the message of an `error` object, which some services send with HTTP 200.
 - **Error bodies:** `{"error": {"message": ...}}` (Ollama, OpenAI) and `{"error": "..."}` (LM
   Studio) are both read, and anything else is shown as a sanitized excerpt.
 - **Status mapping:** 429 and 5xx are transient; every other status is not. 401 and 403 hint at
   `api_key_env`.
-- **API key:** with `api_key_env` set, the variable must be set, non-empty and valid UTF-8, or the
-  endpoint is reported as missing, with a hint naming the variable. Without it, no header is sent.
+- **API key:** with `api_key_env` set, the variable must be set, non-empty and visible ASCII, or
+  the endpoint is reported as missing, with a hint naming the variable and never its value. Without
+  it, no header is sent. A key echoed in server text is replaced by `[redacted]` in every message.
 - **Redirects:** never followed, so a key or transcript cannot be moved to another host. A 3xx is
   a non-transient error.
 - **Concurrency:** 1 unless `llm.concurrency` is set, as for Ollama. One loaded model serves one

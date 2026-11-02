@@ -537,16 +537,23 @@ fn endpoint_host(name: &str, url: &str) -> Result<String> {
             "endpoints.{name}.url must not hold credentials; use endpoints.{name}.api_key_env"
         )));
     }
-    ureq::get(url)
-        .request_url()
-        .ok()
-        .filter(|parsed| matches!(parsed.as_url().scheme(), "http" | "https"))
-        .and_then(|parsed| parsed.as_url().host_str().map(str::to_string))
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "endpoints.{name}.url is {url:?}: not an http or https URL"
-            ))
-        })
+    let not_a_url = || {
+        Error::Config(format!(
+            "endpoints.{name}.url is {url:?}: not an http or https URL"
+        ))
+    };
+    let parsed = ureq::get(url).request_url().map_err(|_| not_a_url())?;
+    let parsed = parsed.as_url();
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(not_a_url());
+    }
+    // Paths are appended to the URL as text, so these would swallow them.
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(Error::Config(format!(
+            "endpoints.{name}.url is {url:?}: a base URL takes no query or fragment"
+        )));
+    }
+    parsed.host_str().map(str::to_string).ok_or_else(not_a_url)
 }
 
 /// Expands a leading `~` or `~/` against `home`. Any other value is returned as written,

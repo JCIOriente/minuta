@@ -63,11 +63,12 @@ minuta calls a few external tools. Install them once:
 | `ffmpeg` and `ffprobe` | Reading, joining and converting media | `brew install ffmpeg` |
 | `whisper-cli` | Transcription | `brew install whisper-cpp` |
 | A whisper model | Transcription | `minuta models pull base` |
-| Ollama, Claude Code *or* Codex | Templates only (`run -t ...`) | `brew install ollama`, start it with `ollama serve`, then `ollama pull gemma4:26b` |
+| Ollama, Claude Code, Codex *or* an OpenAI-compatible server | Templates only (`run -t ...`) | `brew install ollama`, start it with `ollama serve`, then `ollama pull gemma4:26b` |
 
 **[Read the full installation guide](https://github.com/JCIOriente/minuta/blob/main/docs/install.md)**
 for Linux package managers, building whisper.cpp from source, choosing a
-model, setting up Ollama, Claude Code or Codex, and voice activity detection.
+model, setting up Ollama, Claude Code, Codex or an OpenAI-compatible server, and
+voice activity detection.
 
 Then check your setup:
 

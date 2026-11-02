@@ -1990,12 +1990,35 @@ fn endpoint_key_with_a_newline_is_refused_without_printing_it() {
         &["run", "clase-4.mp4", "-t", "summary", "--llm", &id],
         &fake,
     );
-    cmd.env("BOX_KEY", "s3cret\nkey");
+    cmd.env("BOX_KEY", "s3cret\r");
     let out = env.run_cmd(cmd);
     assert!(!out.status.success());
     let err = stderr(&out);
-    assert!(err.contains("set BOX_KEY to the API key"), "{err}");
+    assert!(
+        err.contains("box: BOX_KEY is set, but holds whitespace or non-ASCII characters"),
+        "{err}"
+    );
     assert!(!err.contains("s3cret"), "{err}");
+}
+
+#[test]
+fn endpoint_key_empty_is_reported_with_hint() {
+    let env = Env::new();
+    let fake = endpoint_server(&env, "api_key_env = \"BOX_KEY\"\n");
+    let id = format!("box:{ENDPOINT_MODEL}");
+    let mut cmd = env.llm_command(
+        &["run", "clase-4.mp4", "-t", "summary", "--llm", &id],
+        &fake,
+    );
+    cmd.env("BOX_KEY", "");
+    let out = env.run_cmd(cmd);
+    assert!(!out.status.success());
+    let err = stderr(&out);
+    assert!(
+        err.contains("box: set BOX_KEY to the API key (endpoints.box.api_key_env)"),
+        "{err}"
+    );
+    assert!(fake.requests().is_empty());
 }
 
 #[test]

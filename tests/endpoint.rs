@@ -1,10 +1,11 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use minuta::config::{Config, Overrides};
 use minuta::error::{Error, Missing};
-use minuta::llm::endpoint::{check, OpenAiCompatible, Problem};
+use minuta::llm::endpoint::{check, connect, OpenAiCompatible, Problem};
 use minuta::llm::Backend;
 use serde_json::{json, Value};
 
@@ -333,15 +334,174 @@ fn endpoint_redirect_not_followed() {
 
 #[test]
 fn endpoint_finish_length_is_not_transient() {
-    let fake = server(|_| reply_with(json!("cut"), "length"));
+    for content in [json!("cut"), json!(""), Value::Null] {
+        let fake = server(move |_| reply_with(content.clone(), "length"));
+        assert_eq!(
+            llm_err(complete(&fake).unwrap_err()),
+            (
+                "response cut off at the context limit; give the model a larger context on the \
+                 server, or lower endpoints.box.context_tokens"
+                    .to_string(),
+                false
+            )
+        );
+    }
+}
+
+#[test]
+fn endpoint_finish_content_filter_is_not_transient() {
+    let fake = server(|_| reply_with(json!("half a docu"), "content_filter"));
     assert_eq!(
         llm_err(complete(&fake).unwrap_err()),
         (
-            "response cut off at the context limit; give the model a larger context on the \
-             server, or lower endpoints.box.context_tokens"
-                .to_string(),
+            "response ended early (finish_reason content_filter)".to_string(),
             false
         )
+    );
+}
+
+#[test]
+fn endpoint_finish_error_is_transient() {
+    let fake = server(|_| reply_with(json!("half a docu"), "error"));
+    assert_eq!(
+        llm_err(complete(&fake).unwrap_err()),
+        (
+            "response ended early (finish_reason error)".to_string(),
+            true
+        )
+    );
+}
+
+#[test]
+fn endpoint_finish_without_a_reason_is_accepted() {
+    let fake = server(|_| {
+        let body = json!({"choices": [{"message": {"content": "fine"}}]});
+        Reply::Status(200, body.to_string())
+    });
+    assert_eq!(complete(&fake).unwrap(), "fine");
+}
+
+#[test]
+fn endpoint_error_in_a_200_reply_is_shown() {
+    let fake = server(|_| {
+        let body = json!({"error": {"code": 502, "message": "provider down"}});
+        Reply::Status(200, body.to_string())
+    });
+    assert_eq!(
+        llm_err(complete(&fake).unwrap_err()),
+        (
+            "response has no message content: provider down".to_string(),
+            true
+        )
+    );
+}
+
+#[test]
+fn endpoint_body_cut_short_is_transient() {
+    let fake = server(|_| Reply::Raw("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{".into()));
+    let (message, transient) = llm_err(complete(&fake).unwrap_err());
+    assert!(message.starts_with("unreadable response: "), "{message}");
+    assert!(transient);
+}
+
+const KEY: &str = "sk-or-REAL";
+
+fn keyed_err(status: u16, body: String) -> (String, bool) {
+    let fake = server(move |_| Reply::Status(status, body.clone()));
+    let url = format!("{}/v1", fake.url());
+    let err = client_at(&url, Some(KEY))
+        .complete("SYS", "USER", &no_interrupt())
+        .unwrap_err();
+    llm_err(err)
+}
+
+#[test]
+fn endpoint_key_echoed_in_a_401_is_redacted() {
+    let body = json!({"error": {"message": format!("Incorrect API key: {KEY}")}});
+    assert_eq!(
+        keyed_err(401, body.to_string()).0,
+        "HTTP 401: Incorrect API key: [redacted]; check the key in endpoints.box.api_key_env"
+    );
+}
+
+#[test]
+fn endpoint_key_echoed_in_a_500_is_redacted() {
+    assert_eq!(
+        keyed_err(500, format!("upstream refused {KEY}")).0,
+        "HTTP 500: upstream refused [redacted]"
+    );
+}
+
+#[test]
+fn endpoint_key_echoed_in_a_200_error_is_redacted() {
+    let body = json!({"error": format!("refused {KEY}")});
+    assert_eq!(
+        keyed_err(200, body.to_string()).0,
+        "response has no message content: refused [redacted]"
+    );
+}
+
+#[test]
+fn endpoint_check_redacts_an_echoed_key_in_an_unexpected_reply() {
+    let fake = server(|_| Reply::Status(200, json!({"auth": KEY}).to_string()));
+    let url = format!("{}/v1", fake.url());
+    assert_eq!(
+        unreachable_hint(check("box", &url, Some(KEY), "m").unwrap_err()),
+        format!(
+            "start the server or fix endpoints.box.url; unexpected /models response \
+             ({{\"auth\":\"[redacted]\"}}) at {url}"
+        )
+    );
+}
+
+#[test]
+fn endpoint_check_redacts_an_echoed_key_in_listed_ids() {
+    let fake = server(|_| model_list(&[KEY]));
+    let url = format!("{}/v1", fake.url());
+    assert_eq!(
+        model_missing_hint(check("box", &url, Some(KEY), "m").unwrap_err()),
+        "not offered by the server; it offers: [redacted]"
+    );
+}
+
+#[test]
+fn endpoint_check_drops_control_characters_from_a_bad_status_line() {
+    let fake = server(|_| Reply::Raw("HTTP/1.1 \u{1b}c1 OK\r\n\r\n".into()));
+    let url = format!("{}/v1", fake.url());
+    let hint = unreachable_hint(check("box", &url, None, "m").unwrap_err());
+    assert!(!hint.chars().any(char::is_control), "{hint:?}");
+}
+
+#[test]
+fn endpoint_config_reaches_the_backend() {
+    let fake = server(|request| {
+        if request.path == MODELS {
+            model_list(&["m"])
+        } else {
+            Reply::Hang
+        }
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let text = format!(
+        "[endpoints.box]\nurl = \"{}/v1\"\ncontext_tokens = 32768\ntimeout_secs = 1\n",
+        fake.url()
+    );
+    std::fs::write(&path, text).unwrap();
+    let config = Config::resolve(Overrides::default(), &|_| None, Some(&path)).unwrap();
+    let backend = connect("box", &config.endpoints["box"], "m").unwrap();
+    assert_eq!(backend.id(), "box:m");
+    assert_eq!(backend.context_tokens(), 32768);
+    let started = Instant::now();
+    let (_, transient) = llm_err(
+        backend
+            .complete("SYS", "USER", &no_interrupt())
+            .unwrap_err(),
+    );
+    assert!(transient);
+    assert!(
+        started.elapsed() < Duration::from_secs(60),
+        "the 1 s timeout was not applied"
     );
 }
 
@@ -425,7 +585,9 @@ fn endpoint_interrupt_returns_interrupted() {
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
     let worker = thread::spawn(move || c.complete("SYS", "USER", &flag));
+    let deadline = Instant::now() + Duration::from_secs(30);
     while fake.requests().is_empty() {
+        assert!(Instant::now() < deadline, "the request never arrived");
         thread::yield_now();
     }
     stop.store(true, Ordering::SeqCst);

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use super::http::{self, base, describe, excerpt, read_json};
+use super::http::{self, base, excerpt, read_json};
 use super::Backend;
 use crate::config::Endpoint;
 use crate::error::{Error, Missing, Result};
@@ -54,14 +54,35 @@ fn api_key(name: &str, var: Option<&str>) -> std::result::Result<Option<String>,
     let Some(var) = var else {
         return Ok(None);
     };
-    std::env::var_os(var)
-        .and_then(|value| value.into_string().ok())
-        .filter(|value| !value.is_empty() && value.chars().all(|c| c.is_ascii_graphic()))
+    let missing = |hint| Missing {
+        name: name.to_string(),
+        hint,
+    };
+    let value = std::env::var_os(var)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            missing(format!(
+                "set {var} to the API key (endpoints.{name}.api_key_env)"
+            ))
+        })?;
+    value
+        .into_string()
+        .ok()
+        .filter(|value| value.chars().all(|c| c.is_ascii_graphic()))
         .map(Some)
-        .ok_or_else(|| Missing {
-            name: name.to_string(),
-            hint: format!("set {var} to the API key (endpoints.{name}.api_key_env)"),
+        .ok_or_else(|| {
+            missing(format!(
+                "{var} is set, but holds whitespace or non-ASCII characters"
+            ))
         })
+}
+
+/// Server text for a message. A server or proxy may echo the key it was sent.
+fn scrub(text: &str, key: Option<&str>) -> String {
+    match key {
+        Some(key) => excerpt(&text.replace(key, "[redacted]")),
+        None => excerpt(text),
+    }
 }
 
 /// Verifies the server answers and lists `model`. A server may otherwise answer with whichever
@@ -74,6 +95,7 @@ pub fn check(
 ) -> std::result::Result<(), Problem> {
     let base = base(url);
     let down = |why: String| {
+        let why = scrub(&why, key);
         Problem::Unreachable(Missing {
             name: name.to_string(),
             hint: format!("start the server or fix endpoints.{name}.url; {why} at {base}"),
@@ -99,14 +121,14 @@ pub fn check(
                 ),
             }))
         }
-        Err(e) => return Err(down(describe(&e))),
+        Err(e) => return Err(down(http::describe(&e))),
     };
     let listed = read_json(response)
         .map_err(|e| down(format!("unreadable /models response ({})", e.message())))?;
     let Some(models) = listed["data"].as_array() else {
         return Err(down(format!(
             "unexpected /models response ({})",
-            excerpt(&listed.to_string())
+            scrub(&listed.to_string(), key)
         )));
     };
     let ids: Vec<&str> = models.iter().filter_map(|m| m["id"].as_str()).collect();
@@ -115,18 +137,18 @@ pub fn check(
     }
     Err(Problem::ModelMissing(Missing {
         name: format!("{name}:{model}"),
-        hint: not_offered(&ids),
+        hint: not_offered(&ids, key),
     }))
 }
 
-fn not_offered(ids: &[&str]) -> String {
+fn not_offered(ids: &[&str], key: Option<&str>) -> String {
     if ids.is_empty() {
         return "the server offers no models".to_string();
     }
     let shown: Vec<String> = ids
         .iter()
         .take(MAX_LISTED_MODELS)
-        .map(|id| excerpt(id))
+        .map(|id| scrub(id, key))
         .collect();
     let more = ids.len().saturating_sub(MAX_LISTED_MODELS);
     let tail = if more > 0 {
@@ -231,39 +253,55 @@ impl OpenAiCompatible {
             }
             Err(ureq::Error::Transport(t)) => {
                 let transient = http::transport_is_transient(&t);
-                return Err(failed(
-                    self.error(format!("request failed: {t}"), transient),
-                ));
+                let message = format!("request failed: {}", self.scrub(&t.to_string()));
+                return Err(failed(self.error(message, transient)));
             }
         };
         let parsed = read_json(response).map_err(|e| {
             failed(self.error(
-                format!("unreadable response: {}", e.message()),
+                format!("unreadable response: {}", self.scrub(e.message())),
                 e.is_transient(),
             ))
         })?;
         let choice = &parsed["choices"][0];
-        if choice["finish_reason"] == "length" {
-            let message = format!(
-                "response cut off at the context limit; give the model a larger context on the \
-                 server, or lower endpoints.{}.context_tokens",
-                self.name
-            );
-            return Err(failed(self.error(message, false)));
+        match choice["finish_reason"].as_str() {
+            Some("length") => {
+                let message = format!(
+                    "response cut off at the context limit; give the model a larger context on \
+                     the server, or lower endpoints.{}.context_tokens",
+                    self.name
+                );
+                return Err(failed(self.error(message, false)));
+            }
+            // Text that stopped early must not pass for a finished document.
+            Some(reason @ ("content_filter" | "error")) => {
+                let message = format!("response ended early (finish_reason {reason})");
+                return Err(failed(self.error(message, reason == "error")));
+            }
+            _ => {}
         }
         match choice["message"]["content"].as_str() {
             Some(content) if !content.trim().is_empty() => Ok(content.to_string()),
-            _ => Err(failed(
-                self.error("response has no message content".into(), true),
-            )),
+            _ => {
+                let detail = error_text(&parsed)
+                    .map(|text| format!(": {}", self.scrub(text)))
+                    .unwrap_or_default();
+                let message = format!("response has no message content{detail}");
+                Err(failed(self.error(message, true)))
+            }
         }
+    }
+
+    fn scrub(&self, text: &str) -> String {
+        scrub(text, self.key.as_deref())
     }
 
     fn status_error(&self, code: u16, response: ureq::Response) -> Error {
         let name = &self.name;
         let detail = match response.into_string() {
             Ok(text) => {
-                let shown = error_message(&text).unwrap_or_else(|| excerpt(&text));
+                let parsed = serde_json::from_str::<Value>(&text).unwrap_or_default();
+                let shown = self.scrub(error_text(&parsed).unwrap_or(&text));
                 if shown.is_empty() {
                     String::new()
                 } else {
@@ -289,10 +327,9 @@ impl OpenAiCompatible {
 
 /// The message in an error body: `{"error": {"message": ...}}` (OpenAI, Ollama) or
 /// `{"error": "..."}` (LM Studio).
-fn error_message(text: &str) -> Option<String> {
-    let parsed = serde_json::from_str::<Value>(text).ok()?;
-    let error = &parsed["error"];
-    error["message"].as_str().or(error.as_str()).map(excerpt)
+fn error_text(body: &Value) -> Option<&str> {
+    let error = &body["error"];
+    error["message"].as_str().or(error.as_str())
 }
 
 impl Backend for OpenAiCompatible {

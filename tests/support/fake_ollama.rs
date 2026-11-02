@@ -28,6 +28,8 @@ pub enum Reply {
     Status(u16, String),
     /// A 307 to `location`.
     Redirect(String),
+    /// These bytes, verbatim, whatever they are.
+    Raw(String),
     /// Never answer; the connection is closed when the server is dropped.
     Hang,
 }
@@ -248,6 +250,10 @@ fn handle(stream: TcpStream, shared: &Shared) -> std::io::Result<()> {
                 stream,
                 "HTTP/1.1 307 X\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             )?;
+            stream.flush()
+        }
+        Reply::Raw(bytes) => {
+            stream.write_all(bytes.as_bytes())?;
             stream.flush()
         }
         Reply::Hang => {

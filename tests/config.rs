@@ -1350,6 +1350,20 @@ fn endpoint_config_rejects_credentials_without_echoing_them() {
 }
 
 #[test]
+fn endpoint_config_rejects_a_query_or_fragment() {
+    for url in [
+        "https://gw.example.com/v1?api-version=1",
+        "https://gw.example.com/v1#x",
+    ] {
+        let text = format!("[endpoints.a]\nurl = \"{url}\"\n");
+        assert_eq!(
+            config_err(with_endpoints(&text)),
+            format!("endpoints.a.url is \"{url}\": a base URL takes no query or fragment"),
+        );
+    }
+}
+
+#[test]
 fn endpoint_config_rejects_zero_context_tokens() {
     assert_eq!(
         config_err(with_endpoints(
