@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.0
+## 0.7.0
 
 ### Added
 - Codex as an LLM backend: `--llm codex` or `codex:<model>`, using your existing Codex login.
