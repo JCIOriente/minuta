@@ -552,7 +552,13 @@ fn preflight_before_first_step() {
     out.clone().assert().code(1).stdout("");
     let err = stderr(&out);
     assert!(err.contains("whisper-cli"), "stderr was {err}");
-    assert!(err.contains("brew install whisper.cpp"), "stderr was {err}");
+    // Homebrew installs the tool on macOS and Linux; any other host is sent to the guide.
+    let hint = if cfg!(any(target_os = "macos", target_os = "linux")) {
+        "brew install whisper.cpp"
+    } else {
+        "docs/install.md"
+    };
+    assert!(err.contains(hint), "stderr was {err}");
     assert!(!err.contains("[1/5]"), "no step may start: {err}");
     assert!(env.calls().is_empty());
     assert!(!env.path("minuta-out").exists());

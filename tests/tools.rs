@@ -678,3 +678,29 @@ fn install_hint_points_to_the_guide_on_other_systems() {
         }
     }
 }
+
+/// `inspect` hands each tool its own name, so a missing ffmpeg is never told to install
+/// what a missing whisper-cli needs.
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn inspect_gives_each_tool_its_own_install_hint() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ToolPaths {
+        path: Some(dir.path().as_os_str().to_owned()),
+        ..ToolPaths::default()
+    };
+    let report = inspect(&paths, false);
+    let hints: Vec<(&str, &str)> = report
+        .missing
+        .iter()
+        .map(|m| (m.name.as_str(), m.hint.as_str()))
+        .collect();
+    assert_eq!(
+        hints,
+        [
+            ("ffmpeg", "brew install ffmpeg"),
+            ("ffprobe", "brew install ffmpeg (ffprobe ships with ffmpeg)"),
+            ("whisper-cli", "brew install whisper.cpp"),
+        ]
+    );
+}
