@@ -29,9 +29,13 @@ pub(super) fn agent(read_timeout: Duration) -> ConfigBuilder<AgentScope> {
 
 /// `url` as ureq can send it. ureq parses into `http::Uri`, which refuses what `url` normalizes,
 /// such as a non-ASCII host or a space in the path. The check must come first: ureq swaps a port
-/// it cannot parse for the scheme's default, and would send the request there.
-pub(crate) fn request_url(url: &str) -> std::result::Result<String, url::ParseError> {
-    url::Url::parse(url).map(String::from)
+/// it cannot parse for the scheme's default, and sends plain HTTP to a `socks5://` address.
+pub(crate) fn request_url(url: &str) -> std::result::Result<String, String> {
+    let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("not an http or https URL".to_string());
+    }
+    Ok(parsed.into())
 }
 
 pub(super) fn base(url: &str) -> &str {
@@ -152,7 +156,7 @@ mod tests {
     fn request_url_refuses_what_it_cannot_parse() {
         assert_eq!(
             request_url("no-scheme/x"),
-            Err(url::ParseError::RelativeUrlWithoutBase)
+            Err("relative URL without a base".to_string())
         );
     }
 
@@ -160,7 +164,44 @@ mod tests {
     fn request_url_refuses_an_invalid_port() {
         assert_eq!(
             request_url("http://host:abc/v1"),
-            Err(url::ParseError::InvalidPort)
+            Err("invalid port number".to_string())
+        );
+    }
+
+    fn refused_scheme() -> std::result::Result<String, String> {
+        Err("not an http or https URL".to_string())
+    }
+
+    #[test]
+    fn request_url_refuses_socks() {
+        assert_eq!(request_url("socks://host:1080"), refused_scheme());
+    }
+
+    #[test]
+    fn request_url_refuses_socks4() {
+        assert_eq!(request_url("socks4://host:1080"), refused_scheme());
+    }
+
+    #[test]
+    fn request_url_refuses_socks4a() {
+        assert_eq!(request_url("socks4a://host:1080"), refused_scheme());
+    }
+
+    #[test]
+    fn request_url_refuses_socks5() {
+        assert_eq!(request_url("socks5://host:1080"), refused_scheme());
+    }
+
+    #[test]
+    fn request_url_refuses_socks5h() {
+        assert_eq!(request_url("socks5h://host:1080"), refused_scheme());
+    }
+
+    #[test]
+    fn request_url_keeps_https() {
+        assert_eq!(
+            request_url("https://host/v1").as_deref(),
+            Ok("https://host/v1")
         );
     }
 

@@ -351,6 +351,17 @@ fn chat_refuses_an_invalid_port() {
 }
 
 #[test]
+fn chat_refuses_a_proxy_scheme() {
+    let fake = FakeOllama::start(&["m"], show(None, false), ok_chat());
+    let url = fake.url().replacen("http://", "socks5://", 1);
+    let o = Ollama::new(&url, "m", 1024, &info(None, false));
+    let (message, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert_eq!(message, "request failed: not an http or https URL");
+    assert!(!transient);
+    assert!(fake.requests().is_empty());
+}
+
+#[test]
 fn invalid_url_is_non_transient() {
     let o = Ollama::new("no-scheme", "m", 1024, &info(None, false));
     let (_, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
