@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.8.0
+
+### Added
+- Three new curated templates: `youtube-shorts` (a timestamped clip with start, end and
+  on-screen hook), `instagram-carousel` (cover text, slide copy, caption and hashtags) and
+  `lesson` (learning objectives, key concepts and practice questions).
+- A missing tool now gets its own install hint: Homebrew on macOS and Linux for `ffmpeg`,
+  `ffprobe` and `whisper-cli`, and a link to the installation guide on other systems.
+
+### Changed
+- The curated templates are rewritten as publishing kits, with stricter limits on inventing
+  facts. They return extra fields a publisher needs: `youtube` a pinned comment and alternative
+  titles, `instagram` and `tiktok` cover text and on-screen text, `linkedin` a first comment,
+  `newsletter` preview text and an alternative subject, `podcast-notes` chapters and an
+  alternative title, and `blog-post` a meta description, slug and image alt text.
+- `meeting-minutes` leads with decisions and actions before discussion, `action-items` is a
+  flat checklist sorted by owner, and `x-thread` keeps a standalone hook with concise posts.
+- Some limits changed, for example `linkedin` allows 3 hashtags instead of 5 and `blog-post`
+  5 tags instead of 8. Pull the templates again with `minuta templates pull <name> --force`
+  to update.
+- The installation guide has one ordered path, with Linuxbrew for whisper.cpp.
+
+### Fixed
+- The install hint for `whisper-cli` said `brew install whisper-cpp`; the Homebrew formula is
+  `whisper.cpp`.
+
 ## 0.7.0
 
 ### Added
