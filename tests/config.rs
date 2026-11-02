@@ -1415,20 +1415,21 @@ fn endpoint_config_entries_list_each_key_in_order() {
          [endpoints.a]\nurl = \"http://127.0.0.1:2/v1\"\napi_key_env = \"A_KEY\"\n",
     )
     .unwrap();
-    let entries: Vec<(String, String, Source)> = cfg
+    let entries: Vec<(String, Option<(String, Source)>)> = cfg
         .endpoint_entries()
         .into_iter()
-        .map(|(key, setting)| (key, setting.value.clone(), setting.source))
+        .map(|(key, setting)| (key, setting.map(|s| (s.value.clone(), s.source))))
         .collect();
+    let set = |key: &str, value: &str, source| (key.to_string(), Some((value.to_string(), source)));
     let want = [
-        ("endpoints.a.url", "http://127.0.0.1:2/v1", Source::File),
-        ("endpoints.a.context_tokens", "16384", Source::Default),
-        ("endpoints.a.timeout_secs", "600", Source::Default),
-        ("endpoints.a.api_key_env", "A_KEY", Source::File),
-        ("endpoints.b.url", "http://127.0.0.1:1/v1", Source::File),
-        ("endpoints.b.context_tokens", "16384", Source::Default),
-        ("endpoints.b.timeout_secs", "600", Source::Default),
-    ]
-    .map(|(key, value, source)| (key.to_string(), value.to_string(), source));
+        set("endpoints.a.url", "http://127.0.0.1:2/v1", Source::File),
+        set("endpoints.a.context_tokens", "16384", Source::Default),
+        set("endpoints.a.timeout_secs", "600", Source::Default),
+        set("endpoints.a.api_key_env", "A_KEY", Source::File),
+        set("endpoints.b.url", "http://127.0.0.1:1/v1", Source::File),
+        set("endpoints.b.context_tokens", "16384", Source::Default),
+        set("endpoints.b.timeout_secs", "600", Source::Default),
+        ("endpoints.b.api_key_env".to_string(), None),
+    ];
     assert_eq!(entries, want);
 }

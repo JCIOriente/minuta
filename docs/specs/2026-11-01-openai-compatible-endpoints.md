@@ -90,8 +90,8 @@ Invariants:
 ## Interfaces
 **Backend id grammar** (`src/llm/mod.rs`): `ollama:<model>`, `claude`, `claude:<model>`, `codex`,
 `codex:<model>`, `<endpoint>:<model>`. Parsing cannot read the config, because templates are
-parsed without it, so any well-formed `name:model` parses. `preflight` (`src/runner.rs`) then
-checks that the endpoint exists. `gpt:x` therefore moves from a parse error to an unknown-endpoint
+parsed without it, so any well-formed `name:model` parses. `resolve` checks the `--llm` flag,
+which reaches no backend without a template, and `preflight` checks every id in the run. `gpt:x` therefore moves from a parse error to an unknown-endpoint
 error.
 
 **Config** (file only):
@@ -119,7 +119,7 @@ The reply is `choices[0].message.content`. `reasoning` and `reasoning_content` a
 **Notice:** `<template> sends its input to <endpoint> (<host>)`, in the existing format.
 
 **`config show`** adds a line per key, per endpoint, after the fixed keys, with source `file` or
-`default`. `api_key_env` shows the variable's name, never its value.
+`default`, or `(unset)`. `api_key_env` shows the variable's name, never its value.
 
 ## Behavior & edge cases
 Behavior marked *probed* was seen on 2026-11-01 against Ollama (`/v1`) and LM Studio with

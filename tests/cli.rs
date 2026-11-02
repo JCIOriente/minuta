@@ -2017,6 +2017,21 @@ fn unknown_endpoint_is_reported_with_toml() {
 }
 
 #[test]
+fn unknown_endpoint_is_reported_without_templates() {
+    let env = Env::new();
+    let fake = ollama("unused");
+    let out = env.minuta_llm(&["run", "clase-4.mp4", "--llm", "lmstudio:m"], &fake);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert_eq!(
+        stderr(&out),
+        "minuta: usage error: unknown endpoint \"lmstudio\"; add it to the config file (`minuta config path`):\n  \
+         [endpoints.lmstudio]\n  \
+         url = \"http://127.0.0.1:1234/v1\"  # your server's base URL\n"
+    );
+    assert!(!env.path("minuta-out").exists());
+}
+
+#[test]
 fn unlisted_endpoint_model_fails_before_any_call() {
     let env = Env::new();
     let fake = endpoint_server(&env, "");
@@ -2122,6 +2137,23 @@ fn config_show_lists_endpoints() {
         "{shown}"
     );
     assert!(!shown.contains("s3cret-key"), "{shown}");
+}
+
+#[test]
+fn config_show_marks_an_unset_endpoint_key() {
+    let env = Env::new();
+    fs::write(
+        env.path("config.toml"),
+        "[endpoints.box]\nurl = \"http://127.0.0.1:1234/v1\"\n",
+    )
+    .unwrap();
+    let out = env.minuta(&["config", "show"]);
+    out.clone().assert().success();
+    let shown = stdout(&out);
+    assert!(
+        shown.ends_with("endpoints.box.api_key_env = (unset)\n"),
+        "{shown}"
+    );
 }
 
 #[test]

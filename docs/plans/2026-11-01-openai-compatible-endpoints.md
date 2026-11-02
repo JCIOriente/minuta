@@ -35,8 +35,8 @@ T1
 ### T1: OpenAI-compatible endpoints  (#218)
 - Priority: 1
 - Depends on: none
-- Owns: `src/llm/endpoint.rs` (new), `src/llm/http.rs` (new), `src/llm/ollama.rs`, `src/llm/mod.rs`, `src/config.rs`, `src/config_init.rs`, `src/runner.rs`, `src/cli.rs`, `tests/endpoint.rs` (new), `tests/support/fake_openai.rs` (new), `tests/config.rs`, `tests/config_init.rs`, `tests/cli.rs`, `README.md`, `docs/install.md`, `CONTEXT.md`, the spec's status section
-- Touches (read-only or additive): none
+- Owns: `src/llm/endpoint.rs` (new), `src/llm/http.rs` (new), `src/llm/ollama.rs`, `src/llm/mod.rs`, `src/config.rs`, `src/config_init.rs`, `src/runner.rs`, `src/cli.rs`, `tests/endpoint.rs` (new), `tests/config.rs`, `tests/config_init.rs`, `tests/cli.rs`, `README.md`, `docs/install.md`, `CONTEXT.md`, the spec's status section
+- Touches (read-only or additive): `tests/support/fake_ollama.rs`
 - Acceptance:
   - [ ] `lmstudio:a/b:c` parses to `BackendId::Endpoint { name: "lmstudio", model: "a/b:c" }` and displays unchanged; `Bad:x`, `1a:x`, `a b:x` and `x:` are rejected; the "valid forms" text lists `<endpoint>:<model>`
   - [ ] each spec invariant is a `Error::Config` naming the key: reserved name, bad name, missing `url`, bad scheme, `@` in the URL, `context_tokens` or `timeout_secs` of 0; an unknown key is rejected

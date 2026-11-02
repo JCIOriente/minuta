@@ -472,8 +472,8 @@ impl Config {
         ]
     }
 
-    /// Every key of every endpoint, by endpoint name. An unset `api_key_env` is left out.
-    pub fn endpoint_entries(&self) -> Vec<(String, &Setting)> {
+    /// Every key of every endpoint by endpoint name; `None` means unset.
+    pub fn endpoint_entries(&self) -> Vec<(String, Option<&Setting>)> {
         let mut entries = Vec::new();
         for (name, endpoint) in &self.endpoints {
             for (key, setting) in [
@@ -482,9 +482,7 @@ impl Config {
                 ("timeout_secs", Some(&endpoint.timeout_secs)),
                 ("api_key_env", endpoint.api_key_env.as_ref()),
             ] {
-                if let Some(setting) = setting {
-                    entries.push((format!("endpoints.{name}.{key}"), setting));
-                }
+                entries.push((format!("endpoints.{name}.{key}"), setting));
             }
         }
         entries

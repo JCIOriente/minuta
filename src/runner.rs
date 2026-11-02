@@ -241,6 +241,10 @@ fn resolve(options: &Options, config: &Config) -> Result<Resolved> {
     let llm_flag = from_flag(&config.llm_default)
         .map(str::parse::<BackendId>)
         .transpose()?;
+    // Without a template the flag reaches no backend, so preflight would not see a typo.
+    if let Some(BackendId::Endpoint { name, .. }) = &llm_flag {
+        config.endpoint(name)?;
+    }
     let flag_lang = config
         .llm_output_lang
         .as_ref()

@@ -345,14 +345,15 @@ fn config_path() -> Result<()> {
 
 fn config_show() -> Result<()> {
     let config = Config::load(Overrides::default())?;
-    for (key, setting) in config.entries() {
+    let fixed = config
+        .entries()
+        .into_iter()
+        .map(|(key, setting)| (key.to_string(), setting));
+    for (key, setting) in fixed.chain(config.endpoint_entries()) {
         match setting {
             Some(s) => println!("{key} = {} ({})", s.value, source_name(s.source)),
             None => println!("{key} = (unset)"),
         }
-    }
-    for (key, s) in config.endpoint_entries() {
-        println!("{key} = {} ({})", s.value, source_name(s.source));
     }
     Ok(())
 }
