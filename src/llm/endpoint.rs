@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use super::http::{self, base, excerpt, read_json};
+use super::http::{self, base, excerpt, read_json, Response};
 use super::Backend;
 use crate::config::Endpoint;
 use crate::error::{Error, Missing, Result};
@@ -111,17 +111,17 @@ pub fn check(
     };
     let mut request = agent(CHECK_TIMEOUT).get(&format!("{base}/models"));
     if let Some(key) = key {
-        request = request.set("Authorization", &format!("Bearer {key}"));
+        request = request.header("Authorization", &format!("Bearer {key}"));
     }
     let response = match request.call() {
-        Ok(r) if r.status() >= 300 => {
+        Ok(r) if r.status().as_u16() >= 300 => {
             return Err(down(format!(
                 "HTTP status {} (redirects are not followed)",
-                r.status()
+                r.status().as_u16()
             )))
         }
         Ok(r) => r,
-        Err(ureq::Error::Status(code @ (401 | 403), _)) => {
+        Err(ureq::Error::StatusCode(code @ (401 | 403))) => {
             return Err(Problem::Unreachable(Missing {
                 name: name.to_string(),
                 hint: format!(
@@ -172,7 +172,10 @@ fn not_offered(ids: &[&str], key: Option<&str>) -> String {
 
 /// Redirects stay off: following one could send a key or a transcript to another host.
 fn agent(read_timeout: Duration) -> ureq::Agent {
-    http::agent(read_timeout).redirects(0).build()
+    http::agent(read_timeout)
+        .max_redirects(0)
+        .build()
+        .new_agent()
 }
 
 /// A failed request, with the HTTP status when the server answered one.
@@ -239,29 +242,33 @@ impl OpenAiCompatible {
         };
         let mut request = agent(self.timeout)
             .post(&format!("{}/chat/completions", self.url))
-            .set("Content-Type", "application/json");
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .header("Content-Type", "application/json");
         if let Some(key) = &self.key {
-            request = request.set("Authorization", &format!("Bearer {key}"));
+            request = request.header("Authorization", &format!("Bearer {key}"));
         }
-        let response = match request.send_string(&body.to_string()) {
-            Ok(r) if r.status() >= 300 => {
+        let response = match request.send(body.to_string()) {
+            Ok(r) if r.status().is_redirection() => {
                 let message = format!(
                     "HTTP {}; redirects are not followed, so set endpoints.{}.url to the final address",
-                    r.status(),
+                    r.status().as_u16(),
                     self.name
                 );
                 return Err(failed(self.error(message, false)));
             }
-            Ok(r) => r,
-            Err(ureq::Error::Status(code, r)) => {
+            Ok(r) if r.status().as_u16() >= 400 => {
+                let code = r.status().as_u16();
                 return Err(Failure {
                     status: Some(code),
                     error: self.status_error(code, r),
-                })
+                });
             }
-            Err(ureq::Error::Transport(t)) => {
-                let transient = http::transport_is_transient(&t);
-                let message = format!("request failed: {}", self.scrub(&t.to_string()));
+            Ok(r) => r,
+            Err(e) => {
+                let transient = http::is_transient(&e);
+                let message = format!("request failed: {}", self.scrub(&e.to_string()));
                 return Err(failed(self.error(message, transient)));
             }
         };
@@ -317,9 +324,9 @@ impl OpenAiCompatible {
         scrub(text, self.key.as_deref())
     }
 
-    fn status_error(&self, code: u16, response: ureq::Response) -> Error {
+    fn status_error(&self, code: u16, mut response: Response) -> Error {
         let name = &self.name;
-        let detail = match response.into_string() {
+        let detail = match response.body_mut().read_to_string() {
             Ok(text) => {
                 let parsed = serde_json::from_str::<Value>(&text).unwrap_or_default();
                 let shown = self.scrub(error_text(&parsed).unwrap_or(&text));

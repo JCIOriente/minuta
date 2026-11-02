@@ -5,17 +5,23 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use serde_json::Value;
+use ureq::config::ConfigBuilder;
+use ureq::typestate::AgentScope;
 
 use crate::error::{Error, Result};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
 
-pub(super) fn agent(read_timeout: Duration) -> ureq::AgentBuilder {
-    ureq::AgentBuilder::new()
-        .timeout_connect(CONNECT_TIMEOUT)
-        .timeout_read(read_timeout)
-        .timeout_write(CONNECT_TIMEOUT)
+/// A response whose status has not been judged yet.
+pub(super) type Response = ureq::http::Response<ureq::Body>;
+
+pub(super) fn agent(read_timeout: Duration) -> ConfigBuilder<AgentScope> {
+    ureq::Agent::config_builder()
+        .proxy(None)
+        .timeout_connect(Some(CONNECT_TIMEOUT))
+        .timeout_per_read(Some(read_timeout))
+        .timeout_per_write(Some(CONNECT_TIMEOUT))
 }
 
 pub(super) fn base(url: &str) -> &str {
@@ -42,9 +48,10 @@ impl BodyError {
     }
 }
 
-pub(super) fn read_json(response: ureq::Response) -> std::result::Result<Value, BodyError> {
+pub(super) fn read_json(mut response: Response) -> std::result::Result<Value, BodyError> {
     let text = response
-        .into_string()
+        .body_mut()
+        .read_to_string()
         .map_err(|e| BodyError::Read(e.to_string()))?;
     serde_json::from_str(&text).map_err(|e| BodyError::NotJson(e.to_string()))
 }
@@ -60,19 +67,19 @@ pub(super) fn excerpt(text: &str) -> String {
 
 pub(super) fn describe(e: &ureq::Error) -> String {
     match e {
-        ureq::Error::Status(code, _) => format!("HTTP status {code}"),
-        ureq::Error::Transport(t) => t.to_string(),
+        ureq::Error::StatusCode(code) => format!("HTTP status {code}"),
+        other => other.to_string(),
     }
 }
 
 /// True when a failed connection is worth another attempt.
-pub(super) fn transport_is_transient(t: &ureq::Transport) -> bool {
+pub(super) fn is_transient(e: &ureq::Error) -> bool {
     matches!(
-        t.kind(),
-        ureq::ErrorKind::ConnectionFailed
-            | ureq::ErrorKind::Dns
-            | ureq::ErrorKind::Io
-            | ureq::ErrorKind::ProxyConnect
+        e,
+        ureq::Error::ConnectionFailed
+            | ureq::Error::HostNotFound
+            | ureq::Error::Io(_)
+            | ureq::Error::Timeout(_)
     )
 }
 
@@ -100,5 +107,41 @@ where
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return Err(died()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_failure_is_transient() {
+        assert!(is_transient(&ureq::Error::ConnectionFailed));
+    }
+
+    #[test]
+    fn unknown_host_is_transient() {
+        assert!(is_transient(&ureq::Error::HostNotFound));
+    }
+
+    #[test]
+    fn io_failure_is_transient() {
+        let reset = std::io::Error::from(std::io::ErrorKind::ConnectionReset);
+        assert!(is_transient(&ureq::Error::Io(reset)));
+    }
+
+    #[test]
+    fn timeout_is_transient() {
+        assert!(is_transient(&ureq::Error::Timeout(ureq::Timeout::Global)));
+    }
+
+    #[test]
+    fn bad_uri_is_not_transient() {
+        assert!(!is_transient(&ureq::Error::BadUri("x".into())));
+    }
+
+    #[test]
+    fn too_many_redirects_is_not_transient() {
+        assert!(!is_transient(&ureq::Error::TooManyRedirects));
     }
 }

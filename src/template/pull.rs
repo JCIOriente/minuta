@@ -147,22 +147,28 @@ fn symlink_error(path: &Path) -> Error {
 
 /// GETs `url`, accepting only a 200 (redirects are not followed) of at most `cap` bytes.
 fn get(url: &str, cap: u64) -> Result<Vec<u8>> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(CONNECT_TIMEOUT)
-        .timeout_read(READ_TIMEOUT)
-        .timeout(TOTAL_TIMEOUT)
-        .redirects(0)
-        .build();
+    let agent = ureq::Agent::config_builder()
+        .proxy(None)
+        .timeout_connect(Some(CONNECT_TIMEOUT))
+        .timeout_per_read(Some(READ_TIMEOUT))
+        .timeout_global(Some(TOTAL_TIMEOUT))
+        .max_redirects(0)
+        .build()
+        .new_agent();
     let failed = |reason: String| io_other(format!("download of {url} failed: {reason}"));
     let response = agent.get(url).call().map_err(|e| match &e {
-        ureq::Error::Status(code, _) => failed(format!("HTTP status {code}")),
-        ureq::Error::Transport(_) => failed(e.to_string()),
+        ureq::Error::StatusCode(code) => failed(format!("HTTP status {code}")),
+        other => failed(other.to_string()),
     })?;
-    if response.status() != 200 {
-        return Err(failed(format!("HTTP status {}", response.status())));
+    if response.status().as_u16() != 200 {
+        return Err(failed(format!(
+            "HTTP status {}",
+            response.status().as_u16()
+        )));
     }
     let mut body = Vec::new();
     response
+        .into_body()
         .into_reader()
         .take(cap + 1)
         .read_to_end(&mut body)?;

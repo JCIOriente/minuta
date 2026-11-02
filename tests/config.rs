@@ -1042,7 +1042,7 @@ fn config_parse_error_message() {
     assert_eq!(
         err.to_string(),
         format!(
-            "config error: {}: invalid TOML at line 3: invalid table header\nexpected `.`, `]`",
+            "config error: {}: invalid TOML at line 3: unclosed table, expected `]`",
             file.display()
         )
     );

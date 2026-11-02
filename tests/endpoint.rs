@@ -798,6 +798,15 @@ fn endpoint_refused_connection_is_transient() {
 }
 
 #[test]
+fn endpoint_failed_tls_handshake_is_transient() {
+    let fake = server(|_| Reply::Status(200, "plain http".into()));
+    let url = fake.url().replacen("http://", "https://", 1);
+    let backend = OpenAiCompatible::new("box", "m", &url, None, 1000, Duration::from_secs(5));
+    let (message, transient) = llm_err(backend.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert!(transient, "{message}");
+}
+
+#[test]
 fn endpoint_read_timeout_is_transient() {
     let fake = server(|_| Reply::Hang);
     let c = OpenAiCompatible::new(

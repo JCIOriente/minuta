@@ -2,7 +2,7 @@
 
 use std::fmt::Write;
 use std::fs::{self, File};
-use std::io;
+use std::io::Read;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
@@ -74,7 +74,14 @@ pub fn source_record(path: &Path, previous: Option<&Source>) -> Result<Source> {
 }
 
 fn hash_file(path: &Path) -> Result<String> {
+    let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
-    io::copy(&mut File::open(path)?, &mut hasher)?;
-    Ok(hex(&hasher.finalize()))
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            return Ok(hex(&hasher.finalize()));
+        }
+        hasher.update(&buf[..n]);
+    }
 }

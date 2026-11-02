@@ -93,7 +93,7 @@ fn load_layer(catalog: &mut Catalog, dir: &Path, layer: Layer, untrusted: bool) 
     let mut paths = Vec::new();
     for entry in entries {
         let path = entry.map_err(|e| io_err(dir, e))?.path();
-        if path.extension().map_or(true, |e| e != "md") {
+        if path.extension().is_none_or(|e| e != "md") {
             continue;
         }
         paths.push(path);
