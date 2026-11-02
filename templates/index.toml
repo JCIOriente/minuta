@@ -2,17 +2,17 @@ version = 1
 
 [[template]]
 name = "action-items"
-description = "Action items with owners, due dates and timestamps"
+description = "Flat action checklist sorted by owner with stated deadlines, blockers and timestamps"
 platform = "meeting"
 tags = ["tasks", "work"]
-sha256 = "8aaa0f453185551331880034e108298f311e3d20c7b6a82357fed091a8c330ee"
+sha256 = "0759ed7ea39092f54e31437ff4e03fd0e4f90e8980d6ac0936177ef649ccf4af"
 
 [[template]]
 name = "blog-post"
-description = "Search-focused blog post with title and topical tags"
+description = "Blog publishing kit with article, tags, meta description, slug and image alt text"
 platform = "web"
 tags = ["blog", "seo", "long-form"]
-sha256 = "e0d6bf388ebe318e55e95fb085f33b873743f366aa4116d6e33ac410c03c436c"
+sha256 = "7ced67f7bde8da58ece46c57361daa861e39f95570aeeb32b33feff4f77161f0"
 
 [[template]]
 name = "instagram"
@@ -31,6 +31,14 @@ input = "transcript"
 sha256 = "cb386ebbd7276e88e34c6c134dfea58a6ddb55b187e28a152e1d41bba911de1e"
 
 [[template]]
+name = "lesson"
+description = "Structured lesson with learning objectives, key concepts and practice questions"
+platform = "education"
+tags = ["lesson", "learning", "long-form"]
+input = "transcript"
+sha256 = "464d2d9809234df9d698ee6d8c3134feb1c457741a7086c48dca25b0487d4597"
+
+[[template]]
 name = "linkedin"
 description = "LinkedIn publishing kit with post, topic hashtags and first comment"
 platform = "linkedin"
@@ -40,18 +48,18 @@ sha256 = "ff430322dd19cf28c36884d3663fbce912b67007f89701ff957677ca14bdff49"
 
 [[template]]
 name = "meeting-minutes"
-description = "Concise meeting minutes with decisions, owners and due dates"
+description = "Meeting minutes with decisions and actions first, followed by brief discussion"
 platform = "meeting"
 tags = ["minutes", "work"]
-sha256 = "f07da92aeadfa293d9a6818b25dd1babbf89172831efef03999ae5e61e95450e"
+sha256 = "001cbc3bf73873856d064427fc7183f7d019bdc88913f14355d1359037d6935e"
 
 [[template]]
 name = "newsletter"
-description = "Newsletter subject and body with one clear call to action"
+description = "Newsletter publishing kit with subject, body, preview text and alternative subject"
 platform = "email"
 tags = ["newsletter", "long-form"]
 input = "transcript"
-sha256 = "283e834e2db8e34dfb814ec92d50169b0d1a67ce1d11751ca13edba223cd7499"
+sha256 = "13c27adb5fd6ddf75bfe90f0bf856394a7193b5658ca95ced9745bdbaceea70d"
 
 [[template]]
 name = "podcast-notes"
