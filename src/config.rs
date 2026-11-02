@@ -530,7 +530,8 @@ fn endpoint(name: &str, table: EndpointTable) -> Result<Endpoint> {
     })
 }
 
-/// The host of an endpoint URL. Credentials are refused before the URL can reach any message.
+/// The host of an endpoint URL. Credentials, and a query or fragment that could hold them, are
+/// refused without the URL reaching a message.
 fn endpoint_host(name: &str, url: &str) -> Result<String> {
     if url.contains('@') {
         return Err(Error::Config(format!(
@@ -547,10 +548,11 @@ fn endpoint_host(name: &str, url: &str) -> Result<String> {
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(not_a_url());
     }
-    // Paths are appended to the URL as text, so these would swallow them.
+    // Paths are appended to the URL as text, so these would also swallow them.
     if parsed.query().is_some() || parsed.fragment().is_some() {
         return Err(Error::Config(format!(
-            "endpoints.{name}.url is {url:?}: a base URL takes no query or fragment"
+            "endpoints.{name}.url must not hold a query or fragment; use \
+             endpoints.{name}.api_key_env for a key"
         )));
     }
     parsed.host_str().map(str::to_string).ok_or_else(not_a_url)

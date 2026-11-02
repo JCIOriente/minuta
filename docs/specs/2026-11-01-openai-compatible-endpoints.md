@@ -141,10 +141,12 @@ Behavior marked *probed* was seen on 2026-11-01 against Ollama (`/v1`) and LM St
   transient. minuta does not read the server's context size, because no standard API gives it.
 - **Cut off:** `finish_reason: "length"` is a non-transient error telling the user to give the
   model a larger context on the server (*probed* on both).
-- **Ended early:** `finish_reason` `content_filter` is a non-transient error and `error` a
-  transient one, so partial text is never saved as a document.
+- **Ended early:** only `stop`, `eos`, `eos_token`, `stop_sequence`, `end_turn` or no reason at all
+  count as finished, so partial text is never saved as a document. `error` is a transient error,
+  and any other reason a non-transient one. The message carries the server's cause, if any.
 - **Empty reply:** missing or empty `content` with any other finish reason is a transient error.
-  It carries the message of an `error` object, which some services send with HTTP 200.
+  It carries the message of an `error` object, top-level or on the choice, which some services
+  send with HTTP 200.
 - **Error bodies:** `{"error": {"message": ...}}` (Ollama, OpenAI) and `{"error": "..."}` (LM
   Studio) are both read, and anything else is shown as a sanitized excerpt.
 - **Status mapping:** 429 and 5xx are transient; every other status is not. 401 and 403 hint at

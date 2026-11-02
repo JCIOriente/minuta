@@ -77,12 +77,20 @@ fn api_key(name: &str, var: Option<&str>) -> std::result::Result<Option<String>,
         })
 }
 
-/// Server text for a message. A server or proxy may echo the key it was sent.
+/// Server text for a message. A server or proxy may echo the key it was sent. Control
+/// characters go first, and truncation last, so that neither can hide a part of the key.
 fn scrub(text: &str, key: Option<&str>) -> String {
-    match key {
-        Some(key) => excerpt(&text.replace(key, "[redacted]")),
-        None => excerpt(text),
-    }
+    let clean: String = text.chars().filter(|c| !c.is_control()).collect();
+    let Some(key) = key else {
+        return excerpt(&clean);
+    };
+    let quoted = Value::from(key).to_string();
+    let escaped = quoted.trim_matches('"');
+    excerpt(
+        &clean
+            .replace(key, "[redacted]")
+            .replace(escaped, "[redacted]"),
+    )
 }
 
 /// Verifies the server answers and lists `model`. A server may otherwise answer with whichever
@@ -264,7 +272,12 @@ impl OpenAiCompatible {
             ))
         })?;
         let choice = &parsed["choices"][0];
+        let cause = error_text(choice)
+            .or(error_text(&parsed))
+            .map(|text| format!(": {}", self.scrub(text)))
+            .unwrap_or_default();
         match choice["finish_reason"].as_str() {
+            None | Some("stop" | "eos" | "eos_token" | "stop_sequence" | "end_turn") => {}
             Some("length") => {
                 let message = format!(
                     "response cut off at the context limit; give the model a larger context on \
@@ -273,20 +286,17 @@ impl OpenAiCompatible {
                 );
                 return Err(failed(self.error(message, false)));
             }
-            // Text that stopped early must not pass for a finished document.
-            Some(reason @ ("content_filter" | "error")) => {
-                let message = format!("response ended early (finish_reason {reason})");
+            // Only a normal stop counts: partial text must not pass for a finished document.
+            Some(reason) => {
+                let shown = self.scrub(reason);
+                let message = format!("response ended early (finish_reason {shown}){cause}");
                 return Err(failed(self.error(message, reason == "error")));
             }
-            _ => {}
         }
         match choice["message"]["content"].as_str() {
             Some(content) if !content.trim().is_empty() => Ok(content.to_string()),
             _ => {
-                let detail = error_text(&parsed)
-                    .map(|text| format!(": {}", self.scrub(text)))
-                    .unwrap_or_default();
-                let message = format!("response has no message content{detail}");
+                let message = format!("response has no message content{cause}");
                 Err(failed(self.error(message, true)))
             }
         }

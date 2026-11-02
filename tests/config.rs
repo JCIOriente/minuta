@@ -1350,15 +1350,16 @@ fn endpoint_config_rejects_credentials_without_echoing_them() {
 }
 
 #[test]
-fn endpoint_config_rejects_a_query_or_fragment() {
+fn endpoint_config_rejects_a_query_or_fragment_without_echoing_it() {
     for url in [
-        "https://gw.example.com/v1?api-version=1",
-        "https://gw.example.com/v1#x",
+        "https://gw.example.com/v1?key=s3cret",
+        "https://gw.example.com/v1#s3cret",
     ] {
         let text = format!("[endpoints.a]\nurl = \"{url}\"\n");
         assert_eq!(
             config_err(with_endpoints(&text)),
-            format!("endpoints.a.url is \"{url}\": a base URL takes no query or fragment"),
+            "endpoints.a.url must not hold a query or fragment; use endpoints.a.api_key_env \
+             for a key",
         );
     }
 }

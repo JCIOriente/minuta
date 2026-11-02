@@ -373,6 +373,71 @@ fn endpoint_finish_error_is_transient() {
 }
 
 #[test]
+fn endpoint_finish_unknown_reason_is_not_transient() {
+    for reason in ["abort", "insufficient_system_resource"] {
+        let fake = server(move |_| reply_with(json!("half a docu"), reason));
+        assert_eq!(
+            llm_err(complete(&fake).unwrap_err()),
+            (
+                format!("response ended early (finish_reason {reason})"),
+                false
+            )
+        );
+    }
+}
+
+#[test]
+fn endpoint_finish_reason_with_control_characters_is_sanitized() {
+    let fake = server(|_| reply_with(json!("half"), "a\u{1b}[2Jb"));
+    assert_eq!(
+        llm_err(complete(&fake).unwrap_err()).0,
+        "response ended early (finish_reason a[2Jb)"
+    );
+}
+
+#[test]
+fn endpoint_finish_normal_stops_are_accepted() {
+    for reason in ["stop", "eos", "eos_token", "stop_sequence", "end_turn"] {
+        let fake = server(move |_| reply_with(json!("fine"), reason));
+        assert_eq!(complete(&fake).unwrap(), "fine", "{reason}");
+    }
+}
+
+#[test]
+fn endpoint_finish_error_shows_the_cause_on_the_choice() {
+    let fake = server(|_| {
+        let body = json!({"choices": [{
+            "message": {"content": "half"},
+            "finish_reason": "error",
+            "error": {"message": "provider down"},
+        }]});
+        Reply::Status(200, body.to_string())
+    });
+    assert_eq!(
+        llm_err(complete(&fake).unwrap_err()),
+        (
+            "response ended early (finish_reason error): provider down".to_string(),
+            true
+        )
+    );
+}
+
+#[test]
+fn endpoint_empty_content_shows_the_cause_on_the_choice() {
+    let fake = server(|_| {
+        let body = json!({"choices": [{"message": {"content": ""}, "error": "provider down"}]});
+        Reply::Status(200, body.to_string())
+    });
+    assert_eq!(
+        llm_err(complete(&fake).unwrap_err()),
+        (
+            "response has no message content: provider down".to_string(),
+            true
+        )
+    );
+}
+
+#[test]
 fn endpoint_finish_without_a_reason_is_accepted() {
     let fake = server(|_| {
         let body = json!({"choices": [{"message": {"content": "fine"}}]});
@@ -438,6 +503,51 @@ fn endpoint_key_echoed_in_a_200_error_is_redacted() {
     assert_eq!(
         keyed_err(200, body.to_string()).0,
         "response has no message content: refused [redacted]"
+    );
+}
+
+#[test]
+fn endpoint_key_at_the_excerpt_cut_is_redacted() {
+    let (message, _) = keyed_err(500, format!("{}{KEY}", "x".repeat(195)));
+    assert_eq!(message, format!("HTTP 500: {}[reda", "x".repeat(195)));
+}
+
+#[test]
+fn endpoint_key_split_by_a_control_character_is_redacted() {
+    let body = json!({"error": "refused sk-or\u{0}-REAL"});
+    assert_eq!(
+        keyed_err(400, body.to_string()).0,
+        "HTTP 400: refused [redacted]"
+    );
+}
+
+#[test]
+fn endpoint_check_redacts_a_key_that_json_escapes() {
+    let key = "a\"b";
+    let fake = server(move |_| Reply::Status(200, json!({"auth": key}).to_string()));
+    let url = format!("{}/v1", fake.url());
+    assert_eq!(
+        unreachable_hint(check("box", &url, Some(key), "m").unwrap_err()),
+        format!(
+            "start the server or fix endpoints.box.url; unexpected /models response \
+             ({{\"auth\":\"[redacted]\"}}) at {url}"
+        )
+    );
+}
+
+#[test]
+fn endpoint_bad_status_line_drops_control_characters() {
+    let fake = server(|_| Reply::Raw("HTTP/1.1 \u{1b}c1 OK\r\n\r\n".into()));
+    let (message, _) = llm_err(complete(&fake).unwrap_err());
+    assert!(!message.chars().any(char::is_control), "{message:?}");
+}
+
+#[test]
+fn endpoint_error_body_cut_short_keeps_the_status() {
+    let fake = server(|_| Reply::Raw("HTTP/1.1 500 X\r\nContent-Length: 100\r\n\r\n{".into()));
+    assert_eq!(
+        llm_err(complete(&fake).unwrap_err()),
+        ("HTTP 500".to_string(), true)
     );
 }
 
@@ -578,13 +688,14 @@ fn endpoint_bearer_absent_without_a_key() {
     assert_eq!(fake.requests()[0].authorization, None);
 }
 
-#[test]
-fn endpoint_interrupt_returns_interrupted() {
+fn interrupted(
+    call: impl FnOnce(&OpenAiCompatible, &AtomicBool) -> minuta::error::Result<String> + Send + 'static,
+) {
     let fake = server(|_| Reply::Hang);
     let c = client(&fake);
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
-    let worker = thread::spawn(move || c.complete("SYS", "USER", &flag));
+    let worker = thread::spawn(move || call(&c, &flag));
     let deadline = Instant::now() + Duration::from_secs(30);
     while fake.requests().is_empty() {
         assert!(Instant::now() < deadline, "the request never arrived");
@@ -593,6 +704,16 @@ fn endpoint_interrupt_returns_interrupted() {
     stop.store(true, Ordering::SeqCst);
     let result = worker.join().unwrap();
     assert!(matches!(result, Err(Error::Interrupted)), "{result:?}");
+}
+
+#[test]
+fn endpoint_interrupt_returns_interrupted() {
+    interrupted(|c, flag| c.complete("SYS", "USER", flag));
+}
+
+#[test]
+fn endpoint_structured_interrupt_returns_interrupted() {
+    interrupted(|c, flag| c.complete_json("SYS", "USER", &schema(), flag));
 }
 
 #[test]
