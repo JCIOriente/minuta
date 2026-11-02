@@ -90,7 +90,7 @@ Invariants:
 ## Interfaces
 **Backend id grammar** (`src/llm/mod.rs`): `ollama:<model>`, `claude`, `claude:<model>`, `codex`,
 `codex:<model>`, `<endpoint>:<model>`. Parsing cannot read the config, because templates are
-parsed without it, so any well-formed `name:model` parses. `resolve` (`src/runner.rs:234`) then
+parsed without it, so any well-formed `name:model` parses. `preflight` (`src/runner.rs`) then
 checks that the endpoint exists. `gpt:x` therefore moves from a parse error to an unknown-endpoint
 error.
 
@@ -197,4 +197,4 @@ None.
 
 ## Implementation status
 Plan: [2026-11-01-openai-compatible-endpoints.md](../plans/2026-11-01-openai-compatible-endpoints.md)
-- [ ] T1: OpenAI-compatible endpoints (#218)
+- [x] T1: OpenAI-compatible endpoints (#218)

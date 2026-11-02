@@ -2,7 +2,7 @@
 
 - Spec: docs/specs/2026-11-01-openai-compatible-endpoints.md
 - Date: 2026-11-01
-- Status: in progress
+- Status: complete (T1)
 
 ## Overview
 One task and one PR, with a commit per layer so the diff reads in order: shared HTTP helpers,

@@ -8,7 +8,8 @@ programs, which you install once:
 | [ffmpeg and ffprobe](#ffmpeg-and-ffprobe) | Reading, joining and converting media | Always |
 | [whisper.cpp](#whispercpp) (`whisper-cli`) | Transcription | Always |
 | [A whisper model](#a-whisper-model) | Transcription | Always |
-| [Ollama](#ollama) | Generating documents locally | For templates, unless you use Claude or Codex |
+| [Ollama](#ollama) | Generating documents locally | For templates, unless you use Claude, Codex or another server |
+| [An OpenAI-compatible server](#openai-compatible-servers) | Generating documents with LM Studio, Colibri or similar | No |
 | [Claude Code](#claude-code) | Generating documents with Claude | When a template uses a `claude` backend |
 | [Codex](#codex) | Generating documents with Codex | When a template uses a `codex` backend |
 
@@ -221,6 +222,79 @@ Codex with a read-only sandbox, no session files and without your
 `~/.codex/config.toml`, so plain `codex` uses Codex's built-in default model.
 With Codex, the transcript is sent to OpenAI. minuta prints a notice each time
 that happens.
+
+## OpenAI-compatible servers
+
+minuta can generate documents with any server that has an OpenAI-compatible API.
+You name the server in the config file, then use `<endpoint>:<model>` as the
+backend. `minuta config init` writes a commented example, and `minuta config
+path` shows where the file is. The
+[README](https://github.com/JCIOriente/minuta#openai-compatible-servers) lists
+every key.
+
+### LM Studio
+
+1. Install [LM Studio](https://lmstudio.ai) and download a model.
+2. Start the server and load the model with a context of at least
+   `context_tokens` (16384 by default):
+
+   ```sh
+   lms server start
+   lms load google/gemma-4-26b-a4b --context-length 16384
+   ```
+
+3. Add the server to the config file:
+
+   ```toml
+   [endpoints.lmstudio]
+   url = "http://127.0.0.1:1234/v1"
+   ```
+
+4. Use it. `lms ls` shows the model names:
+
+   ```sh
+   minuta run meeting.mp4 -t summary --llm lmstudio:google/gemma-4-26b-a4b
+   ```
+
+### Colibri
+
+1. Set up [Colibri](https://github.com/JustVugg/colibri) by following its README,
+   and start it with `coli serve`.
+2. Run `coli status` to get the model id.
+3. Add the server to the config file. Large models can be slow, so give them more
+   time:
+
+   ```toml
+   [endpoints.colibri]
+   url = "http://127.0.0.1:8000/v1"
+   timeout_secs = 3600
+   ```
+
+4. Use it:
+
+   ```sh
+   minuta run meeting.mp4 -t summary --llm colibri:<model id>
+   ```
+
+minuta has been tested against LM Studio but not yet against a running Colibri;
+this setup comes from Colibri's API documentation. Colibri does not document
+`response_format`. If it refuses the field, minuta sends the request again
+without it.
+
+### Another server
+
+Set `url` to the base URL the server documents, usually ending in `/v1`. If it
+needs a key, put the key in an environment variable and name the variable in
+`api_key_env`:
+
+```toml
+[endpoints.openrouter]
+url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+```
+
+With a URL that is not on your machine, the transcript is sent to that server.
+minuta prints a notice each time that happens.
 
 ## Check your setup
 

@@ -265,9 +265,6 @@ fn resolve(options: &Options, config: &Config) -> Result<Resolved> {
             // Reports an invalid input template with its own error.
             let template = catalog.get(name)?;
             let id = generate::backend_id(llm_flag.as_ref(), template.llm.as_ref(), &default);
-            if let BackendId::Endpoint { name, .. } = &id {
-                config.endpoint(name)?;
-            }
             resolved.backends.insert(name.clone(), id);
         }
         resolved.config_lang = match &config.llm_output_lang {
