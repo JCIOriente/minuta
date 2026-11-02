@@ -285,7 +285,8 @@ impl OpenAiCompatible {
             Value::String(reason) => Some(reason.clone()),
             other => Some(other.to_string()),
         };
-        let has_error = !choice["error"].is_null() || !parsed["error"].is_null();
+        let is_error = |value: &Value| value.is_object() || value.is_string();
+        let has_error = is_error(&choice["error"]) || is_error(&parsed["error"]);
         let clean = !has_error || content.is_none();
         match reason.as_deref() {
             None | Some("stop" | "eos" | "eos_token" | "stop_sequence" | "end_turn") if clean => {}

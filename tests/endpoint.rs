@@ -541,11 +541,25 @@ fn endpoint_finish_content_filter_with_a_refusal_is_not_transient() {
 fn endpoint_refusal_beside_text_is_accepted() {
     let fake = server(|_| {
         reply_body(json!({
-            "message": {"content": "whole document", "refusal": ""},
+            "message": {"content": "whole document", "refusal": "no"},
             "finish_reason": "stop",
         }))
     });
     assert_eq!(complete(&fake).unwrap(), "whole document");
+}
+
+#[test]
+fn endpoint_error_that_is_neither_object_nor_text_is_ignored() {
+    for error in [json!(false), json!(0), json!([])] {
+        let fake = server(move |_| {
+            reply_body(json!({
+                "message": {"content": "whole document"},
+                "finish_reason": "stop",
+                "error": error.clone(),
+            }))
+        });
+        assert_eq!(complete(&fake).unwrap(), "whole document");
+    }
 }
 
 #[test]
