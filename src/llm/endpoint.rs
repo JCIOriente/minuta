@@ -285,7 +285,8 @@ impl OpenAiCompatible {
             Value::String(reason) => Some(reason.clone()),
             other => Some(other.to_string()),
         };
-        let clean = cause.is_empty() || content.is_none();
+        let has_error = !choice["error"].is_null() || !parsed["error"].is_null();
+        let clean = !has_error || content.is_none();
         match reason.as_deref() {
             None | Some("stop" | "eos" | "eos_token" | "stop_sequence" | "end_turn") if clean => {}
             Some("length") => {
@@ -301,7 +302,7 @@ impl OpenAiCompatible {
                 let shown = reason
                     .map(|reason| format!(" (finish_reason {})", self.scrub(reason)))
                     .unwrap_or_default();
-                let transient = !cause.is_empty() || reason == Some("error");
+                let transient = has_error || reason == Some("error");
                 let message = format!("response ended early{shown}{cause}");
                 return Err(failed(self.error(message, transient)));
             }

@@ -521,6 +521,52 @@ fn endpoint_refusal_is_shown() {
 }
 
 #[test]
+fn endpoint_finish_content_filter_with_a_refusal_is_not_transient() {
+    let fake = server(|_| {
+        reply_body(json!({
+            "message": {"content": null, "refusal": "no"},
+            "finish_reason": "content_filter",
+        }))
+    });
+    assert_eq!(
+        llm_err(complete(&fake).unwrap_err()),
+        (
+            "response ended early (finish_reason content_filter): no".to_string(),
+            false
+        )
+    );
+}
+
+#[test]
+fn endpoint_refusal_beside_text_is_accepted() {
+    let fake = server(|_| {
+        reply_body(json!({
+            "message": {"content": "whole document", "refusal": ""},
+            "finish_reason": "stop",
+        }))
+    });
+    assert_eq!(complete(&fake).unwrap(), "whole document");
+}
+
+#[test]
+fn endpoint_error_without_a_message_beside_text_fails() {
+    let fake = server(|_| {
+        reply_body(json!({
+            "message": {"content": "half a docu"},
+            "finish_reason": "stop",
+            "error": {"code": 502},
+        }))
+    });
+    assert_eq!(
+        llm_err(complete(&fake).unwrap_err()),
+        (
+            "response ended early (finish_reason stop)".to_string(),
+            true
+        )
+    );
+}
+
+#[test]
 fn endpoint_finish_without_a_reason_is_accepted() {
     let fake = server(|_| {
         let body = json!({"choices": [{"message": {"content": "fine"}}]});
