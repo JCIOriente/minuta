@@ -13,6 +13,10 @@ use serde_json::{json, Value};
 mod fake_ollama;
 use fake_ollama::{FakeOllama, Reply, Responder};
 
+#[path = "support/fake_http.rs"]
+mod fake_http;
+use fake_http::{FakeHttp, Route};
+
 fn show(context: Option<u64>, thinking: bool) -> Value {
     let mut info = json!({"general.architecture": "gemma4"});
     if let Some(n) = context {
@@ -223,7 +227,11 @@ fn read_timeout_is_transient() {
     let fake = FakeOllama::start(&["m"], show(None, false), responder);
     let o = Ollama::new(&fake.url(), "m", 1024, &info(None, false))
         .with_timeout(Duration::from_millis(200));
-    let (_, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    let (message, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert_eq!(
+        message,
+        format!("request failed: {}/api/chat: timeout: per read", fake.url())
+    );
     assert!(transient);
 }
 
@@ -265,6 +273,147 @@ fn interrupt_abandons_hanging_request() {
     assert!(matches!(err, Error::Interrupted), "{err}");
     assert!(start.elapsed() < Duration::from_millis(600));
     setter.join().unwrap();
+}
+
+/// `/api/tags` behind `hops` redirects, then a pulled model.
+fn tags_behind_redirects(hops: usize) -> FakeHttp {
+    let tags = |hop: usize| match hop {
+        0 => "/templates/api/tags".to_string(),
+        n => format!("/templates/hop{n}"),
+    };
+    let mut routes: Vec<Route> = (0..hops)
+        .map(|hop| Route::redirect(&tags(hop), &tags(hop + 1)))
+        .collect();
+    let listed = json!({"models": [{"name": "m"}]}).to_string();
+    routes.push(Route::ok(&tags(hops), listed));
+    routes.push(Route::ok(
+        "/templates/api/show",
+        show(None, false).to_string(),
+    ));
+    FakeHttp::start(routes)
+}
+
+#[test]
+fn check_follows_four_redirects() {
+    let server = tags_behind_redirects(4);
+    assert_eq!(check(&server.base(), "m"), Ok(info(None, false)));
+}
+
+#[test]
+fn check_refuses_a_fifth_redirect() {
+    let server = tags_behind_redirects(5);
+    let base = server.base();
+    assert_eq!(
+        check(&base, "m").unwrap_err().hint,
+        format!("start Ollama (`ollama serve`); too many redirects at {base}")
+    );
+}
+
+#[test]
+fn check_sends_a_path_with_a_space_encoded() {
+    let server = FakeHttp::start(vec![
+        Route::ok(
+            "/a%20b/api/tags",
+            json!({"models": [{"name": "m"}]}).to_string(),
+        ),
+        Route::ok("/a%20b/api/show", show(None, false).to_string()),
+    ]);
+    let url = server.base().replace("/templates", "/a b");
+    assert_eq!(check(&url, "m"), Ok(info(None, false)));
+    assert_eq!(
+        server.requests(),
+        vec!["/a%20b/api/tags", "/a%20b/api/show"]
+    );
+}
+
+#[test]
+fn chat_sends_a_path_with_a_space_encoded() {
+    let fake = FakeOllama::start(&["m"], show(None, false), ok_chat());
+    let url = format!("{}/a b", fake.url());
+    let o = Ollama::new(&url, "m", 1024, &info(None, false));
+    let _ = o.complete("s", "u", &no_interrupt());
+    assert_eq!(fake.requests()[0].path, "/a%20b/api/chat");
+}
+
+/// ureq 3 swaps a port it cannot parse for the scheme's default, so a request would go out.
+const BAD_PORT: &str = "http://127.0.0.1:99999";
+
+#[test]
+fn check_refuses_an_invalid_port() {
+    assert_eq!(
+        check(BAD_PORT, "m").unwrap_err().hint,
+        format!("start Ollama (`ollama serve`); invalid port number at {BAD_PORT}")
+    );
+}
+
+#[test]
+fn chat_refuses_an_invalid_port() {
+    let o = Ollama::new(BAD_PORT, "m", 1024, &info(None, false));
+    let (message, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert_eq!(message, "request failed: invalid port number");
+    assert!(!transient);
+}
+
+#[test]
+fn chat_refuses_a_proxy_scheme() {
+    let fake = FakeOllama::start(&["m"], show(None, false), ok_chat());
+    let url = fake.url().replacen("http://", "socks5://", 1);
+    let o = Ollama::new(&url, "m", 1024, &info(None, false));
+    let (message, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert_eq!(message, "request failed: not an http or https URL");
+    assert!(!transient);
+    assert!(fake.requests().is_empty());
+}
+
+#[test]
+fn check_strips_control_characters_from_a_redirect_error() {
+    let server = FakeHttp::start(vec![Route::redirect(
+        "/templates/api/tags",
+        "/caf\u{e9}\u{9b}x",
+    )]);
+    let base = server.base();
+    assert_eq!(
+        check(&base, "m").unwrap_err().hint,
+        format!(
+            "start Ollama (`ollama serve`); protocol: location header is malformed: /caf\u{e9}x at {base}"
+        )
+    );
+}
+
+#[test]
+fn chat_keeps_a_non_utf8_reply() {
+    let server = FakeHttp::start(vec![Route::ok(
+        "/templates/api/chat",
+        b"{\"message\":{\"content\":\"a\xffb\"},\"done\":true}".to_vec(),
+    )]);
+    let o = Ollama::new(&server.base(), "m", 1024, &info(None, false));
+    assert_eq!(o.complete("s", "u", &no_interrupt()).unwrap(), "a\u{fffd}b");
+}
+
+#[test]
+fn error_body_that_is_not_utf8_is_surfaced() {
+    let server = FakeHttp::start(vec![Route::status(
+        "/templates/api/chat",
+        400,
+        b"bad\xffbody".to_vec(),
+    )]);
+    let o = Ollama::new(&server.base(), "m", 1024, &info(None, false));
+    let (message, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert_eq!(message, "HTTP 400: bad\u{fffd}body");
+    assert!(!transient);
+}
+
+#[test]
+fn chat_answered_with_a_307_is_not_transient() {
+    let responder: Responder = Arc::new(|_| Reply::Redirect("/elsewhere".into()));
+    let fake = FakeOllama::start(&["m"], show(None, false), responder);
+    let o = Ollama::new(&fake.url(), "m", 1024, &info(None, false));
+    let (message, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert_eq!(
+        message,
+        format!("request failed: {}/api/chat: redirect failed", fake.url())
+    );
+    assert!(!transient);
 }
 
 #[test]

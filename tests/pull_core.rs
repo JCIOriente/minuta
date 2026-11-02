@@ -403,6 +403,27 @@ fn fetch_does_not_follow_redirects() {
     assert_eq!(server.requests(), vec!["/templates/alpha.md"]);
 }
 
+#[test]
+fn fetch_sends_a_non_ascii_path_encoded() {
+    let a = entry("alpha", "x");
+    let server = FakeHttp::start(vec![Route::ok("/caf%C3%A9/alpha.md", "x")]);
+    let base = server.base().replace("/templates", "/caf\u{e9}");
+    assert_eq!(
+        fetch_file(&Origin::new(&base).unwrap(), &a).unwrap(),
+        b"x".to_vec()
+    );
+}
+
+#[test]
+fn fetch_refuses_an_invalid_port() {
+    let a = entry("alpha", "x");
+    let base = "http://127.0.0.1:99999";
+    assert_eq!(
+        err_text(fetch_file(&Origin::new(base).unwrap(), &a)),
+        format!("I/O error: download of {base}/alpha.md failed: invalid port number")
+    );
+}
+
 // ---- manifest on disk ----
 
 #[test]

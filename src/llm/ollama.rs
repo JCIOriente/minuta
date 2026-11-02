@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use super::http::{self, base, describe, excerpt, read_json};
+use super::http::{self, base, describe, excerpt, read_json, read_text, Response};
 use super::Backend;
 use crate::error::{Error, Missing, Result};
 
@@ -22,7 +22,7 @@ pub struct OllamaInfo {
 /// Verifies the server is reachable and `model` is pulled, then reads its limits.
 pub fn check(url: &str, model: &str) -> std::result::Result<OllamaInfo, Missing> {
     let base = base(url);
-    let agent = http::agent(CHECK_TIMEOUT).build();
+    let agent = http::agent(CHECK_TIMEOUT).build().new_agent();
     let server_down = |why: String| Missing {
         name: "ollama".into(),
         hint: format!("start Ollama (`ollama serve`); {why} at {base}"),
@@ -32,8 +32,10 @@ pub fn check(url: &str, model: &str) -> std::result::Result<OllamaInfo, Missing>
         hint: why,
     };
 
+    let target = http::request_url(base).map_err(server_down)?;
+    let target = http::base(&target);
     let tags = agent
-        .get(&format!("{base}/api/tags"))
+        .get(&format!("{target}/api/tags"))
         .call()
         .map_err(|e| server_down(describe(&e)))?;
     let tags = read_json(tags)
@@ -53,9 +55,9 @@ pub fn check(url: &str, model: &str) -> std::result::Result<OllamaInfo, Missing>
     }
 
     let shown = agent
-        .post(&format!("{base}/api/show"))
-        .set("Content-Type", "application/json")
-        .send_string(&json!({ "model": model }).to_string())
+        .post(&format!("{target}/api/show"))
+        .header("Content-Type", "application/json")
+        .send(json!({ "model": model }).to_string())
         .map_err(|e| model_problem(format!("ollama show {model} failed: {}", describe(&e))))?;
     let shown = read_json(shown)
         .map_err(|e| model_problem(format!("unreadable /api/show response ({})", e.message())))?;
@@ -135,17 +137,25 @@ impl Ollama {
 
     /// One blocking round trip; runs on a worker thread.
     fn request(&self, body: Value, structured: bool) -> Result<String> {
+        let url = http::request_url(&format!("{}/api/chat", self.url))
+            .map_err(|e| self.error(format!("request failed: {e}"), false))?;
         let response = http::agent(self.timeout)
             .build()
-            .post(&format!("{}/api/chat", self.url))
-            .set("Content-Type", "application/json")
-            .send_string(&body.to_string());
+            .new_agent()
+            .post(&url)
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .header("Content-Type", "application/json")
+            .send(body.to_string());
         let response = match response {
+            Ok(r) if r.status().as_u16() >= 400 => {
+                return Err(self.status_error(r.status().as_u16(), r, structured))
+            }
             Ok(r) => r,
-            Err(ureq::Error::Status(code, r)) => return Err(self.status_error(code, r, structured)),
-            Err(ureq::Error::Transport(t)) => {
-                let transient = http::transport_is_transient(&t);
-                return Err(self.error(format!("request failed: {t}"), transient));
+            Err(e) => {
+                let transient = http::is_transient(&e);
+                return Err(self.error(format!("request failed: {url}: {e}"), transient));
             }
         };
         let parsed = read_json(response).map_err(|e| {
@@ -166,8 +176,8 @@ impl Ollama {
             .ok_or_else(|| self.error("response has no message content".into(), false))
     }
 
-    fn status_error(&self, code: u16, response: ureq::Response, structured: bool) -> Error {
-        let detail = match response.into_string() {
+    fn status_error(&self, code: u16, mut response: Response, structured: bool) -> Error {
+        let detail = match read_text(&mut response) {
             Ok(text) => {
                 let from_json = serde_json::from_str::<Value>(&text)
                     .ok()

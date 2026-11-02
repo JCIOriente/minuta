@@ -124,6 +124,14 @@ fn fingerprint_is_stable_and_separates_parts() {
 }
 
 #[test]
+fn fingerprint_matches_known_vector() {
+    assert_eq!(
+        fingerprint(&[b"ab", b"c"]),
+        "43ee655579de01ca739b3f95c1c2d3f46d353b2c0df818064ea594506cdb2617"
+    );
+}
+
+#[test]
 fn write_atomic_failure_leaves_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let fresh = dir.path().join("audio.wav");
@@ -724,6 +732,17 @@ fn step_fingerprint_covers_params_sources_and_previous() {
     assert_ne!(
         base,
         step_fingerprint(&Fake::<3, 0>, &other_ctx, Some("prev"))
+    );
+}
+
+/// Longer than one read, so every chunk has to reach the hash.
+#[test]
+fn source_hash_matches_known_vector() {
+    let (_root, _out, source) = setup();
+    fs::write(&source, vec![b'a'; 200 * 1024]).unwrap();
+    assert_eq!(
+        source_record(&source, None).unwrap().hash,
+        "4b4f0f46ac02d177dea0ab36a66a657840e2fb98b20bb27a688db4d8ea9cd22c"
     );
 }
 

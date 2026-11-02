@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use crate::llm::http::MAX_REDIRECTS;
 use directories::BaseDirs;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
@@ -210,20 +211,23 @@ fn download(
     expected_size: u64,
     on_bytes: &mut dyn FnMut(u64),
 ) -> Result<String> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(CONNECT_TIMEOUT)
-        .timeout_read(READ_TIMEOUT)
-        .build();
+    let agent = ureq::Agent::config_builder()
+        .proxy(None)
+        .max_redirects(MAX_REDIRECTS)
+        .timeout_connect(Some(CONNECT_TIMEOUT))
+        .timeout_per_read(Some(READ_TIMEOUT))
+        .build()
+        .new_agent();
     let response = agent.get(url).call().map_err(|e| {
         let reason = match &e {
-            ureq::Error::Status(code, _) => format!("HTTP status {code}"),
-            ureq::Error::Transport(_) => e.to_string(),
+            ureq::Error::StatusCode(code) => format!("HTTP status {code}"),
+            other => other.to_string(),
         };
         Error::Io(std::io::Error::other(format!(
             "download of {url} failed: {reason}"
         )))
     })?;
-    let mut reader = response.into_reader().take(expected_size + 1);
+    let mut reader = response.into_body().into_reader().take(expected_size + 1);
     let mut out = File::create(part)?;
     let mut hasher = Sha256::new();
     let mut total = 0u64;

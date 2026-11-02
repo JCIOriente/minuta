@@ -551,8 +551,7 @@ fn endpoint_host(name: &str, url: &str) -> Result<String> {
         )));
     }
     let not_a_url = || Error::Config(format!("endpoints.{name}.url is not an http or https URL"));
-    let parsed = ureq::get(url).request_url().map_err(|_| not_a_url())?;
-    let parsed = parsed.as_url();
+    let parsed = url::Url::parse(url).map_err(|_| not_a_url())?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err(not_a_url());
     }

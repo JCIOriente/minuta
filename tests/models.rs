@@ -7,6 +7,10 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+#[path = "support/fake_http.rs"]
+mod fake_http;
+use fake_http::{FakeHttp, Route};
+
 const BODY: &[u8] = b"pretend these are model weights";
 
 fn sha(bytes: &[u8]) -> String {
@@ -119,6 +123,85 @@ fn good_download_renamed() {
         std::fs::read(dir.path().join("ggml-tiny.bin")).unwrap(),
         BODY
     );
+}
+
+#[test]
+fn download_follows_redirects() {
+    let server = FakeHttp::start(vec![
+        Route::redirect("/templates/ggml-tiny.bin", "/templates/cdn.bin"),
+        Route::ok("/templates/cdn.bin", BODY),
+    ]);
+    let base = server.base();
+    let dir = tempfile::tempdir().unwrap();
+    let good = sha(BODY);
+    let spec = ModelSpec {
+        name: "tiny",
+        file: "ggml-tiny.bin",
+        kind: ModelKind::Whisper,
+        base_url: &base,
+        sha256: &good,
+        size: BODY.len() as u64,
+    };
+    assert_eq!(models::pull(&spec, dir.path()).unwrap(), Pulled::Downloaded);
+    assert_eq!(
+        server.requests(),
+        vec!["/templates/ggml-tiny.bin", "/templates/cdn.bin"]
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("ggml-tiny.bin")).unwrap(),
+        BODY
+    );
+}
+
+/// `hops` redirects in a row, ending at the file.
+fn redirect_chain(hops: usize) -> Vec<Route> {
+    let mut routes: Vec<Route> = (0..hops)
+        .map(|hop| {
+            Route::redirect(
+                &format!("/templates/hop{hop}"),
+                &format!("/templates/hop{}", hop + 1),
+            )
+        })
+        .collect();
+    routes.push(Route::ok(&format!("/templates/hop{hops}"), BODY));
+    routes
+}
+
+fn pull_hop0(server: &FakeHttp, dir: &Path) -> minuta::error::Result<Pulled> {
+    let base = server.base();
+    let good = sha(BODY);
+    let spec = ModelSpec {
+        name: "tiny",
+        file: "hop0",
+        kind: ModelKind::Whisper,
+        base_url: &base,
+        sha256: &good,
+        size: BODY.len() as u64,
+    };
+    models::pull(&spec, dir)
+}
+
+#[test]
+fn download_follows_four_redirects() {
+    let server = FakeHttp::start(redirect_chain(4));
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(pull_hop0(&server, dir.path()).unwrap(), Pulled::Downloaded);
+    assert_eq!(server.requests().len(), 5);
+}
+
+#[test]
+fn download_refuses_a_fifth_redirect() {
+    let server = FakeHttp::start(redirect_chain(5));
+    let dir = tempfile::tempdir().unwrap();
+    let err = pull_hop0(&server, dir.path()).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "I/O error: download of {}/hop0 failed: too many redirects",
+            server.base()
+        )
+    );
+    assert_eq!(server.requests().len(), 5);
 }
 
 #[test]

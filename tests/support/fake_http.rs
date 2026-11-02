@@ -2,7 +2,7 @@
 //! one thread per connection. Answers GET for the routes given to `start`, 404 for the rest.
 #![allow(dead_code)] // Each test crate uses a different subset of the helpers.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -108,13 +108,21 @@ fn handle(
         .nth(1)
         .unwrap_or_default()
         .to_string();
+    let mut body_len = 0;
     loop {
         let mut header = String::new();
         reader.read_line(&mut header)?;
         if header.trim_end().is_empty() {
             break;
         }
+        if let Some((name, value)) = header.split_once(':') {
+            if name.eq_ignore_ascii_case("content-length") {
+                body_len = value.trim().parse().unwrap_or(0);
+            }
+        }
     }
+    // Closing with unread bytes would reset the connection before the client reads the reply.
+    std::io::copy(&mut reader.by_ref().take(body_len), &mut std::io::sink())?;
     requests.lock().expect("requests mutex").push(path.clone());
     let mut stream = stream;
     let route = routes.iter().find(|r| r.path == path);

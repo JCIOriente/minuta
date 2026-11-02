@@ -45,7 +45,7 @@ minuta's own bookkeeping is in a hidden `.minuta/` folder
 ## Install
 
 minuta runs on macOS and Linux. Install it from [crates.io](https://crates.io/crates/minuta)
-with Cargo. You need Rust 1.80 or newer, which you can get from
+with Cargo. You need Rust 1.88 or newer, which you can get from
 [rustup.rs](https://rustup.rs).
 
 ```sh

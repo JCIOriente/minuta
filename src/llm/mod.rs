@@ -13,7 +13,7 @@ pub mod codex;
 pub mod endpoint;
 #[doc(hidden)] // Not cfg(test): integration tests in tests/ need it.
 pub mod fake;
-mod http;
+pub(crate) mod http;
 pub mod ollama;
 mod subprocess;
 
