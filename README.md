@@ -8,7 +8,8 @@ post.
 
 ```console
 $ minuta run standup.mp4 -t summary -t youtube
-minuta-out/standup
+.../minuta-out/standup
+
 $ ls minuta-out/standup
 assets  captions.srt  summary.md  transcript.txt  youtube.md
 ```
@@ -67,8 +68,10 @@ recording, and put quotes around a path with spaces.
 
    You get `transcript.txt` and `captions.srt` in `minuta-out/meeting/`.
 
-3. **Generate a document.** This uses the backend you set up in the installation
-   guide. The default is Ollama with `gemma4:26b`.
+3. **Generate a document.** This uses your default backend, Ollama with
+   `gemma4:26b` unless you changed it. For another backend, add its id, for
+   example `--llm claude`.
+
 
    ```sh
    minuta run meeting.mp4 -t summary

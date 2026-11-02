@@ -16,6 +16,9 @@ Choose your system and follow its steps from top to bottom. Then
 
 ## 1. Install minuta and its tools
 
+In every system, `--locked` builds minuta with the dependency versions it was
+tested with.
+
 ### macOS
 
 1. Install [Homebrew](https://brew.sh) if you do not have it.
@@ -48,7 +51,7 @@ These commands are for Debian and Ubuntu. On another distribution, see
 
    ```sh
    sudo apt update
-   sudo apt install ffmpeg git cmake build-essential
+   sudo apt install ffmpeg curl git cmake build-essential
    ```
 
 2. Install Rust. Follow the prompts:
@@ -109,7 +112,8 @@ built into Windows.
 3. Inside Ubuntu, follow the [Linux steps](#linux).
 
 Run every minuta command inside Ubuntu. After you finish sections 2 to 4 of this
-guide, you can reach your recordings under `/mnt`, with your own user name:
+guide, you can reach your recordings under `/mnt`. Replace `<your-name>` with your
+Windows user name:
 
 ```sh
 cd /mnt/c/Users/<your-name>/Videos
@@ -138,19 +142,18 @@ minuta models pull base    # download one
 | `medium` | 1.4 GiB | High accuracy |
 | `large-v3` | 2.9 GiB | Best accuracy, slowest |
 
-Then make it the default, so you do not have to pass `--model` on every run. Run
-`minuta config init` to create the config file, open the path it prints, and set:
+Then make it the default, so you do not have to pass `--model` on every run. Run `minuta config init` to create the config file and open the path it prints.
+Under the `[whisper]` section that is already there, replace `# model = "small"`
+with:
 
 ```toml
-[whisper]
 model = "base"
 ```
 
 You can also use a whisper.cpp model you already have. Set `model` to the file's
 path instead of a catalog name.
 
-Every TOML snippet in this guide goes in that same file. If its section is already
-there, edit that section instead of adding it again.
+Every TOML snippet in this guide goes in that same file. A section can appear only once, so if it is already there, edit it instead of adding it again.
 
 ### Optional: voice activity detection
 
@@ -260,7 +263,8 @@ transcript is sent to OpenAI, and minuta prints a notice each time.
 ### OpenAI-compatible servers
 
 Name the server in the config file, then use `<endpoint>:<model>` as the
-backend. `minuta config init` writes a commented example. See
+backend, with `--llm` or as `default` under `[llm]`. `minuta config init` writes a
+commented example. See
 [every endpoint key](templates.md#openai-compatible-servers).
 
 #### LM Studio

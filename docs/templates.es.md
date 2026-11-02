@@ -64,7 +64,9 @@ minuta will download from:
   https://raw.githubusercontent.com/JCIOriente/minuta/main/templates/
   instagram.md  (new)
   youtube.md    (update available)
-into templates
+
+into .../templates
+
 Continue? [y/N] y
 instagram.md  written
 youtube.md    updated

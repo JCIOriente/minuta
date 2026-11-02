@@ -8,7 +8,8 @@ YouTube o una publicación de LinkedIn.
 
 ```console
 $ minuta run standup.mp4 -t summary -t youtube
-minuta-out/standup
+.../minuta-out/standup
+
 $ ls minuta-out/standup
 assets  captions.srt  summary.md  transcript.txt  youtube.md
 ```
@@ -67,8 +68,10 @@ tu grabación, y pon entre comillas cualquier ruta con espacios.
 
    Obtienes `transcript.txt` y `captions.srt` en `minuta-out/meeting/`.
 
-3. **Genera un documento.** Esto usa el backend que configuraste en la guía de
-   instalación. El predeterminado es Ollama con `gemma4:26b`.
+3. **Genera un documento.** Esto usa tu backend predeterminado, Ollama con
+   `gemma4:26b` si no lo cambiaste. Para usar otro backend, agrega su ID, por
+   ejemplo `--llm claude`.
+
 
    ```sh
    minuta run meeting.mp4 -t summary

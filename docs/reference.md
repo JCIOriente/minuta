@@ -75,10 +75,10 @@ terminal. Pass `--quiet` to hide it.
 Models that an older version saved in `~/.cache/minuta/models/` are not used any
 more, so `models pull` downloads them again. You can delete that folder.
 
-`--model` and `whisper.model` take a catalog name or the path to any whisper.cpp
+`--model`, `whisper.model` and `whisper.vad_model` take a catalog name or the path to any whisper.cpp
 `ggml` model file. `minuta models pull` takes catalog names only.
 
-**Voice activity detection** stops whisper from inventing lines during silences.
+**Voice activity detection** reduces the lines whisper invents during silences.
 It is off until you [configure a VAD model](install.md#optional-voice-activity-detection).
 
 ## The job folder

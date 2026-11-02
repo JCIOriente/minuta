@@ -16,6 +16,9 @@ Elige tu sistema y sigue sus pasos de arriba abajo. Luego
 
 ## 1. Instala minuta y sus herramientas
 
+En todos los sistemas, `--locked` compila minuta con las versiones de dependencias
+con las que se probó.
+
 ### macOS
 
 1. Instala [Homebrew](https://brew.sh) si no lo tienes.
@@ -48,7 +51,7 @@ Estos comandos son para Debian y Ubuntu. En otra distribución, consulta
 
    ```sh
    sudo apt update
-   sudo apt install ffmpeg git cmake build-essential
+   sudo apt install ffmpeg curl git cmake build-essential
    ```
 
 2. Instala Rust. Sigue las instrucciones en pantalla:
@@ -136,19 +139,19 @@ minuta models pull base    # descarga uno
 | `large-v3` | 2.9 GiB | La mejor precisión, el más lento |
 
 Luego déjalo como predeterminado, para no tener que pasar `--model` en cada
-ejecución. Ejecuta `minuta config init` para crear el archivo de configuración,
-abre el archivo en la ruta que muestra y configura lo siguiente:
+ejecución. Ejecuta `minuta config init` para crear el archivo de configuración y abre la ruta
+que muestra. En la sección `[whisper]` que ya está ahí, reemplaza `# model = "small"`
+por:
 
 ```toml
-[whisper]
 model = "base"
 ```
 
 También puedes usar un modelo de whisper.cpp que ya tengas. Define `model` con la
 ruta del archivo en lugar de un nombre del catálogo.
 
-Cada fragmento de TOML de esta guía va en ese mismo archivo. Si su sección ya
-existe, edita esa sección en lugar de agregarla de nuevo.
+Cada fragmento de TOML de esta guía va en ese mismo archivo. Una sección solo puede
+aparecer una vez: si ya existe, edítala en lugar de agregarla de nuevo.
 
 ### Opcional: detección de actividad de voz
 
@@ -260,8 +263,8 @@ La transcripción se envía a OpenAI, y minuta muestra un aviso cada vez.
 ### Servidores compatibles con OpenAI
 
 Dale un nombre al servidor en el archivo de configuración y luego usa
-`<endpoint>:<model>` como backend. `minuta config init` escribe un ejemplo
-comentado. Consulta
+`<endpoint>:<model>` como backend, con `--llm` o como `default` en `[llm]`.
+`minuta config init` escribe un ejemplo comentado. Consulta
 [todas las claves de un endpoint](templates.es.md#servidores-compatibles-con-openai).
 
 #### LM Studio

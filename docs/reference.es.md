@@ -75,12 +75,12 @@ velocidad y el tiempo restante. Pasa `--quiet` para ocultarla.
 Los modelos que una versión anterior guardó en `~/.cache/minuta/models/` ya no se
 usan, así que `models pull` los descarga de nuevo. Puedes borrar esa carpeta.
 
-`--model` y `whisper.model` aceptan un nombre del catálogo o la ruta a cualquier
+`--model`, `whisper.model` y `whisper.vad_model` aceptan un nombre del catálogo o la ruta a cualquier
 archivo de modelo `ggml` de whisper.cpp. `minuta models pull` acepta solo nombres
 del catálogo.
 
-**La detección de actividad de voz** evita que whisper invente líneas durante los
-silencios. Está desactivada hasta que
+**La detección de actividad de voz** reduce las líneas que whisper inventa durante
+los silencios. Está desactivada hasta que
 [configures un modelo de VAD](install.es.md#opcional-detección-de-actividad-de-voz).
 
 ## La carpeta del trabajo
