@@ -1323,17 +1323,22 @@ fn endpoint_config_requires_url() {
 fn endpoint_config_rejects_a_value_that_is_not_a_url() {
     assert_eq!(
         config_err(with_endpoints("[endpoints.a]\nurl = \"nope\"\n")),
-        "endpoints.a.url is \"nope\": not an http or https URL"
+        "endpoints.a.url is not an http or https URL"
     );
 }
 
 #[test]
 fn endpoint_config_rejects_other_schemes() {
-    for url in ["ftp://example.com/v1", "file:///tmp/x", "unix:/tmp/x"] {
+    for url in [
+        "ftp://example.com/v1?key=s3cret",
+        "file:///tmp/x",
+        "unix:/tmp/x",
+        "localhost:1234/v1?key=s3cret",
+    ] {
         let text = format!("[endpoints.a]\nurl = \"{url}\"\n");
         assert_eq!(
             config_err(with_endpoints(&text)),
-            format!("endpoints.a.url is \"{url}\": not an http or https URL"),
+            "endpoints.a.url is not an http or https URL",
         );
     }
 }
@@ -1360,6 +1365,27 @@ fn endpoint_config_rejects_a_query_or_fragment_without_echoing_it() {
             config_err(with_endpoints(&text)),
             "endpoints.a.url must not hold a query or fragment; use endpoints.a.api_key_env \
              for a key",
+        );
+    }
+}
+
+#[test]
+fn endpoint_config_accepts_variable_names() {
+    for name in ["OPENROUTER_API_KEY", "_key", "k3y"] {
+        let text =
+            format!("[endpoints.a]\nurl = \"http://127.0.0.1:1/v1\"\napi_key_env = \"{name}\"\n");
+        with_endpoints(&text).unwrap();
+    }
+}
+
+#[test]
+fn endpoint_config_rejects_a_key_in_api_key_env_without_echoing_it() {
+    for value in ["sk-or-s3cret", "1abc", "a b", "a$b"] {
+        let text =
+            format!("[endpoints.a]\nurl = \"http://127.0.0.1:1/v1\"\napi_key_env = \"{value}\"\n");
+        assert_eq!(
+            config_err(with_endpoints(&text)),
+            "endpoints.a.api_key_env must be the name of an environment variable, not the key",
         );
     }
 }

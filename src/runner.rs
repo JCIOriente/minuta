@@ -436,8 +436,7 @@ fn locate_bin(
 pub fn llm_status(config: &Config) -> String {
     let id = match config.llm_default.value.parse::<BackendId>() {
         Ok(id) => id,
-        Err(Error::Usage(message)) => return format!("invalid: {message}"),
-        Err(e) => return format!("invalid: {e}"),
+        Err(e) => return invalid_status(e),
     };
     match &id {
         BackendId::Ollama { model } => match ollama::check(&config.ollama_url.value, model) {
@@ -463,9 +462,15 @@ pub fn llm_status(config: &Config) -> String {
                 Err(Problem::ModelMissing(m)) => format!("model missing: {}", m.hint),
                 Err(Problem::Unreachable(m)) => format!("not reachable: {}", m.hint),
             },
-            Err(Error::Usage(message)) => format!("invalid: {message}"),
-            Err(e) => format!("invalid: {e}"),
+            Err(e) => invalid_status(e),
         },
+    }
+}
+
+fn invalid_status(error: Error) -> String {
+    match error {
+        Error::Usage(message) => format!("invalid: {message}"),
+        other => format!("invalid: {other}"),
     }
 }
 

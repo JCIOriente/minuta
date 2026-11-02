@@ -505,6 +505,12 @@ fn endpoint(name: &str, table: EndpointTable) -> Result<Endpoint> {
     let url = pick_opt(None, None, table.url)
         .ok_or_else(|| Error::Config(format!("endpoints.{name}.url is required")))?;
     let host = endpoint_host(name, &url.value)?;
+    let api_key_env = pick_opt(None, None, table.api_key_env);
+    if api_key_env.as_ref().is_some_and(|s| !is_env_name(&s.value)) {
+        return Err(Error::Config(format!(
+            "endpoints.{name}.api_key_env must be the name of an environment variable, not the key"
+        )));
+    }
     let context_tokens = pick(
         None,
         None,
@@ -525,9 +531,15 @@ fn endpoint(name: &str, table: EndpointTable) -> Result<Endpoint> {
         url,
         context_tokens,
         timeout_secs,
-        api_key_env: pick_opt(None, None, table.api_key_env),
+        api_key_env,
         host,
     })
+}
+
+/// Keeps a key pasted into `api_key_env` out of `config show` and `doctor`.
+fn is_env_name(name: &str) -> bool {
+    !name.starts_with(|c: char| c.is_ascii_digit())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// The host of an endpoint URL. Credentials, and a query or fragment that could hold them, are
@@ -538,11 +550,7 @@ fn endpoint_host(name: &str, url: &str) -> Result<String> {
             "endpoints.{name}.url must not hold credentials; use endpoints.{name}.api_key_env"
         )));
     }
-    let not_a_url = || {
-        Error::Config(format!(
-            "endpoints.{name}.url is {url:?}: not an http or https URL"
-        ))
-    };
+    let not_a_url = || Error::Config(format!("endpoints.{name}.url is not an http or https URL"));
     let parsed = ureq::get(url).request_url().map_err(|_| not_a_url())?;
     let parsed = parsed.as_url();
     if !matches!(parsed.scheme(), "http" | "https") {

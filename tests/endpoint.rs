@@ -25,7 +25,12 @@ fn model_list(ids: &[&str]) -> Reply {
 
 fn reply_with(content: Value, finish_reason: &str) -> Reply {
     let body = json!({"choices": [{
-        "message": {"role": "assistant", "content": content, "reasoning": "secret thoughts"},
+        "message": {
+            "role": "assistant",
+            "content": content,
+            "reasoning": "secret thoughts",
+            "reasoning_content": "secret thoughts",
+        },
         "finish_reason": finish_reason,
     }]});
     Reply::Status(200, body.to_string())
@@ -437,6 +442,84 @@ fn endpoint_empty_content_shows_the_cause_on_the_choice() {
     );
 }
 
+fn reply_body(choice: Value) -> Reply {
+    Reply::Status(200, json!({ "choices": [choice] }).to_string())
+}
+
+#[test]
+fn endpoint_error_beside_text_without_a_reason_fails() {
+    let fake = server(|_| {
+        reply_body(json!({
+            "message": {"content": "half a docu"},
+            "finish_reason": null,
+            "error": {"message": "provider down"},
+        }))
+    });
+    assert_eq!(
+        llm_err(complete(&fake).unwrap_err()),
+        ("response ended early: provider down".to_string(), true)
+    );
+}
+
+#[test]
+fn endpoint_error_beside_text_with_a_normal_stop_fails() {
+    let fake = server(|_| {
+        reply_body(json!({
+            "message": {"content": "half a docu"},
+            "finish_reason": "stop",
+            "error": "provider down",
+        }))
+    });
+    assert_eq!(
+        llm_err(complete(&fake).unwrap_err()),
+        (
+            "response ended early (finish_reason stop): provider down".to_string(),
+            true
+        )
+    );
+}
+
+#[test]
+fn endpoint_top_level_error_beside_text_fails() {
+    let fake = server(|_| {
+        let body = json!({
+            "choices": [{"message": {"content": "half a docu"}, "finish_reason": "stop"}],
+            "error": {"message": "provider down"},
+        });
+        Reply::Status(200, body.to_string())
+    });
+    assert_eq!(
+        llm_err(complete(&fake).unwrap_err()).0,
+        "response ended early (finish_reason stop): provider down"
+    );
+}
+
+#[test]
+fn endpoint_finish_reason_that_is_not_a_string_is_unknown() {
+    let fake = server(|_| reply_body(json!({"message": {"content": "half"}, "finish_reason": 3})));
+    assert_eq!(
+        llm_err(complete(&fake).unwrap_err()),
+        ("response ended early (finish_reason 3)".to_string(), false)
+    );
+}
+
+#[test]
+fn endpoint_refusal_is_shown() {
+    let fake = server(|_| {
+        reply_body(json!({
+            "message": {"content": null, "refusal": "I can't help with that"},
+            "finish_reason": "stop",
+        }))
+    });
+    assert_eq!(
+        llm_err(complete(&fake).unwrap_err()),
+        (
+            "response has no message content: I can't help with that".to_string(),
+            true
+        )
+    );
+}
+
 #[test]
 fn endpoint_finish_without_a_reason_is_accepted() {
     let fake = server(|_| {
@@ -538,8 +621,9 @@ fn endpoint_check_redacts_a_key_that_json_escapes() {
 #[test]
 fn endpoint_bad_status_line_drops_control_characters() {
     let fake = server(|_| Reply::Raw("HTTP/1.1 \u{1b}c1 OK\r\n\r\n".into()));
-    let (message, _) = llm_err(complete(&fake).unwrap_err());
+    let (message, transient) = llm_err(complete(&fake).unwrap_err());
     assert!(!message.chars().any(char::is_control), "{message:?}");
+    assert!(!transient);
 }
 
 #[test]

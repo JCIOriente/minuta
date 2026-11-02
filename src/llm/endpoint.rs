@@ -274,10 +274,20 @@ impl OpenAiCompatible {
         let choice = &parsed["choices"][0];
         let cause = error_text(choice)
             .or(error_text(&parsed))
+            .or(choice["message"]["refusal"].as_str())
             .map(|text| format!(": {}", self.scrub(text)))
             .unwrap_or_default();
-        match choice["finish_reason"].as_str() {
-            None | Some("stop" | "eos" | "eos_token" | "stop_sequence" | "end_turn") => {}
+        let content = choice["message"]["content"]
+            .as_str()
+            .filter(|content| !content.trim().is_empty());
+        let reason = match &choice["finish_reason"] {
+            Value::Null => None,
+            Value::String(reason) => Some(reason.clone()),
+            other => Some(other.to_string()),
+        };
+        let clean = cause.is_empty() || content.is_none();
+        match reason.as_deref() {
+            None | Some("stop" | "eos" | "eos_token" | "stop_sequence" | "end_turn") if clean => {}
             Some("length") => {
                 let message = format!(
                     "response cut off at the context limit; give the model a larger context on \
@@ -286,20 +296,19 @@ impl OpenAiCompatible {
                 );
                 return Err(failed(self.error(message, false)));
             }
-            // Only a normal stop counts: partial text must not pass for a finished document.
-            Some(reason) => {
-                let shown = self.scrub(reason);
-                let message = format!("response ended early (finish_reason {shown}){cause}");
-                return Err(failed(self.error(message, reason == "error")));
+            // Only a clean stop counts: partial text must not pass for a finished document.
+            reason => {
+                let shown = reason
+                    .map(|reason| format!(" (finish_reason {})", self.scrub(reason)))
+                    .unwrap_or_default();
+                let transient = !cause.is_empty() || reason == Some("error");
+                let message = format!("response ended early{shown}{cause}");
+                return Err(failed(self.error(message, transient)));
             }
         }
-        match choice["message"]["content"].as_str() {
-            Some(content) if !content.trim().is_empty() => Ok(content.to_string()),
-            _ => {
-                let message = format!("response has no message content{cause}");
-                Err(failed(self.error(message, true)))
-            }
-        }
+        content.map(str::to_string).ok_or_else(|| {
+            failed(self.error(format!("response has no message content{cause}"), true))
+        })
     }
 
     fn scrub(&self, text: &str) -> String {

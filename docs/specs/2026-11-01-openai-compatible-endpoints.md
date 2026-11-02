@@ -86,6 +86,7 @@ Invariants:
 - An endpoint name matches `[a-z][a-z0-9_-]*` and is not `ollama`, `claude` or `codex`.
 - `url` parses, uses `http` or `https`, and holds no credentials (no `@`), query or fragment.
 - `context_tokens` and `timeout_secs` are at least 1.
+- `api_key_env` is a valid variable name, which catches most keys pasted there by mistake.
 
 ## Interfaces
 **Backend id grammar** (`src/llm/mod.rs`): `ollama:<model>`, `claude`, `claude:<model>`, `codex`,
@@ -142,11 +143,12 @@ Behavior marked *probed* was seen on 2026-11-01 against Ollama (`/v1`) and LM St
 - **Cut off:** `finish_reason: "length"` is a non-transient error telling the user to give the
   model a larger context on the server (*probed* on both).
 - **Ended early:** only `stop`, `eos`, `eos_token`, `stop_sequence`, `end_turn` or no reason at all
-  count as finished, so partial text is never saved as a document. `error` is a transient error,
-  and any other reason a non-transient one. The message carries the server's cause, if any.
+  count as finished, and only without an `error` object beside the text, so partial text is never
+  saved as a document. `error`, or an `error` object, is a transient error, and any other reason a
+  non-transient one. The message carries the server's cause, if any.
 - **Empty reply:** missing or empty `content` with any other finish reason is a transient error.
   It carries the message of an `error` object, top-level or on the choice, which some services
-  send with HTTP 200.
+  send with HTTP 200, or of a `refusal`.
 - **Error bodies:** `{"error": {"message": ...}}` (Ollama, OpenAI) and `{"error": "..."}` (LM
   Studio) are both read, and anything else is shown as a sanitized excerpt.
 - **Status mapping:** 429 and 5xx are transient; every other status is not. 401 and 403 hint at

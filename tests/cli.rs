@@ -2025,6 +2025,27 @@ fn endpoint_key_empty_is_reported_with_hint() {
 }
 
 #[test]
+fn endpoint_key_that_is_not_utf8_is_reported_with_hint() {
+    use std::os::unix::ffi::OsStrExt;
+    let env = Env::new();
+    let fake = endpoint_server(&env, "api_key_env = \"BOX_KEY\"\n");
+    let id = format!("box:{ENDPOINT_MODEL}");
+    let mut cmd = env.llm_command(
+        &["run", "clase-4.mp4", "-t", "summary", "--llm", &id],
+        &fake,
+    );
+    cmd.env("BOX_KEY", std::ffi::OsStr::from_bytes(b"\xff"));
+    let out = env.run_cmd(cmd);
+    assert!(!out.status.success());
+    let err = stderr(&out);
+    assert!(
+        err.contains("box: BOX_KEY is set, but holds whitespace or non-ASCII characters"),
+        "{err}"
+    );
+    assert!(fake.requests().is_empty());
+}
+
+#[test]
 fn unknown_endpoint_is_reported_with_toml() {
     let env = Env::new();
     let fake = ollama("unused");
