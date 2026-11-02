@@ -815,6 +815,24 @@ fn endpoint_chat_sends_a_path_with_a_space_encoded() {
 }
 
 #[test]
+fn endpoint_check_refuses_an_invalid_port() {
+    let url = "http://127.0.0.1:99999";
+    assert_eq!(
+        unreachable_hint(check("box", url, None, "m").unwrap_err()),
+        format!("start the server or fix endpoints.box.url; invalid port number at {url}")
+    );
+}
+
+#[test]
+fn endpoint_chat_refuses_an_invalid_port() {
+    let url = "http://127.0.0.1:99999";
+    let backend = OpenAiCompatible::new("box", "m", url, None, 1000, Duration::from_secs(5));
+    let (message, transient) = llm_err(backend.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert_eq!(message, "request failed: invalid port number");
+    assert!(!transient);
+}
+
+#[test]
 fn endpoint_failed_tls_handshake_is_transient() {
     let fake = server(|_| Reply::Status(200, "plain http".into()));
     let url = fake.url().replacen("http://", "https://", 1);

@@ -109,7 +109,8 @@ pub fn check(
             hint: format!("start the server or fix endpoints.{name}.url; {why} at {base}"),
         })
     };
-    let mut request = agent(CHECK_TIMEOUT).get(&http::request_url(&format!("{base}/models")));
+    let target = http::request_url(&format!("{base}/models")).map_err(|e| down(e.to_string()))?;
+    let mut request = agent(CHECK_TIMEOUT).get(&target);
     if let Some(key) = key {
         request = request.header("Authorization", &format!("Bearer {key}"));
     }
@@ -240,11 +241,10 @@ impl OpenAiCompatible {
             status: None,
             error,
         };
+        let url = http::request_url(&format!("{}/chat/completions", self.url))
+            .map_err(|e| failed(self.error(format!("request failed: {e}"), false)))?;
         let mut request = agent(self.timeout)
-            .post(&http::request_url(&format!(
-                "{}/chat/completions",
-                self.url
-            )))
+            .post(&url)
             .config()
             .http_status_as_error(false)
             .build()

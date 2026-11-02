@@ -32,8 +32,10 @@ pub fn check(url: &str, model: &str) -> std::result::Result<OllamaInfo, Missing>
         hint: why,
     };
 
+    let url =
+        http::request_url(&format!("{base}/api/tags")).map_err(|e| server_down(e.to_string()))?;
     let tags = agent
-        .get(&http::request_url(&format!("{base}/api/tags")))
+        .get(&url)
         .call()
         .map_err(|e| server_down(describe(&e)))?;
     let tags = read_json(tags)
@@ -52,8 +54,10 @@ pub fn check(url: &str, model: &str) -> std::result::Result<OllamaInfo, Missing>
         return Err(model_problem(format!("ollama pull {model}")));
     }
 
+    let url = http::request_url(&format!("{base}/api/show"))
+        .map_err(|e| model_problem(format!("ollama show {model} failed: {e}")))?;
     let shown = agent
-        .post(&http::request_url(&format!("{base}/api/show")))
+        .post(&url)
         .header("Content-Type", "application/json")
         .send(json!({ "model": model }).to_string())
         .map_err(|e| model_problem(format!("ollama show {model} failed: {}", describe(&e))))?;
@@ -135,10 +139,12 @@ impl Ollama {
 
     /// One blocking round trip; runs on a worker thread.
     fn request(&self, body: Value, structured: bool) -> Result<String> {
+        let url = http::request_url(&format!("{}/api/chat", self.url))
+            .map_err(|e| self.error(format!("request failed: {e}"), false))?;
         let response = http::agent(self.timeout)
             .build()
             .new_agent()
-            .post(&http::request_url(&format!("{}/api/chat", self.url)))
+            .post(&url)
             .config()
             .http_status_as_error(false)
             .build()

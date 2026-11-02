@@ -28,10 +28,10 @@ pub(super) fn agent(read_timeout: Duration) -> ConfigBuilder<AgentScope> {
 }
 
 /// `url` as ureq can send it. ureq parses into `http::Uri`, which refuses what `url` normalizes,
-/// such as a non-ASCII host or a space in the path. Text `url` cannot parse stays as written and
-/// fails at the request.
-pub(crate) fn request_url(url: &str) -> String {
-    url::Url::parse(url).map_or_else(|_| url.to_string(), String::from)
+/// such as a non-ASCII host or a space in the path. The check must come first: ureq swaps a port
+/// it cannot parse for the scheme's default, and would send the request there.
+pub(crate) fn request_url(url: &str) -> std::result::Result<String, url::ParseError> {
+    url::Url::parse(url).map(String::from)
 }
 
 pub(super) fn base(url: &str) -> &str {
@@ -127,24 +127,41 @@ mod tests {
     #[test]
     fn request_url_encodes_a_non_ascii_host() {
         assert_eq!(
-            request_url("http://b\u{fc}cher.example:8080/v1"),
-            "http://xn--bcher-kva.example:8080/v1"
+            request_url("http://b\u{fc}cher.example:8080/v1").as_deref(),
+            Ok("http://xn--bcher-kva.example:8080/v1")
         );
     }
 
     #[test]
     fn request_url_encodes_a_space_in_the_path() {
-        assert_eq!(request_url("http://host/a b"), "http://host/a%20b");
+        assert_eq!(
+            request_url("http://host/a b").as_deref(),
+            Ok("http://host/a%20b")
+        );
     }
 
     #[test]
     fn request_url_adds_the_missing_slashes() {
-        assert_eq!(request_url("http:host:1/v1"), "http://host:1/v1");
+        assert_eq!(
+            request_url("http:host:1/v1").as_deref(),
+            Ok("http://host:1/v1")
+        );
     }
 
     #[test]
-    fn request_url_keeps_what_it_cannot_parse() {
-        assert_eq!(request_url("no-scheme/x"), "no-scheme/x");
+    fn request_url_refuses_what_it_cannot_parse() {
+        assert_eq!(
+            request_url("no-scheme/x"),
+            Err(url::ParseError::RelativeUrlWithoutBase)
+        );
+    }
+
+    #[test]
+    fn request_url_refuses_an_invalid_port() {
+        assert_eq!(
+            request_url("http://host:abc/v1"),
+            Err(url::ParseError::InvalidPort)
+        );
     }
 
     #[test]

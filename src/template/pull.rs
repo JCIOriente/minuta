@@ -157,7 +157,8 @@ fn get(url: &str, cap: u64) -> Result<Vec<u8>> {
         .build()
         .new_agent();
     let failed = |reason: String| io_other(format!("download of {url} failed: {reason}"));
-    let response = agent.get(&request_url(url)).call().map_err(|e| match &e {
+    let target = request_url(url).map_err(|e| failed(e.to_string()))?;
+    let response = agent.get(&target).call().map_err(|e| match &e {
         ureq::Error::StatusCode(code) => failed(format!("HTTP status {code}")),
         other => failed(other.to_string()),
     })?;

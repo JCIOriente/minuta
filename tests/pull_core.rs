@@ -414,6 +414,16 @@ fn fetch_sends_a_non_ascii_path_encoded() {
     );
 }
 
+#[test]
+fn fetch_refuses_an_invalid_port() {
+    let a = entry("alpha", "x");
+    let base = "http://127.0.0.1:99999";
+    assert_eq!(
+        err_text(fetch_file(&Origin::new(base).unwrap(), &a)),
+        format!("I/O error: download of {base}/alpha.md failed: invalid port number")
+    );
+}
+
 // ---- manifest on disk ----
 
 #[test]

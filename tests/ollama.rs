@@ -331,6 +331,25 @@ fn chat_sends_a_path_with_a_space_encoded() {
     assert_eq!(fake.requests()[0].path, "/a%20b/api/chat");
 }
 
+/// ureq 3 swaps a port it cannot parse for the scheme's default, so a request would go out.
+const BAD_PORT: &str = "http://127.0.0.1:99999";
+
+#[test]
+fn check_refuses_an_invalid_port() {
+    assert_eq!(
+        check(BAD_PORT, "m").unwrap_err().hint,
+        format!("start Ollama (`ollama serve`); invalid port number at {BAD_PORT}")
+    );
+}
+
+#[test]
+fn chat_refuses_an_invalid_port() {
+    let o = Ollama::new(BAD_PORT, "m", 1024, &info(None, false));
+    let (message, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
+    assert_eq!(message, "request failed: invalid port number");
+    assert!(!transient);
+}
+
 #[test]
 fn invalid_url_is_non_transient() {
     let o = Ollama::new("no-scheme", "m", 1024, &info(None, false));
