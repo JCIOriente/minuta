@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+- minuta now needs Rust 1.88 or newer, up from 1.80. All dependencies are on their latest
+  versions.
+- The HTTP client changed, so some error text differs. A connection timeout to an LLM server
+  now covers the TLS handshake too.
+
 ### Fixed
 - The curated `youtube` template in the catalog now fills `chapters` and `hashtags` like the
   built-in one. Before, a pulled copy replaced the built-in and the video description came
