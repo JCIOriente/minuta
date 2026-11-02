@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -18,11 +19,16 @@ struct Tools {
 }
 
 /// ffmpeg and ffprobe from `PATH`, or `None` (with a note) where they are not installed.
+/// Panics instead when `MINUTA_REQUIRE_FFMPEG=1`.
 fn ffmpeg_available() -> Option<Tools> {
     let report = inspect(&ToolPaths::default(), false);
     match (report.ffmpeg, report.ffprobe) {
         (Some(ffmpeg), Some(ffprobe)) => Some(Tools { ffmpeg, ffprobe }),
         _ => {
+            assert!(
+                std::env::var("MINUTA_REQUIRE_FFMPEG").as_deref() != Ok("1"),
+                "MINUTA_REQUIRE_FFMPEG=1 but ffmpeg and ffprobe are not on PATH"
+            );
             eprintln!("skipping: ffmpeg and ffprobe are not on PATH");
             None
         }
@@ -161,6 +167,47 @@ fn probe_params_change_with_tool_version() {
     assert_ne!(
         Probe::new(t.ffprobe).params(&ctx),
         Probe::new(newer).params(&ctx)
+    );
+}
+
+/// Runs `probe_reads_streams` in a child process whose `PATH` is an empty dir. Setting
+/// `PATH` in this process would race with the other test threads, which spawn tools.
+fn probe_test_without_ffmpeg(required: bool) -> Output {
+    let empty = tempfile::tempdir().unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap());
+    child
+        .args(["--exact", "probe_reads_streams", "--nocapture"])
+        .env_clear()
+        .env("PATH", empty.path());
+    if required {
+        child.env("MINUTA_REQUIRE_FFMPEG", "1");
+    }
+    child.output().unwrap()
+}
+
+#[test]
+fn missing_ffmpeg_fails_when_required() {
+    let out = probe_test_without_ffmpeg(true);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr
+            .lines()
+            .any(|l| l == "MINUTA_REQUIRE_FFMPEG=1 but ffmpeg and ffprobe are not on PATH"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn missing_ffmpeg_skips_when_not_required() {
+    let out = probe_test_without_ffmpeg(false);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(
+        stderr
+            .lines()
+            .any(|l| l == "skipping: ffmpeg and ffprobe are not on PATH"),
+        "{stderr}"
     );
 }
 
