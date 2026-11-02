@@ -49,16 +49,8 @@ Primero instala minuta y sus herramientas. Reemplaza `meeting.mp4` por la ruta d
 tu grabación, y pon entre comillas cualquier ruta con espacios.
 
 1. **Descarga un modelo de whisper y déjalo como predeterminado.** `base` es una
-   buena primera opción. Omite este paso si ya lo hiciste en la guía de instalación.
-
-   ```sh
-   minuta models pull base
-   mkdir -p ~/.minuta
-   printf '[whisper]\nmodel = "base"\n' > ~/.minuta/config.toml
-   ```
-
-   Esto reemplaza cualquier archivo de configuración que ya tengas. Si tienes uno,
-   mejor agrega `model = "base"` en su sección `[whisper]`.
+   buena primera opción. Omite este paso si ya lo hiciste en la guía de instalación; si no, sigue
+   [Descarga un modelo de whisper](https://github.com/JCIOriente/minuta/blob/main/docs/install.es.md#2-descarga-un-modelo-de-whisper).
 
 2. **Transcribe una grabación.**
 

@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use minuta::error::{Error, Result};
 use minuta::tools::{
-    inspect, locate_tool, preflight, run, run_capture, Output, Report, RunOpts, ToolInfo,
-    ToolPaths, Toolchain,
+    inspect, install_hint, locate_tool, preflight, run, run_capture, Output, Report, RunOpts,
+    ToolInfo, ToolPaths, Toolchain,
 };
 
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
@@ -644,5 +644,37 @@ fn kill_reaches_grandchild() {
             panic!("grandchild {pid} survived the kill");
         }
         std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+const INSTALL_GUIDE: &str = "https://github.com/JCIOriente/minuta/blob/main/docs/install.md";
+
+#[test]
+fn install_hint_is_a_brew_command_on_macos_and_linux() {
+    for os in ["macos", "linux"] {
+        assert_eq!(install_hint("ffmpeg", os), "brew install ffmpeg", "{os}");
+        assert_eq!(
+            install_hint("ffprobe", os),
+            "brew install ffmpeg (ffprobe ships with ffmpeg)",
+            "{os}"
+        );
+        assert_eq!(
+            install_hint("whisper-cli", os),
+            "brew install whisper.cpp",
+            "{os}"
+        );
+    }
+}
+
+#[test]
+fn install_hint_points_to_the_guide_on_other_systems() {
+    for os in ["windows", "freebsd"] {
+        for tool in ["ffmpeg", "ffprobe", "whisper-cli"] {
+            assert_eq!(
+                install_hint(tool, os),
+                format!("see {INSTALL_GUIDE}"),
+                "{tool} on {os}"
+            );
+        }
     }
 }

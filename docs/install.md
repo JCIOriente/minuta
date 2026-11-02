@@ -16,85 +16,111 @@ Choose your system and follow its steps from top to bottom. Then
 
 ## 1. Install minuta and its tools
 
+Each step needs the one before it, so follow your system's steps from top to
+bottom. If a later command says `brew: command not found` or
+`cargo: command not found`, close the terminal, open a new one and run it again.
+
 In every system, `--locked` builds minuta with the dependency versions it was
 tested with.
 
 ### macOS
 
-1. Install [Homebrew](https://brew.sh) if you do not have it.
-2. Install ffmpeg and whisper.cpp. On Apple Silicon, this whisper build uses the
+1. Install the command line tools, which include the compiler Homebrew needs. A
+   window asks you to confirm. If they are already installed, the command says so:
+
+   ```sh
+   xcode-select --install
+   ```
+
+2. Install [Homebrew](https://brew.sh) if you do not have it. Check it with
+   `brew --version`.
+3. Install ffmpeg and whisper.cpp. On Apple Silicon, this whisper build uses the
    GPU through Metal:
 
    ```sh
-   brew install ffmpeg whisper-cpp
+   brew install ffmpeg whisper.cpp
    ```
 
-3. Install Rust. Follow the prompts:
+   Homebrew also installs the libraries whisper.cpp uses, so the download is
+   larger than one program. On an Intel Mac there is no prebuilt package, so
+   Homebrew compiles it, which takes several minutes.
+
+4. Install Rust. Follow the prompts, then check it with `cargo --version`:
 
    ```sh
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    source "$HOME/.cargo/env"
    ```
 
-4. Install minuta:
+5. Install minuta:
 
    ```sh
    cargo install --locked minuta
    ```
+
+   Check it with `minuta --version`. If the build fails, run `rustup update stable`
+   and try again.
 
 ### Linux
 
 These commands are for Debian and Ubuntu. On another distribution, see
 [other distributions](#other-distributions).
 
-1. Install ffmpeg and the build tools:
+1. Install the tools that Homebrew and Rust need:
 
    ```sh
    sudo apt update
-   sudo apt install ffmpeg curl git cmake build-essential
+   sudo apt install build-essential curl git procps file
    ```
 
-2. Install Rust. Follow the prompts:
+2. Install [Homebrew](https://brew.sh). When it finishes, it prints a **Next
+   steps** section with commands that add `brew` to your `PATH`. Run them, then
+   check it with `brew --version`:
+
+   ```sh
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+   ```
+
+3. Install ffmpeg and whisper.cpp:
+
+   ```sh
+   brew install ffmpeg whisper.cpp
+   ```
+
+   This downloads many packages and can take several minutes. If it stops with a
+   download error, run the same command again: Homebrew continues where it
+   stopped.
+
+   To use a GPU, such as CUDA or Vulkan, build whisper.cpp yourself with the
+   [whisper.cpp build options](https://github.com/ggml-org/whisper.cpp#readme)
+   and set `whisper.bin` to your `whisper-cli`.
+
+4. Install Rust. Follow the prompts, then check it with `cargo --version`:
 
    ```sh
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    source "$HOME/.cargo/env"
    ```
 
-3. Build `whisper-cli` and put it on your `PATH`:
-
-   ```sh
-   git clone https://github.com/ggml-org/whisper.cpp.git
-   cd whisper.cpp
-   cmake -B build -DBUILD_SHARED_LIBS=OFF
-   cmake --build build -j --config Release
-   sudo install build/bin/whisper-cli /usr/local/bin/
-   cd ..
-   ```
-
-   `-DBUILD_SHARED_LIBS=OFF` makes one self-contained binary, so it keeps
-   working outside the build folder. To use a GPU, see the
-   [whisper.cpp build options](https://github.com/ggml-org/whisper.cpp#readme),
-   such as CUDA or Vulkan.
-
-4. Install minuta:
+5. Install minuta:
 
    ```sh
    cargo install --locked minuta
    ```
 
+   Check it with `minuta --version`. If the build fails, run `rustup update stable`
+   and try again.
+
 #### Other distributions
 
-Install ffmpeg and the build tools with your package manager, then continue from
-step 2 above.
+Install the tools that Homebrew and Rust need with your package manager, then
+continue from step 2 above. ffmpeg comes from Homebrew, so you do not need
+RPM Fusion on Fedora.
 
 | System | Command |
 | --- | --- |
-| Fedora | Enable [RPM Fusion](https://rpmfusion.org/Configuration), then `sudo dnf install ffmpeg git cmake gcc-c++ make` |
-| Arch | `sudo pacman -S ffmpeg git cmake base-devel` |
-
-[Homebrew](https://brew.sh) also works on Linux. With it, the
-[macOS steps](#macos) apply as they are.
+| Fedora | `sudo dnf group install development-tools` and `sudo dnf install curl git procps-ng file libxcrypt-compat` |
+| Arch | `sudo pacman -S base-devel curl git procps-ng file` |
 
 ### Windows
 
