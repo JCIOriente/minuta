@@ -60,6 +60,9 @@ con las que se probó.
    cargo install --locked minuta
    ```
 
+   Compruébalo con `minuta --version`. Si la compilación falla, ejecuta
+   `rustup update stable` y vuelve a intentarlo.
+
 ### Linux
 
 Estos comandos son para Debian y Ubuntu. En otra distribución, consulta
@@ -107,6 +110,9 @@ Estos comandos son para Debian y Ubuntu. En otra distribución, consulta
    ```sh
    cargo install --locked minuta
    ```
+
+   Compruébalo con `minuta --version`. Si la compilación falla, ejecuta
+   `rustup update stable` y vuelve a intentarlo.
 
 #### Otras distribuciones
 

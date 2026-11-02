@@ -58,6 +58,9 @@ tested with.
    cargo install --locked minuta
    ```
 
+   Check it with `minuta --version`. If the build fails, run `rustup update stable`
+   and try again.
+
 ### Linux
 
 These commands are for Debian and Ubuntu. On another distribution, see
@@ -104,6 +107,9 @@ These commands are for Debian and Ubuntu. On another distribution, see
    ```sh
    cargo install --locked minuta
    ```
+
+   Check it with `minuta --version`. If the build fails, run `rustup update stable`
+   and try again.
 
 #### Other distributions
 
