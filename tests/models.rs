@@ -7,6 +7,10 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+#[path = "support/fake_http.rs"]
+mod fake_http;
+use fake_http::{FakeHttp, Route};
+
 const BODY: &[u8] = b"pretend these are model weights";
 
 fn sha(bytes: &[u8]) -> String {
@@ -115,6 +119,34 @@ fn good_download_renamed() {
     assert_eq!(*requests.lock().unwrap(), ["GET /ggml-tiny.bin HTTP/1.1"]);
     assert_eq!(out, Pulled::Downloaded);
     assert_eq!(files_in(dir.path()), vec!["ggml-tiny.bin".to_string()]);
+    assert_eq!(
+        std::fs::read(dir.path().join("ggml-tiny.bin")).unwrap(),
+        BODY
+    );
+}
+
+#[test]
+fn download_follows_redirects() {
+    let server = FakeHttp::start(vec![
+        Route::redirect("/templates/ggml-tiny.bin", "/templates/cdn.bin"),
+        Route::ok("/templates/cdn.bin", BODY),
+    ]);
+    let base = server.base();
+    let dir = tempfile::tempdir().unwrap();
+    let good = sha(BODY);
+    let spec = ModelSpec {
+        name: "tiny",
+        file: "ggml-tiny.bin",
+        kind: ModelKind::Whisper,
+        base_url: &base,
+        sha256: &good,
+        size: BODY.len() as u64,
+    };
+    assert_eq!(models::pull(&spec, dir.path()).unwrap(), Pulled::Downloaded);
+    assert_eq!(
+        server.requests(),
+        vec!["/templates/ggml-tiny.bin", "/templates/cdn.bin"]
+    );
     assert_eq!(
         std::fs::read(dir.path().join("ggml-tiny.bin")).unwrap(),
         BODY

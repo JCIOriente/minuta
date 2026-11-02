@@ -124,6 +124,14 @@ fn fingerprint_is_stable_and_separates_parts() {
 }
 
 #[test]
+fn fingerprint_matches_known_vector() {
+    assert_eq!(
+        fingerprint(&[b"ab", b"c"]),
+        "43ee655579de01ca739b3f95c1c2d3f46d353b2c0df818064ea594506cdb2617"
+    );
+}
+
+#[test]
 fn write_atomic_failure_leaves_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let fresh = dir.path().join("audio.wav");
