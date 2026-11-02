@@ -70,7 +70,8 @@ pub(super) fn read_text(response: &mut Response) -> std::result::Result<String, 
     let bytes = response
         .body_mut()
         .with_config()
-        .limit(BODY_LIMIT)
+        // One over: ureq refuses a body that reaches its limit.
+        .limit(BODY_LIMIT + 1)
         .read_to_vec()?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }

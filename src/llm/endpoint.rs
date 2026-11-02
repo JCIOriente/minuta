@@ -271,7 +271,7 @@ impl OpenAiCompatible {
             Ok(r) => r,
             Err(e) => {
                 let transient = http::is_transient(&e);
-                let message = format!("request failed: {url}: {}", self.scrub(&e.to_string()));
+                let message = format!("request failed: {}", self.scrub(&format!("{url}: {e}")));
                 return Err(failed(self.error(message, transient)));
             }
         };
