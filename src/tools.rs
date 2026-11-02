@@ -599,6 +599,22 @@ pub fn locate_tool(
     }
 }
 
+const INSTALL_GUIDE: &str = "https://github.com/JCIOriente/minuta/blob/main/docs/install.md";
+
+/// What to tell the user when `tool` is missing on `os` (a `std::env::consts::OS` value).
+/// Homebrew installs all three tools on macOS and Linux; elsewhere the install guide is
+/// the only place that covers the system.
+pub fn install_hint(tool: &str, os: &str) -> String {
+    match (os, tool) {
+        ("macos" | "linux", "ffmpeg") => "brew install ffmpeg".to_string(),
+        ("macos" | "linux", "ffprobe") => {
+            "brew install ffmpeg (ffprobe ships with ffmpeg)".to_string()
+        }
+        ("macos" | "linux", "whisper-cli") => "brew install whisper.cpp".to_string(),
+        _ => format!("see {INSTALL_GUIDE}"),
+    }
+}
+
 /// Look at every tool and report what was found and what is missing; never fails.
 pub fn inspect(paths: &ToolPaths, need_model: bool) -> Report {
     let env_path = std::env::var_os("PATH").unwrap_or_default();
@@ -609,7 +625,7 @@ pub fn inspect(paths: &ToolPaths, need_model: bool) -> Report {
         "ffmpeg",
         "-version",
         search,
-        "brew install ffmpeg",
+        &install_hint("ffmpeg", std::env::consts::OS),
         &mut missing,
     );
     let ffprobe = locate(
@@ -617,7 +633,7 @@ pub fn inspect(paths: &ToolPaths, need_model: bool) -> Report {
         "ffprobe",
         "-version",
         search,
-        "brew install ffmpeg (ffprobe ships with ffmpeg)",
+        &install_hint("ffprobe", std::env::consts::OS),
         &mut missing,
     );
     let whisper = locate(
@@ -625,7 +641,7 @@ pub fn inspect(paths: &ToolPaths, need_model: bool) -> Report {
         "whisper-cli",
         "--version",
         search,
-        "brew install whisper-cpp",
+        &install_hint("whisper-cli", std::env::consts::OS),
         &mut missing,
     );
     // A configured model that is not there is always reported: it is most likely a typo.
