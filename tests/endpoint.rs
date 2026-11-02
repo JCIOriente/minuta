@@ -210,7 +210,7 @@ fn endpoint_structured_500_does_not_resend() {
     let err = client(&fake)
         .complete_json("SYS", "USER", &schema(), &no_interrupt())
         .unwrap_err();
-    assert_eq!(llm_err(err).1, true);
+    assert!(llm_err(err).1);
     assert_eq!(bodies(&fake), [structured_body()]);
 }
 
