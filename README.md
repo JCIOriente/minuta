@@ -53,12 +53,12 @@ recording, and put quotes around a path with spaces.
 
    ```sh
    minuta models pull base
-   mkdir -p ~/.minuta
-   printf '[whisper]\nmodel = "base"\n' > ~/.minuta/config.toml
+   minuta config init
    ```
 
-   This replaces any config file you already have. If you have one, add
-   `model = "base"` under its `[whisper]` section instead.
+   Open the path that `config init` prints and, under `[whisper]`, replace
+   `# model = "small"` with `model = "base"`. If it says the file already exists,
+   open that file and add `model = "base"` under its `[whisper]` section.
 
 2. **Transcribe a recording.**
 

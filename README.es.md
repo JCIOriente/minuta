@@ -53,12 +53,12 @@ tu grabación, y pon entre comillas cualquier ruta con espacios.
 
    ```sh
    minuta models pull base
-   mkdir -p ~/.minuta
-   printf '[whisper]\nmodel = "base"\n' > ~/.minuta/config.toml
+   minuta config init
    ```
 
-   Esto reemplaza cualquier archivo de configuración que ya tengas. Si tienes uno,
-   mejor agrega `model = "base"` en su sección `[whisper]`.
+   Abre la ruta que muestra `config init` y, en la sección `[whisper]`, reemplaza
+   `# model = "small"` por `model = "base"`. Si dice que el archivo ya existe,
+   ábrelo y agrega `model = "base"` en su sección `[whisper]`.
 
 2. **Transcribe una grabación.**
 
