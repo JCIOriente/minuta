@@ -13,6 +13,10 @@ use serde_json::{json, Value};
 mod fake_ollama;
 use fake_ollama::{FakeOllama, Reply, Responder};
 
+#[path = "support/fake_http.rs"]
+mod fake_http;
+use fake_http::{FakeHttp, Route};
+
 fn show(context: Option<u64>, thinking: bool) -> Value {
     let mut info = json!({"general.architecture": "gemma4"});
     if let Some(n) = context {
@@ -265,6 +269,66 @@ fn interrupt_abandons_hanging_request() {
     assert!(matches!(err, Error::Interrupted), "{err}");
     assert!(start.elapsed() < Duration::from_millis(600));
     setter.join().unwrap();
+}
+
+/// `/api/tags` behind `hops` redirects, then a pulled model.
+fn tags_behind_redirects(hops: usize) -> FakeHttp {
+    let tags = |hop: usize| match hop {
+        0 => "/templates/api/tags".to_string(),
+        n => format!("/templates/hop{n}"),
+    };
+    let mut routes: Vec<Route> = (0..hops)
+        .map(|hop| Route::redirect(&tags(hop), &tags(hop + 1)))
+        .collect();
+    let listed = json!({"models": [{"name": "m"}]}).to_string();
+    routes.push(Route::ok(&tags(hops), listed));
+    routes.push(Route::ok(
+        "/templates/api/show",
+        show(None, false).to_string(),
+    ));
+    FakeHttp::start(routes)
+}
+
+#[test]
+fn check_follows_four_redirects() {
+    let server = tags_behind_redirects(4);
+    assert_eq!(check(&server.base(), "m"), Ok(info(None, false)));
+}
+
+#[test]
+fn check_refuses_a_fifth_redirect() {
+    let server = tags_behind_redirects(5);
+    let base = server.base();
+    assert_eq!(
+        check(&base, "m").unwrap_err().hint,
+        format!("start Ollama (`ollama serve`); too many redirects at {base}")
+    );
+}
+
+#[test]
+fn check_sends_a_path_with_a_space_encoded() {
+    let server = FakeHttp::start(vec![
+        Route::ok(
+            "/a%20b/api/tags",
+            json!({"models": [{"name": "m"}]}).to_string(),
+        ),
+        Route::ok("/a%20b/api/show", show(None, false).to_string()),
+    ]);
+    let url = server.base().replace("/templates", "/a b");
+    assert_eq!(check(&url, "m"), Ok(info(None, false)));
+    assert_eq!(
+        server.requests(),
+        vec!["/a%20b/api/tags", "/a%20b/api/show"]
+    );
+}
+
+#[test]
+fn chat_sends_a_path_with_a_space_encoded() {
+    let fake = FakeOllama::start(&["m"], show(None, false), ok_chat());
+    let url = format!("{}/a b", fake.url());
+    let o = Ollama::new(&url, "m", 1024, &info(None, false));
+    let _ = o.complete("s", "u", &no_interrupt());
+    assert_eq!(fake.requests()[0].path, "/a%20b/api/chat");
 }
 
 #[test]

@@ -403,6 +403,17 @@ fn fetch_does_not_follow_redirects() {
     assert_eq!(server.requests(), vec!["/templates/alpha.md"]);
 }
 
+#[test]
+fn fetch_sends_a_non_ascii_path_encoded() {
+    let a = entry("alpha", "x");
+    let server = FakeHttp::start(vec![Route::ok("/caf%C3%A9/alpha.md", "x")]);
+    let base = server.base().replace("/templates", "/caf\u{e9}");
+    assert_eq!(
+        fetch_file(&Origin::new(&base).unwrap(), &a).unwrap(),
+        b"x".to_vec()
+    );
+}
+
 // ---- manifest on disk ----
 
 #[test]

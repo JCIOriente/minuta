@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use crate::llm::http::MAX_REDIRECTS;
 use directories::BaseDirs;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
@@ -212,6 +213,7 @@ fn download(
 ) -> Result<String> {
     let agent = ureq::Agent::config_builder()
         .proxy(None)
+        .max_redirects(MAX_REDIRECTS)
         .timeout_connect(Some(CONNECT_TIMEOUT))
         .timeout_per_read(Some(READ_TIMEOUT))
         .build()

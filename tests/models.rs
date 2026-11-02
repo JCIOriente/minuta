@@ -153,6 +153,57 @@ fn download_follows_redirects() {
     );
 }
 
+/// `hops` redirects in a row, ending at the file. Returns the routes and the first path.
+fn redirect_chain(hops: usize) -> Vec<Route> {
+    let mut routes: Vec<Route> = (0..hops)
+        .map(|hop| {
+            Route::redirect(
+                &format!("/templates/hop{hop}"),
+                &format!("/templates/hop{}", hop + 1),
+            )
+        })
+        .collect();
+    routes.push(Route::ok(&format!("/templates/hop{hops}"), BODY));
+    routes
+}
+
+fn pull_hop0(server: &FakeHttp, dir: &Path) -> minuta::error::Result<Pulled> {
+    let base = server.base();
+    let good = sha(BODY);
+    let spec = ModelSpec {
+        name: "tiny",
+        file: "hop0",
+        kind: ModelKind::Whisper,
+        base_url: &base,
+        sha256: &good,
+        size: BODY.len() as u64,
+    };
+    models::pull(&spec, dir)
+}
+
+#[test]
+fn download_follows_four_redirects() {
+    let server = FakeHttp::start(redirect_chain(4));
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(pull_hop0(&server, dir.path()).unwrap(), Pulled::Downloaded);
+    assert_eq!(server.requests().len(), 5);
+}
+
+#[test]
+fn download_refuses_a_fifth_redirect() {
+    let server = FakeHttp::start(redirect_chain(5));
+    let dir = tempfile::tempdir().unwrap();
+    let err = pull_hop0(&server, dir.path()).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "I/O error: download of {}/hop0 failed: too many redirects",
+            server.base()
+        )
+    );
+    assert_eq!(server.requests().len(), 5);
+}
+
 #[test]
 fn already_present_noop() {
     let (base, requests) = serve(BODY);

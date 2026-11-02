@@ -798,6 +798,23 @@ fn endpoint_refused_connection_is_transient() {
 }
 
 #[test]
+fn endpoint_check_sends_a_path_with_a_space_encoded() {
+    let fake = server(|_| model_list(&["m"]));
+    let url = format!("{}/a b", fake.url());
+    let _ = check("box", &url, None, "m");
+    assert_eq!(fake.requests()[0].path, "/a%20b/models");
+}
+
+#[test]
+fn endpoint_chat_sends_a_path_with_a_space_encoded() {
+    let fake = server(|_| Reply::Status(500, "{}".into()));
+    let url = format!("{}/a b", fake.url());
+    let backend = OpenAiCompatible::new("box", "m", &url, None, 1000, Duration::from_secs(5));
+    let _ = backend.complete("s", "u", &no_interrupt());
+    assert_eq!(fake.requests()[0].path, "/a%20b/chat/completions");
+}
+
+#[test]
 fn endpoint_failed_tls_handshake_is_transient() {
     let fake = server(|_| Reply::Status(200, "plain http".into()));
     let url = fake.url().replacen("http://", "https://", 1);

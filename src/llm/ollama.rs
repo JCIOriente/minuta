@@ -33,7 +33,7 @@ pub fn check(url: &str, model: &str) -> std::result::Result<OllamaInfo, Missing>
     };
 
     let tags = agent
-        .get(&format!("{base}/api/tags"))
+        .get(&http::request_url(&format!("{base}/api/tags")))
         .call()
         .map_err(|e| server_down(describe(&e)))?;
     let tags = read_json(tags)
@@ -53,7 +53,7 @@ pub fn check(url: &str, model: &str) -> std::result::Result<OllamaInfo, Missing>
     }
 
     let shown = agent
-        .post(&format!("{base}/api/show"))
+        .post(&http::request_url(&format!("{base}/api/show")))
         .header("Content-Type", "application/json")
         .send(json!({ "model": model }).to_string())
         .map_err(|e| model_problem(format!("ollama show {model} failed: {}", describe(&e))))?;
@@ -138,7 +138,7 @@ impl Ollama {
         let response = http::agent(self.timeout)
             .build()
             .new_agent()
-            .post(&format!("{}/api/chat", self.url))
+            .post(&http::request_url(&format!("{}/api/chat", self.url)))
             .config()
             .http_status_as_error(false)
             .build()

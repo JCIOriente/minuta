@@ -12,6 +12,8 @@ use crate::error::{Error, Result};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
+/// How many redirects a client that follows them takes before it gives up.
+pub(crate) const MAX_REDIRECTS: u32 = 4;
 
 /// A response whose status has not been judged yet.
 pub(super) type Response = ureq::http::Response<ureq::Body>;
@@ -19,9 +21,17 @@ pub(super) type Response = ureq::http::Response<ureq::Body>;
 pub(super) fn agent(read_timeout: Duration) -> ConfigBuilder<AgentScope> {
     ureq::Agent::config_builder()
         .proxy(None)
+        .max_redirects(MAX_REDIRECTS)
         .timeout_connect(Some(CONNECT_TIMEOUT))
         .timeout_per_read(Some(read_timeout))
         .timeout_per_write(Some(CONNECT_TIMEOUT))
+}
+
+/// `url` as ureq can send it. ureq parses into `http::Uri`, which refuses what `url` normalizes,
+/// such as a non-ASCII host or a space in the path. Text `url` cannot parse stays as written and
+/// fails at the request.
+pub(crate) fn request_url(url: &str) -> String {
+    url::Url::parse(url).map_or_else(|_| url.to_string(), String::from)
 }
 
 pub(super) fn base(url: &str) -> &str {
@@ -113,6 +123,29 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_url_encodes_a_non_ascii_host() {
+        assert_eq!(
+            request_url("http://b\u{fc}cher.example:8080/v1"),
+            "http://xn--bcher-kva.example:8080/v1"
+        );
+    }
+
+    #[test]
+    fn request_url_encodes_a_space_in_the_path() {
+        assert_eq!(request_url("http://host/a b"), "http://host/a%20b");
+    }
+
+    #[test]
+    fn request_url_adds_the_missing_slashes() {
+        assert_eq!(request_url("http:host:1/v1"), "http://host:1/v1");
+    }
+
+    #[test]
+    fn request_url_keeps_what_it_cannot_parse() {
+        assert_eq!(request_url("no-scheme/x"), "no-scheme/x");
+    }
 
     #[test]
     fn connection_failure_is_transient() {

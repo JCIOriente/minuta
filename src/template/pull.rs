@@ -13,6 +13,7 @@ use super::catalog::{self, sha256_hex, Catalog, Entry, Manifest, State};
 use super::{valid_stem, Layer, Template};
 use crate::error::{Error, Result};
 use crate::job::write_atomic;
+use crate::llm::http::request_url;
 
 /// Largest `index.toml` accepted.
 pub const CATALOG_CAP: u64 = 1024 * 1024;
@@ -156,7 +157,7 @@ fn get(url: &str, cap: u64) -> Result<Vec<u8>> {
         .build()
         .new_agent();
     let failed = |reason: String| io_other(format!("download of {url} failed: {reason}"));
-    let response = agent.get(url).call().map_err(|e| match &e {
+    let response = agent.get(&request_url(url)).call().map_err(|e| match &e {
         ureq::Error::StatusCode(code) => failed(format!("HTTP status {code}")),
         other => failed(other.to_string()),
     })?;
