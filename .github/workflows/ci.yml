@@ -27,3 +27,111 @@ jobs:
       - run: make ci
         env:
           MINUTA_REQUIRE_FFMPEG: "1"
+
+  # The npm jobs run for pull requests that touch the packaging inputs, and always on main.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      npm: ${{ steps.filter.outputs.npm }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "npm=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only "$BASE" HEAD)
+          if grep -qE '^(npm/|Cargo\.toml$|\.github/workflows/ci\.yml$)' <<< "$changed"; then
+            echo "npm=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "npm=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Node 18 is the `engines.node` floor of @jcioriente/minuta; 24 is current.
+  node:
+    needs: changes
+    if: needs.changes.outputs.npm == 'true'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['18', '24']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node --test npm/minuta/test/*.test.js
+      - run: node --test npm/scripts/test/*.test.mjs
+
+  # Builds the five packages from a real binary, installs them the way a user would,
+  # and runs the installed `minuta`. Catches a wrong `files`, a missing mode bit and an
+  # unpinned optional dependency.
+  packaging:
+    needs: changes
+    if: needs.changes.outputs.npm == 'true'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: cargo build --locked
+      - name: Build, pack and install the packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n '/^\[package\]/,/^\[/{s/^version = "\(.*\)"$/\1/p;}' Cargo.toml)
+          work=$(mktemp -d)
+          # One debug binary stands in for all four targets; only the one for this runner is installed below.
+          # It is copied without the execute bit, so the check fails if build-packages stops setting the mode.
+          binary=$work/minuta-binary
+          cp target/debug/minuta "$binary"
+          chmod 644 "$binary"
+          node npm/scripts/build-packages.mjs --version "$version" --out "$work/pkgs" \
+            --binary aarch64-apple-darwin="$binary" \
+            --binary x86_64-apple-darwin="$binary" \
+            --binary x86_64-unknown-linux-musl="$binary" \
+            --binary aarch64-unknown-linux-musl="$binary" > "$work/dirs.txt"
+          mkdir "$work/tarballs"
+          while read -r dir; do
+            (cd "$dir" && npm pack --silent --pack-destination "$work/tarballs" > /dev/null)
+          done < "$work/dirs.txt"
+          platform_pkg=$(node -p "require('./npm/minuta/lib/platform.js').resolveTarget(process.platform, process.arch).pkg")
+          # '@jcioriente/minuta-linux-x64' is packed as 'jcioriente-minuta-linux-x64-<version>.tgz'.
+          platform_tgz="$work/tarballs/$(echo "${platform_pkg#@}" | tr / -)-$version.tgz"
+          main_tgz="$work/tarballs/jcioriente-minuta-$version.tgz"
+          test -f "$platform_tgz" || { echo "missing $platform_tgz"; exit 1; }
+          test -f "$main_tgz" || { echo "missing $main_tgz"; exit 1; }
+          # Both tarballs, and only the matching platform one: npm rejects a tarball for another platform.
+          mkdir "$work/install"
+          cd "$work/install"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund --silent "$main_tgz" "$platform_tgz"
+          got=$(./node_modules/.bin/minuta --version)
+          want="minuta $version"
+          if [ "$got" != "$want" ]; then
+            echo "minuta --version printed '$got', expected '$want'"
+            exit 1
+          fi
+          # Every optional dependency is pinned to this exact version.
+          node -e '
+            const pj = require("./node_modules/@jcioriente/minuta/package.json");
+            const want = process.argv[1];
+            const bad = Object.entries(pj.optionalDependencies).filter(([, v]) => v !== want);
+            if (pj.version !== want || bad.length || Object.keys(pj.optionalDependencies).length !== 4) {
+              console.error("unpinned or wrong version:", pj.version, pj.optionalDependencies);
+              process.exit(1);
+            }
+          ' "$version"
+          echo "ok: $got from $platform_pkg"
