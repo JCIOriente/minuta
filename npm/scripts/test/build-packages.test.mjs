@@ -47,6 +47,10 @@ function fixture({ cargoVersion = '1.2.3' } = {}) {
   return { root, cargoToml, binaries, outDir: path.join(root, 'out') };
 }
 
+// The CLI always runs in a scratch directory, so a regression that writes to a relative path cannot
+// leave files in the repository.
+const cli = (args, cwd) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', cwd });
+
 const read = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 const run = (f, overrides = {}) =>
   buildPackages({ version: '1.2.3', mainSrc: MAIN_SRC, ...f, ...overrides });
@@ -309,7 +313,7 @@ test('cli_builds_from_flags_and_prints_one_package_dir_per_line', () => {
   const f = fixture();
   const args = ['--version', '1.2.3', '--cargo-toml', f.cargoToml, '--out', f.outDir];
   for (const [t, p] of Object.entries(f.binaries)) args.push('--binary', `${t}=${p}`);
-  const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
+  const r = cli(args, f.root);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stderr, '');
   assert.deepEqual(
@@ -328,14 +332,14 @@ test('cli_exits_1_with_the_message_on_stderr_when_the_version_mismatches', () =>
   const f = fixture({ cargoVersion: '9.9.9' });
   const args = ['--version', '1.2.3', '--cargo-toml', f.cargoToml, '--out', f.outDir];
   for (const [t, p] of Object.entries(f.binaries)) args.push('--binary', `${t}=${p}`);
-  const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
+  const r = cli(args, f.root);
   assert.equal(r.status, 1);
   assert.equal(r.stdout, '');
   assert.equal(r.stderr, 'build-packages: version 1.2.3 does not match Cargo.toml version 9.9.9\n');
 });
 
 test('cli_exits_2_on_a_missing_required_flag', () => {
-  const r = spawnSync(process.execPath, [SCRIPT, '--version', '1.2.3'], { encoding: 'utf8' });
+  const r = cli(['--version', '1.2.3'], tmp());
   assert.equal(r.status, 2);
   assert.match(r.stderr, /^build-packages: missing --out\nusage: /);
 });
@@ -364,7 +368,7 @@ const CLI_USAGE_ERRORS = [
 for (const [name, extra, message] of CLI_USAGE_ERRORS) {
   test(`cli_exits_2_on_${name}`, () => {
     const f = fixture();
-    const r = spawnSync(process.execPath, [SCRIPT, ...cliArgs(f, extra)], { encoding: 'utf8' });
+    const r = cli(cliArgs(f, extra), f.root);
     assert.equal(r.status, 2);
     assert.equal(r.stdout, '');
     assert.equal(r.stderr, `build-packages: ${message}\n${USAGE_LINE}`);
@@ -373,7 +377,7 @@ for (const [name, extra, message] of CLI_USAGE_ERRORS) {
 }
 
 test('cli_exits_2_when_version_is_missing', () => {
-  const r = spawnSync(process.execPath, [SCRIPT, '--out', 'x'], { encoding: 'utf8' });
+  const r = cli(['--out', 'x'], tmp());
   assert.equal(r.status, 2);
   assert.equal(r.stderr, `build-packages: missing --version\n${USAGE_LINE}`);
 });
@@ -383,7 +387,7 @@ test('cli_main_src_flag_selects_the_launcher_source', () => {
   const mainSrc = path.join(f.root, 'main-src');
   fs.cpSync(MAIN_SRC, mainSrc, { recursive: true });
   fs.writeFileSync(path.join(mainSrc, 'lib', 'marker.js'), '// marker\n');
-  const r = spawnSync(process.execPath, [SCRIPT, ...cliArgs(f, ['--main-src', mainSrc])], { encoding: 'utf8' });
+  const r = cli(cliArgs(f, ['--main-src', mainSrc]), f.root);
   assert.equal(r.status, 0, r.stderr);
   assert.ok(fs.existsSync(path.join(f.outDir, 'minuta', 'lib', 'marker.js')));
 });
@@ -392,7 +396,7 @@ test('cli_exits_2_on_an_empty_out_instead_of_writing_into_the_current_directory'
   const f = fixture();
   const args = ['--version', '1.2.3', '--cargo-toml', f.cargoToml, '--out', ''];
   for (const [t, p] of Object.entries(f.binaries)) args.push('--binary', `${t}=${p}`);
-  const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', cwd: f.root });
+  const r = cli(args, f.root);
   assert.equal(r.status, 2);
   assert.equal(r.stderr, `build-packages: --out needs a value\n${USAGE_LINE}`);
   assert.deepEqual(fs.readdirSync(f.root).filter((n) => n.startsWith('minuta')), []);
@@ -401,7 +405,7 @@ test('cli_exits_2_on_an_empty_out_instead_of_writing_into_the_current_directory'
 for (const key of ['constructor', '__proto__', 'toString']) {
   test(`cli_reports_${key}_as_an_unknown_target_not_a_duplicate`, () => {
     const f = fixture();
-    const r = spawnSync(process.execPath, [SCRIPT, ...cliArgs(f, ['--binary', `${key}=/x`])], { encoding: 'utf8' });
+    const r = cli(cliArgs(f, ['--binary', `${key}=/x`]), f.root);
     assert.equal(r.status, 1);
     assert.equal(r.stderr, `build-packages: unknown target ${key}\n`);
   });
@@ -413,7 +417,7 @@ test('cli_reads_Cargo_toml_from_the_repository_by_default', () => {
   const version = repoCargo.match(/^version\s*=\s*"([^"]+)"/m)[1];
   const args = ['--version', version, '--out', f.outDir];
   for (const [t, p] of Object.entries(f.binaries)) args.push('--binary', `${t}=${p}`);
-  const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
+  const r = cli(args, f.root);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(read(path.join(f.outDir, 'minuta', 'package.json')).version, version);
 });
