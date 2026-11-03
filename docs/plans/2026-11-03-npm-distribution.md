@@ -2,7 +2,7 @@
 
 - Spec: [docs/specs/2026-11-03-npm-distribution.md](../specs/2026-11-03-npm-distribution.md)
 - Date: 2026-11-03
-- Status: approved
+- Status: in backlog
 
 ## Overview
 Five tasks, cut along file boundaries. The launcher and its platform table come first because the build script and both workflows consume them. After T1 and T2, the packaging job (T3) and the release workflow (T4) run in parallel because they own different workflow files. The docs (T5) touch no code and can start at once. Nothing in this plan publishes to npm: T4 only builds the workflow, and the maintainer runs the first release.
@@ -23,7 +23,7 @@ Can start immediately in parallel: T1, T5. After T2 merges: T3, T4.
 
 ## Tasks
 
-### T1: Platform table and launcher
+### T1: Platform table and launcher  (#242)
 - Priority: 1
 - Depends on: none
 - Owns: `npm/minuta/**`
@@ -39,7 +39,7 @@ Can start immediately in parallel: T1, T5. After T2 merges: T3, T4.
 - Tests first: `platform_maps_every_supported_pair`, `platform_rejects_unknown_pair`, `win32_message_points_to_wsl2`, `missing_package_message_names_package`, `launcher_passes_args_and_exit_code`, `launcher_passes_stdout_and_stderr`, `launcher_forwards_sigterm_to_child`
 - Notes: the launcher test uses a fake platform package whose "binary" is a shell script. `optionalDependencies` versions are placeholders until T2 stamps them; the test for exact pinning lives in T2.
 
-### T2: build-packages script
+### T2: build-packages script  (#244)
 - Priority: 1
 - Depends on: T1
 - Owns: `npm/scripts/**`
@@ -53,7 +53,7 @@ Can start immediately in parallel: T1, T5. After T2 merges: T3, T4.
 - Tests first: `writes_platform_package_with_os_and_cpu`, `binary_is_mode_0755`, `optional_dependencies_are_exact`, `rejects_version_not_matching_cargo_toml`, `rejects_missing_binary`
 - Notes: Node built-ins only. Take the package list from `lib/platform.js`.
 
-### T3: Packaging CI job
+### T3: Packaging CI job  (#245)
 - Priority: 2
 - Depends on: T2
 - Owns: `.github/workflows/ci.yml`
@@ -65,7 +65,7 @@ Can start immediately in parallel: T1, T5. After T2 merges: T3, T4.
 - Tests first: the job itself; prove it fails by temporarily dropping `files` from a generated package, and say so in the PR
 - Notes: keep the Rust job free of Node. Path filter goes on the new jobs only.
 
-### T4: Release workflow
+### T4: Release workflow  (#246)
 - Priority: 2
 - Depends on: T2
 - Owns: `.github/workflows/release.yml`
@@ -81,7 +81,7 @@ Can start immediately in parallel: T1, T5. After T2 merges: T3, T4.
 - Tests first: `actionlint` on the file; a `workflow_dispatch` dry run on the PR branch, with its link in the PR
 - Notes: x86_64 musl uses `musl-tools`; aarch64 needs a cross C compiler for `ring` (spec, open question 2). Add `id-token: write` for provenance. The maintainer creates the `NPM_TOKEN` secret and the first tag; this task does neither.
 
-### T5: Docs in English and Spanish
+### T5: Docs in English and Spanish  (#243)
 - Priority: 3
 - Depends on: none
 - Owns: `README.md`, `README.es.md`, `docs/install.md`, `docs/install.es.md`

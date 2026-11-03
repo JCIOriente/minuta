@@ -130,4 +130,4 @@ One static binary per architecture works on Ubuntu, Debian, Alpine and WSL2 imag
 
 ## Implementation status
 Updated by the PRs that implement this spec.
-- [ ] Plan and issues
+- [x] Plan and issues (#242-#246)
