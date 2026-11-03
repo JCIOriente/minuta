@@ -1,6 +1,6 @@
 # npm distribution — Spec
 
-- Status: draft
+- Status: approved
 - Date: 2026-11-03
 - Owner: Arnold Gandarillas
 - Related: [ADR-0014](../adr/0014-npm-prebuilt-binaries.md), docs/brief.md:161 (distribution goal: "cargo install, Homebrew, prebuilt binaries")
@@ -124,9 +124,9 @@ The org is owned and the scope cannot be squatted. `npm view minuta` also return
 One static binary per architecture works on Ubuntu, Debian, Alpine and WSL2 images without tracking glibc versions.
 
 ## Open questions
-1. **Publish credential.** Recommended: `NPM_TOKEN` (automation token scoped to the `jcioriente` org) in repository secrets for the first release, then switch to npm trusted publishing (OIDC) once the packages exist, since trusted publishing is configured per existing package. Needs the maintainer to create the token and the secret.
+1. **Publish credential. Resolved (2026-11-03):** `NPM_TOKEN` (automation token scoped to the `jcioriente` org) in repository secrets for the first release, then npm trusted publishing (OIDC) once the packages exist, since trusted publishing is configured per existing package. The maintainer creates the token and the secret.
 2. **musl feasibility. Resolved: it builds.** `cargo build --release --locked` on Alpine (`rust:alpine`, Rust 1.99.1, `--platform linux/arm64` and `linux/amd64`) built the full tree for `aarch64-unknown-linux-musl` (1m17s) and `x86_64-unknown-linux-musl` (1m52s), both statically linked, and each binary printed `minuta 0.8.0`. Not covered by that check: cross-compiling from a glibc runner (ubuntu-latest). The build task uses `musl-tools` for x86_64 and a cross C compiler for aarch64 (for `ring`), and fails the job if `file` does not report static linking. The glibc fallback is not needed.
-3. **Release trigger today.** Releases are made by hand (tags `v0.6.0`..`v0.8.0` and GitHub releases exist; no release workflow). Confirm that pushing the tag is the moment to publish, or whether a GitHub Release `published` event is preferred.
+3. **Release trigger. Resolved (2026-11-03):** a pushed `v*` tag. Releases are made by hand today (tags `v0.6.0`..`v0.8.0`; no release workflow).
 
 ## Implementation status
 Updated by the PRs that implement this spec.
