@@ -1,5 +1,6 @@
 'use strict';
 
+const os = require('node:os');
 const { resolveTarget } = require('./platform');
 
 const INSTALL_GUIDE = 'https://github.com/JCIOriente/minuta/blob/main/docs/install.md';
@@ -33,11 +34,17 @@ function locate({ platform, arch, resolve }) {
         message:
           `The package ${target.pkg} is not installed, so there is no minuta binary for this machine.\n` +
           'Reinstall without --omit=optional, on the same OS this node_modules was installed on: ' +
-          'npm i -g @jcioriente/minuta',
+          'npm i -g @jcioriente/minuta\n' +
+          `Detail: ${String(err.message).split('\n')[0]}`,
       };
     }
     throw err;
   }
 }
 
-module.exports = { locate };
+// Shell convention for a process ended by a signal: 128 plus the signal number.
+function exitCodeForSignal(signal) {
+  return 128 + os.constants.signals[signal];
+}
+
+module.exports = { locate, exitCodeForSignal };

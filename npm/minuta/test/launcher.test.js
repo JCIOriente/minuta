@@ -12,13 +12,13 @@ const target = resolveTarget(process.platform, process.arch);
 const skip = target ? false : `no package for ${process.platform}-${process.arch}`;
 
 // A copy of the launcher with a fake platform package next to it, as npm lays it out.
-function install(script) {
+function install(script, mode = 0o755) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'minuta-launcher-'));
   const pkgDir = path.join(root, 'node_modules', ...target.pkg.split('/'));
   fs.mkdirSync(path.join(pkgDir, 'bin'), { recursive: true });
   fs.writeFileSync(path.join(pkgDir, 'package.json'), JSON.stringify({ name: target.pkg, version: '0.0.0' }));
   const bin = path.join(pkgDir, 'bin', 'minuta');
-  fs.writeFileSync(bin, script, { mode: 0o755 });
+  fs.writeFileSync(bin, script, { mode });
   const pkg = path.join(root, 'node_modules', '@jcioriente', 'minuta');
   fs.cpSync(SRC, pkg, { recursive: true, filter: (p) => !p.includes(`${path.sep}test`) });
   return { root, launcher: path.join(pkg, 'bin', 'minuta.js') };
@@ -43,6 +43,22 @@ test('launcher_passes_stdin', { skip }, () => {
   const { launcher } = install('#!/bin/sh\ncat\n');
   const r = spawnSync(process.execPath, [launcher], { encoding: 'utf8', input: 'from stdin' });
   assert.equal(r.stdout, 'from stdin');
+});
+
+test('launcher_reports_spawn_failure_and_exits_1', { skip }, () => {
+  const { launcher } = install('#!/bin/sh\nexit 0\n', 0o644);
+  const r = spawnSync(process.execPath, [launcher], { encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /^error running .*minuta: spawn .*minuta EACCES\n$/);
+});
+
+test('launcher_reports_a_package_without_its_binary_with_the_resolver_detail', { skip }, () => {
+  const { root, launcher } = install('#!/bin/sh\n');
+  fs.rmSync(path.join(root, 'node_modules', ...target.pkg.split('/'), 'bin'), { recursive: true });
+  const r = spawnSync(process.execPath, [launcher], { encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, new RegExp(`\\nDetail: Cannot find module '${target.pkg}/bin/minuta'\n$`));
 });
 
 test('launcher_reports_missing_package_and_exits_1', { skip }, () => {

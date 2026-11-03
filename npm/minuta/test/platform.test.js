@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { TARGETS, resolveTarget } = require('../lib/platform');
-const { locate } = require('../lib/launcher');
+const { locate, exitCodeForSignal } = require('../lib/launcher');
 
 const CASES = [
   ['darwin', 'arm64', '@jcioriente/minuta-darwin-arm64', 'aarch64-apple-darwin'],
@@ -54,7 +54,7 @@ test('unlisted_platform_message_names_platform_and_cargo', () => {
 
 test('missing_package_message_names_package', () => {
   const resolve = () => {
-    throw Object.assign(new Error('nope'), { code: 'MODULE_NOT_FOUND' });
+    throw Object.assign(new Error('nope\nRequire stack:\n- /x'), { code: 'MODULE_NOT_FOUND' });
   };
   const r = locate({ platform: 'darwin', arch: 'arm64', resolve });
   assert.deepEqual(r, {
@@ -62,7 +62,8 @@ test('missing_package_message_names_package', () => {
     message:
       'The package @jcioriente/minuta-darwin-arm64 is not installed, so there is no minuta binary for this machine.\n' +
       'Reinstall without --omit=optional, on the same OS this node_modules was installed on: ' +
-      'npm i -g @jcioriente/minuta',
+      'npm i -g @jcioriente/minuta\n' +
+      'Detail: nope',
   });
 });
 
@@ -83,3 +84,9 @@ test('locate_rethrows_unexpected_resolve_errors', () => {
   };
   assert.throws(() => locate({ platform: 'linux', arch: 'x64', resolve }), /EACCES/);
 });
+
+for (const [signal, code] of [['SIGHUP', 129], ['SIGINT', 130], ['SIGTERM', 143]]) {
+  test(`exit_code_for_${signal.toLowerCase()}_is_128_plus_its_number`, () => {
+    assert.equal(exitCodeForSignal(signal), code);
+  });
+}

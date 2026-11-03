@@ -2,8 +2,7 @@
 'use strict';
 
 const { spawn } = require('node:child_process');
-const os = require('node:os');
-const { locate } = require('../lib/launcher');
+const { locate, exitCodeForSignal } = require('../lib/launcher');
 
 const found = locate({ platform: process.platform, arch: process.arch, resolve: require.resolve });
 if (!found.ok) {
@@ -19,7 +18,8 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 }
 
 child.on('error', (err) => {
-  console.error(`could not start ${found.binary}: ${err.message}`);
+  // Also reached when forwarding a signal fails after the binary started.
+  console.error(`error running ${found.binary}: ${err.message}`);
   process.exit(1);
 });
 
@@ -29,7 +29,7 @@ child.on('exit', (code, signal) => {
     for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.removeAllListeners(sig);
     process.kill(process.pid, signal);
     // A signal with no default action would leave us running; fall back to the shell convention.
-    process.exit(128 + (os.constants.signals[signal] ?? 0));
+    process.exit(exitCodeForSignal(signal));
   }
   process.exit(code);
 });
