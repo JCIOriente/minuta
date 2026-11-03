@@ -1,0 +1,177 @@
+name: release
+
+# Publishes @jcioriente/minuta and its four platform packages to npm.
+# Pushing a tag v<X.Y.Z> that matches Cargo.toml publishes for real.
+# workflow_dispatch builds everything and runs `npm publish --dry-run` (the default).
+# Nothing is published from a branch or a pull request.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build everything but only run npm publish --dry-run
+        type: boolean
+        default: true
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # The tag must be the Cargo.toml version, so no package is published under a wrong version.
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      dry_run: ${{ steps.v.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+          DRY_RUN_INPUT: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n '/^\[package\]/,/^\[/{s/^version = "\(.*\)"$/\1/p;}' Cargo.toml)
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Cargo.toml version '$version' is not X.Y.Z"
+            exit 1
+          fi
+          if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "v$version" ]; then
+            echo "::error::tag $REF_NAME does not match Cargo.toml version $version (expected v$version)"
+            exit 1
+          fi
+          # A real publish needs a tag; a branch run is always a dry run.
+          dry_run=false
+          if [ "$REF_TYPE" != tag ]; then
+            dry_run=true
+          elif [ "$EVENT" = workflow_dispatch ] && [ "$DRY_RUN_INPUT" = true ]; then
+            dry_run=true
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$dry_run" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: verify
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    env:
+      TARGET: ${{ matrix.target }}
+      # The toolchain installed with the target above; rust-toolchain.toml would select a fresh one.
+      RUSTUP_TOOLCHAIN: stable
+      # The runner's own musl-gcc builds `ring` for the musl target; the cc crate would otherwise
+      # look for a cross compiler named after the target.
+      CC_x86_64_unknown_linux_musl: musl-gcc
+      CC_aarch64_unknown_linux_musl: musl-gcc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install musl-gcc
+        if: endsWith(matrix.target, '-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target "$TARGET"
+      # The Linux binaries must be static, or they would not run on every distribution.
+      - name: Check the Linux binary is static
+        if: endsWith(matrix.target, '-musl')
+        run: |
+          info=$(file "target/$TARGET/release/minuta")
+          echo "$info"
+          grep -qE 'statically linked|static-pie linked' <<< "$info"
+      # x86_64-apple-darwin is built on an arm64 runner and not run here.
+      - name: Run the binary
+        if: matrix.target != 'x86_64-apple-darwin'
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          got=$("target/$TARGET/release/minuta" --version)
+          echo "$got"
+          [ "$got" = "minuta $VERSION" ]
+      - uses: actions/upload-artifact@v4
+        with:
+          name: minuta-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/minuta
+          if-no-files-found: error
+
+  # The four platform packages first and the main package last, so the main package never
+  # points at a version that is not on the registry yet.
+  publish:
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm --provenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          path: binaries
+      - name: Build the packages
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          node npm/scripts/build-packages.mjs --version "$VERSION" --out "$RUNNER_TEMP/pkgs" \
+            --binary aarch64-apple-darwin=binaries/minuta-aarch64-apple-darwin/minuta \
+            --binary x86_64-apple-darwin=binaries/minuta-x86_64-apple-darwin/minuta \
+            --binary x86_64-unknown-linux-musl=binaries/minuta-x86_64-unknown-linux-musl/minuta \
+            --binary aarch64-unknown-linux-musl=binaries/minuta-aarch64-unknown-linux-musl/minuta \
+            > "$RUNNER_TEMP/dirs.txt"
+          cat "$RUNNER_TEMP/dirs.txt"
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" != true ] && [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::the NPM_TOKEN secret is not set"
+            exit 1
+          fi
+          mapfile -t dirs < "$RUNNER_TEMP/dirs.txt"
+          for dir in "${dirs[@]}"; do
+            name=$(node -p 'require(process.argv[1]).name' "$dir/package.json")
+            # Re-running after a partial publish skips what is already on the registry.
+            err=$(mktemp)
+            if found=$(npm view "$name@$VERSION" version 2> "$err"); then
+              if [ "$found" != "$VERSION" ]; then
+                echo "::error::npm view $name@$VERSION returned '$found'"
+                exit 1
+              fi
+              echo "$name@$VERSION is already published, skipping"
+              continue
+            fi
+            if ! grep -q 'E404' "$err"; then
+              cat "$err"
+              echo "::error::could not check whether $name@$VERSION is published"
+              exit 1
+            fi
+            if [ "$DRY_RUN" = true ]; then
+              npm publish "$dir" --access public --dry-run
+            else
+              npm publish "$dir" --access public --provenance
+            fi
+          done
