@@ -40,7 +40,8 @@ npm i -g @jcioriente/minuta
 ```
 
 npm instala solo minuta. ffmpeg, whisper.cpp y un backend de LLM se siguen
-instalando aparte, como explica la guía de instalación.
+instalando aparte, como explica la guía de instalación. Para probar minuta sin
+instalarlo, ejecuta `npx @jcioriente/minuta doctor`.
 
 Si ya tienes Rust 1.88 o más reciente:
 
