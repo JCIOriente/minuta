@@ -105,7 +105,16 @@ test('main_package_ships_bin_and_lib_and_not_the_tests', () => {
   assert.deepEqual(fs.readdirSync(dir).sort(), ['bin', 'lib', 'package.json']);
   assert.deepEqual(fs.readdirSync(path.join(dir, 'bin')), ['minuta.js']);
   assert.deepEqual(fs.readdirSync(path.join(dir, 'lib')).sort(), ['launcher.js', 'platform.js']);
-  assert.equal(fs.statSync(path.join(dir, 'bin', 'minuta.js')).mode & 0o111, 0o111);
+});
+
+test('main_launcher_is_mode_0755_even_when_the_source_is_not', () => {
+  const f = fixture();
+  const mainSrc = path.join(f.root, 'main-src');
+  fs.cpSync(MAIN_SRC, mainSrc, { recursive: true });
+  fs.chmodSync(path.join(mainSrc, 'bin', 'minuta.js'), 0o644);
+  run(f, { mainSrc });
+  const mode = fs.statSync(path.join(f.outDir, 'minuta', 'bin', 'minuta.js')).mode & 0o777;
+  assert.equal(mode.toString(8), '755');
 });
 
 test('the_source_package_is_not_modified', () => {
@@ -138,15 +147,40 @@ test('rejects_version_not_matching_cargo_toml', () => {
   assert.equal(fs.existsSync(f.outDir), false, 'nothing is written on a mismatch');
 });
 
+test('rejects_a_cargo_version_that_only_starts_with_the_given_version', () => {
+  const f = fixture({ cargoVersion: '1.2.30' });
+  assert.throws(() => run(f), { message: 'version 1.2.3 does not match Cargo.toml version 1.2.30' });
+});
+
 test('accepts_a_v_prefixed_tag_as_the_version', () => {
   const f = fixture();
   assert.doesNotThrow(() => run(f, { version: 'v1.2.3' }));
   assert.equal(read(path.join(f.outDir, 'minuta', 'package.json')).version, '1.2.3');
 });
 
-test('rejects_a_version_that_is_not_x_y_z', () => {
-  const f = fixture({ cargoVersion: '1.2' });
-  assert.throws(() => run(f, { version: '1.2' }), { message: 'version 1.2 is not X.Y.Z' });
+for (const bad of ['1.2', '1.2.3-rc.1', '1.2.3.4', 'x1.2.3', 'vv1.2.3', '']) {
+  test(`rejects_a_version_that_is_not_x_y_z_${JSON.stringify(bad)}`, () => {
+    const f = fixture({ cargoVersion: bad.replace(/^v/, '') });
+    const shown = bad.replace(/^v/, '');
+    assert.throws(() => run(f, { version: bad }), { message: `version ${shown} is not X.Y.Z` });
+    assert.equal(fs.existsSync(f.outDir), false);
+  });
+}
+
+test('reads_the_version_from_the_package_table_not_from_a_decoy_before_or_after_it', () => {
+  const f = fixture();
+  fs.writeFileSync(
+    f.cargoToml,
+    '[dependencies.foo]\nversion = "9.9.9"\n\n[package]\nname = "minuta"\nversion = "1.2.3"\n\n' +
+      '[profile.release]\nversion = "8.8.8"\n[workspace.package]\nversion = "7.7.7"\n',
+  );
+  assert.doesNotThrow(() => run(f));
+});
+
+test('a_decoy_version_outside_the_package_table_is_not_the_crate_version', () => {
+  const f = fixture();
+  fs.writeFileSync(f.cargoToml, '[package]\nname = "minuta"\n\n[dependencies.foo]\nversion = "1.2.3"\n');
+  assert.throws(() => run(f), { message: `no [package] version in ${f.cargoToml}` });
 });
 
 test('rejects_cargo_toml_without_a_package_version', () => {
@@ -161,9 +195,18 @@ for (const [rustTarget] of EXPECTED) {
     const gone = path.join(f.root, 'does-not-exist');
     assert.throws(
       () => run(f, { binaries: { ...f.binaries, [rustTarget]: gone } }),
-      { message: `binary for ${rustTarget} is not a file: ${gone}` },
+      { message: `binary for ${rustTarget} does not exist: ${gone}` },
     );
     assert.equal(fs.existsSync(f.outDir), false, 'nothing is written when a binary is missing');
+  });
+
+  test(`rejects_binary_that_is_a_directory_${rustTarget}`, () => {
+    const f = fixture();
+    assert.throws(
+      () => run(f, { binaries: { ...f.binaries, [rustTarget]: f.root } }),
+      { message: `binary for ${rustTarget} is not a file: ${f.root}` },
+    );
+    assert.equal(fs.existsSync(f.outDir), false);
   });
 
   test(`rejects_no_binary_given_for_${rustTarget}`, () => {
@@ -179,6 +222,7 @@ test('rejects_a_binary_for_an_unknown_target', () => {
     () => run(f, { binaries: { ...f.binaries, 'x86_64-pc-windows-msvc': f.binaries['x86_64-apple-darwin'] } }),
     { message: 'unknown target x86_64-pc-windows-msvc' },
   );
+  assert.equal(fs.existsSync(f.outDir), false, 'nothing is written for an unknown target');
 });
 
 test('refuses_to_write_into_a_non_empty_output_directory', () => {
@@ -186,6 +230,30 @@ test('refuses_to_write_into_a_non_empty_output_directory', () => {
   fs.mkdirSync(f.outDir);
   fs.writeFileSync(path.join(f.outDir, 'stale'), 'x');
   assert.throws(() => run(f), { message: `output directory is not empty: ${f.outDir}` });
+  assert.deepEqual(fs.readdirSync(f.outDir), ['stale'], 'the directory is left as it was');
+});
+
+for (const missing of ['bin', 'lib', 'package.json']) {
+  test(`rejects_a_main_source_without_${missing}_before_writing_anything`, () => {
+    const f = fixture();
+    const mainSrc = path.join(f.root, 'main-src');
+    fs.cpSync(MAIN_SRC, mainSrc, { recursive: true });
+    fs.rmSync(path.join(mainSrc, missing), { recursive: true });
+    assert.throws(() => run(f, { mainSrc }), { message: `main package source is missing ${path.join(mainSrc, missing)}` });
+    assert.equal(fs.existsSync(f.outDir), false);
+  });
+}
+
+test('rejects_an_unparsable_main_package_json_naming_the_file_before_writing', () => {
+  const f = fixture();
+  const mainSrc = path.join(f.root, 'main-src');
+  fs.cpSync(MAIN_SRC, mainSrc, { recursive: true });
+  fs.writeFileSync(path.join(mainSrc, 'package.json'), '{ not json');
+  assert.throws(() => run(f, { mainSrc }), (err) => {
+    assert.match(err.message, new RegExp(`^cannot parse ${path.join(mainSrc, 'package.json')}: `));
+    return true;
+  });
+  assert.equal(fs.existsSync(f.outDir), false);
 });
 
 test('cli_builds_from_flags_and_prints_one_package_dir_per_line', () => {
@@ -221,4 +289,52 @@ test('cli_exits_2_on_a_missing_required_flag', () => {
   const r = spawnSync(process.execPath, [SCRIPT, '--version', '1.2.3'], { encoding: 'utf8' });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /^build-packages: missing --out\nusage: /);
+});
+
+function cliArgs(f, extra = []) {
+  const args = ['--version', '1.2.3', '--cargo-toml', f.cargoToml, '--out', f.outDir];
+  for (const [t, p] of Object.entries(f.binaries)) args.push('--binary', `${t}=${p}`);
+  return [...args, ...extra];
+}
+
+const USAGE_LINE =
+  'usage: build-packages.mjs --version <X.Y.Z> --out <dir> [--cargo-toml <file>] [--main-src <dir>] ' +
+  '--binary <rust-target>=<path> (once per target)\n';
+
+const CLI_USAGE_ERRORS = [
+  ['unknown_flag', ['--bogus', 'x'], 'unknown flag --bogus'],
+  ['flag_without_value', ['--main-src'], '--main-src needs a value'],
+  ['binary_without_equals', ['--binary', 'foo'], '--binary needs <rust-target>=<path>, got foo'],
+  ['binary_with_empty_target', ['--binary', '=x'], '--binary needs <rust-target>=<path>, got =x'],
+  ['duplicate_version', ['--version', '1.2.3'], 'duplicate --version'],
+  ['duplicate_out', ['--out', 'elsewhere'], 'duplicate --out'],
+  ['duplicate_cargo_toml', ['--cargo-toml', 'elsewhere'], 'duplicate --cargo-toml'],
+  ['duplicate_main_src', ['--main-src', 'a', '--main-src', 'b'], 'duplicate --main-src'],
+  ['duplicate_binary_target', ['--binary', 'x86_64-apple-darwin=other'], 'duplicate --binary for x86_64-apple-darwin'],
+];
+for (const [name, extra, message] of CLI_USAGE_ERRORS) {
+  test(`cli_exits_2_on_${name}`, () => {
+    const f = fixture();
+    const r = spawnSync(process.execPath, [SCRIPT, ...cliArgs(f, extra)], { encoding: 'utf8' });
+    assert.equal(r.status, 2);
+    assert.equal(r.stdout, '');
+    assert.equal(r.stderr, `build-packages: ${message}\n${USAGE_LINE}`);
+    assert.equal(fs.existsSync(f.outDir), false);
+  });
+}
+
+test('cli_exits_2_when_version_is_missing', () => {
+  const r = spawnSync(process.execPath, [SCRIPT, '--out', 'x'], { encoding: 'utf8' });
+  assert.equal(r.status, 2);
+  assert.equal(r.stderr, `build-packages: missing --version\n${USAGE_LINE}`);
+});
+
+test('cli_main_src_flag_selects_the_launcher_source', () => {
+  const f = fixture();
+  const mainSrc = path.join(f.root, 'main-src');
+  fs.cpSync(MAIN_SRC, mainSrc, { recursive: true });
+  fs.writeFileSync(path.join(mainSrc, 'lib', 'marker.js'), '// marker\n');
+  const r = spawnSync(process.execPath, [SCRIPT, ...cliArgs(f, ['--main-src', mainSrc])], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(f.outDir, 'minuta', 'lib', 'marker.js')));
 });

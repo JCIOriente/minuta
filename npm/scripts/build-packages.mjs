@@ -31,7 +31,23 @@ function cargoVersion(cargoToml) {
   return m[1];
 }
 
-function checkInputs({ version, cargoToml, binaries, outDir }) {
+// The launcher package source: bin/, lib/ and a parsable package.json. Returns its manifest.
+function readMainSource(mainSrc) {
+  for (const entry of ['bin', 'lib', 'package.json']) {
+    const p = path.join(mainSrc, entry);
+    if (!fs.existsSync(p)) throw new Error(`main package source is missing ${p}`);
+  }
+  const file = path.join(mainSrc, 'package.json');
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    throw new Error(`cannot parse ${file}: ${err.message}`, { cause: err });
+  }
+}
+
+// Everything that can be wrong is found here, before the first file is written.
+// Returns the parsed main package.json.
+function checkInputs({ version, cargoToml, binaries, outDir, mainSrc }) {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`version ${version} is not X.Y.Z`);
   const crate = cargoVersion(cargoToml);
   if (crate !== version) throw new Error(`version ${version} does not match Cargo.toml version ${crate}`);
@@ -42,19 +58,21 @@ function checkInputs({ version, cargoToml, binaries, outDir }) {
   for (const { rustTarget } of TARGETS) {
     const p = binaries[rustTarget];
     if (p === undefined) throw new Error(`no binary given for ${rustTarget}`);
-    if (!fs.statSync(p, { throwIfNoEntry: false })?.isFile()) {
-      throw new Error(`binary for ${rustTarget} is not a file: ${p}`);
-    }
+    const stat = fs.statSync(p, { throwIfNoEntry: false });
+    if (!stat) throw new Error(`binary for ${rustTarget} does not exist: ${p}`);
+    if (!stat.isFile()) throw new Error(`binary for ${rustTarget} is not a file: ${p}`);
   }
+  const main = readMainSource(mainSrc);
   if (fs.existsSync(outDir) && fs.readdirSync(outDir).length > 0) {
     throw new Error(`output directory is not empty: ${outDir}`);
   }
+  return main;
 }
 
 // `version` may carry the tag's leading "v". Returns [{ name, dir }] in publish order.
 export function buildPackages({ version, cargoToml, binaries, outDir, mainSrc }) {
   version = version.replace(/^v/, '');
-  checkInputs({ version, cargoToml, binaries, outDir });
+  const main = checkInputs({ version, cargoToml, binaries, outDir, mainSrc });
 
   const published = [];
   for (const { platform, arch, pkg, rustTarget } of TARGETS) {
@@ -84,7 +102,6 @@ export function buildPackages({ version, cargoToml, binaries, outDir, mainSrc })
     fs.cpSync(path.join(mainSrc, sub), path.join(mainDir, sub), { recursive: true });
   }
   fs.chmodSync(path.join(mainDir, 'bin', 'minuta.js'), 0o755);
-  const main = JSON.parse(fs.readFileSync(path.join(mainSrc, 'package.json'), 'utf8'));
   main.version = version;
   // Exact versions, no range: a launcher must never run a binary of another version.
   main.optionalDependencies = Object.fromEntries(
@@ -96,20 +113,26 @@ export function buildPackages({ version, cargoToml, binaries, outDir, mainSrc })
 }
 
 function parseArgs(argv) {
+  const given = new Set();
   const opts = { cargoToml: path.join(here, '..', '..', 'Cargo.toml'), mainSrc: path.join(here, '..', 'minuta'), binaries: {} };
   for (let i = 0; i < argv.length; i += 2) {
     const flag = argv[i];
     const value = argv[i + 1];
     if (value === undefined) throw new UsageError(`${flag} needs a value`);
-    if (flag === '--version') opts.version = value;
-    else if (flag === '--out') opts.outDir = value;
-    else if (flag === '--cargo-toml') opts.cargoToml = value;
-    else if (flag === '--main-src') opts.mainSrc = value;
-    else if (flag === '--binary') {
+    if (flag === '--binary') {
       const eq = value.indexOf('=');
       if (eq < 1) throw new UsageError(`--binary needs <rust-target>=<path>, got ${value}`);
-      opts.binaries[value.slice(0, eq)] = value.slice(eq + 1);
-    } else throw new UsageError(`unknown flag ${flag}`);
+      const target = value.slice(0, eq);
+      if (target in opts.binaries) throw new UsageError(`duplicate --binary for ${target}`);
+      opts.binaries[target] = value.slice(eq + 1);
+      continue;
+    }
+    const key = SINGLE_FLAGS[flag];
+    if (key === undefined) throw new UsageError(`unknown flag ${flag}`);
+    // The defaults count as unset: only a flag given twice on the command line is a duplicate.
+    if (given.has(flag)) throw new UsageError(`duplicate ${flag}`);
+    given.add(flag);
+    opts[key] = value;
   }
   for (const [key, flag] of [['version', '--version'], ['outDir', '--out']]) {
     if (opts[key] === undefined) throw new UsageError(`missing ${flag}`);
@@ -118,6 +141,8 @@ function parseArgs(argv) {
 }
 
 class UsageError extends Error {}
+
+const SINGLE_FLAGS = { '--version': 'version', '--out': 'outDir', '--cargo-toml': 'cargoToml', '--main-src': 'mainSrc' };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
