@@ -67,8 +67,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: node --test npm/minuta/test/*.test.js
-      - run: node --test npm/scripts/test/*.test.mjs
+      # failglob: a glob that matches nothing is an error, not a run of zero tests (Node 24 exits 0).
+      - run: |
+          shopt -s failglob
+          node --test npm/minuta/test/*.test.js
+          node --test npm/scripts/test/*.test.mjs
+        shell: bash
 
   # Builds the five packages from a real binary, installs them the way a user would,
   # and runs the installed `minuta`. Catches a wrong `files`, a missing mode bit and an
@@ -105,7 +109,7 @@ jobs:
             --binary aarch64-unknown-linux-musl="$binary" > "$work/dirs.txt"
           mkdir "$work/tarballs"
           while read -r dir; do
-            (cd "$dir" && npm pack --silent --pack-destination "$work/tarballs" > /dev/null)
+            (cd "$dir" && npm pack --loglevel=error --pack-destination "$work/tarballs" > /dev/null)
           done < "$work/dirs.txt"
           platform_pkg=$(node -p "require('./npm/minuta/lib/platform.js').resolveTarget(process.platform, process.arch).pkg")
           # '@jcioriente/minuta-linux-x64' is packed as 'jcioriente-minuta-linux-x64-<version>.tgz'.
@@ -117,7 +121,7 @@ jobs:
           mkdir "$work/install"
           cd "$work/install"
           npm init -y > /dev/null
-          npm install --no-audit --no-fund --silent "$main_tgz" "$platform_tgz"
+          npm install --no-audit --no-fund --loglevel=error "$main_tgz" "$platform_tgz"
           got=$(./node_modules/.bin/minuta --version)
           want="minuta $version"
           if [ "$got" != "$want" ]; then
