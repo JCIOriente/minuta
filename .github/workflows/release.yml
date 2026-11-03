@@ -152,6 +152,22 @@ jobs:
             exit 1
           fi
           mapfile -t dirs < "$RUNNER_TEMP/dirs.txt"
+          # Four platform packages and the main package; fewer would publish a launcher that points nowhere.
+          if [ "${#dirs[@]}" -ne 5 ]; then
+            echo "::error::expected 5 package directories, got ${#dirs[@]}"
+            exit 1
+          fi
+          # Check every package before publishing any, so a bad one cannot leave a partial release.
+          for dir in "${dirs[@]}"; do
+            name=$(node -p 'require(process.argv[1]).name' "$dir/package.json")
+            # The file a user runs must be there and executable, also in a dry run.
+            bin=bin/minuta
+            if [ "$name" = "@jcioriente/minuta" ]; then bin=bin/minuta.js; fi
+            if [ ! -x "$dir/$bin" ]; then
+              echo "::error::$name has no executable $bin"
+              exit 1
+            fi
+          done
           for dir in "${dirs[@]}"; do
             name=$(node -p 'require(process.argv[1]).name' "$dir/package.json")
             # Re-running after a partial publish skips what is already on the registry.
