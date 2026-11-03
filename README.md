@@ -31,6 +31,18 @@ minuta runs on macOS, Linux and Windows (through WSL2).
 **[Follow the installation guide](https://github.com/JCIOriente/minuta/blob/main/docs/install.md)**
 for your system. It covers Rust, ffmpeg, whisper.cpp and an LLM backend.
 
+If you already have Node.js 18 or newer, install it with npm. This needs no
+Rust and works on macOS (Apple Silicon and Intel) and Linux (x64 and arm64); on
+Windows, run it inside WSL2:
+
+```sh
+npm i -g @jcioriente/minuta
+```
+
+npm installs only minuta. ffmpeg, whisper.cpp and an LLM backend are still
+installed separately, as the installation guide explains. To try minuta without
+installing it, run `npx @jcioriente/minuta doctor`.
+
 If you already have Rust 1.88 or newer:
 
 ```sh

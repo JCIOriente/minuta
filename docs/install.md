@@ -8,7 +8,7 @@ Choose your system and follow its steps from top to bottom. Then
 
 | You need | For | Required? |
 | --- | --- | --- |
-| Rust 1.88 or newer | Building minuta | Always |
+| Node.js 18 or newer, or Rust 1.88 or newer | Installing minuta (npm needs no Rust) | Always |
 | `ffmpeg` and `ffprobe` | Reading, joining and converting media | Always |
 | `whisper-cli` from whisper.cpp | Transcription | Always |
 | A whisper model | Transcription | Always |
@@ -22,6 +22,18 @@ bottom. If a later command says `brew: command not found` or
 
 In every system, `--locked` builds minuta with the dependency versions it was
 tested with.
+
+**With Node.js 18 or newer you can skip Rust.** Install ffmpeg and whisper.cpp with
+your system's steps, skip the Rust and `cargo install` steps, and run this instead:
+
+```sh
+npm i -g @jcioriente/minuta
+```
+
+This works on macOS (Apple Silicon and Intel) and Linux (x64 and arm64). On
+Windows, run it inside WSL2 (see [Windows](#windows)): npm sees WSL2 as Linux. npm
+installs only minuta, not ffmpeg, whisper.cpp or a model. Check it with
+`minuta --version`, or try it without installing: `npx @jcioriente/minuta doctor`.
 
 ### macOS
 
