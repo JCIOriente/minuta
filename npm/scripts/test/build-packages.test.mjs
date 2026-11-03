@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -20,9 +20,15 @@ const EXPECTED = [
   ['aarch64-unknown-linux-musl', '@jcioriente/minuta-linux-arm64', 'linux', 'arm64'],
 ];
 
+const made = [];
 function tmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'minuta-build-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'minuta-build-'));
+  made.push(dir);
+  return dir;
 }
+after(() => {
+  for (const dir of made) fs.rmSync(dir, { recursive: true, force: true });
+});
 
 // Fake binaries with a mode that is NOT executable, to prove the script sets the mode itself.
 function fixture({ cargoVersion = '1.2.3' } = {}) {
@@ -93,6 +99,12 @@ test('main_package_gets_the_version_and_exact_optional_dependencies', () => {
     '@jcioriente/minuta-linux-arm64': '1.2.3',
     '@jcioriente/minuta-linux-x64': '1.2.3',
   });
+  assert.deepEqual(Object.keys(pj.optionalDependencies), [
+    '@jcioriente/minuta-darwin-arm64',
+    '@jcioriente/minuta-darwin-x64',
+    '@jcioriente/minuta-linux-arm64',
+    '@jcioriente/minuta-linux-x64',
+  ]);
   // The rest of the source package.json is kept as it is.
   const src = read(path.join(MAIN_SRC, 'package.json'));
   assert.deepEqual({ ...pj, version: src.version, optionalDependencies: src.optionalDependencies }, src);
@@ -177,6 +189,16 @@ test('reads_the_version_from_the_package_table_not_from_a_decoy_before_or_after_
   assert.doesNotThrow(() => run(f));
 });
 
+test('reads_the_version_key_not_a_longer_key_that_ends_in_version', () => {
+  const f = fixture();
+  fs.writeFileSync(
+    f.cargoToml,
+    '[workspace.package]\nversion = "7.7.7"\n\n[package]\nname = "minuta"\nrust-version = "9.9.9"\n' +
+      'keywords = ["a"]\nversion = "1.2.3"\n',
+  );
+  assert.doesNotThrow(() => run(f));
+});
+
 test('a_decoy_version_outside_the_package_table_is_not_the_crate_version', () => {
   const f = fixture();
   fs.writeFileSync(f.cargoToml, '[package]\nname = "minuta"\n\n[dependencies.foo]\nversion = "1.2.3"\n');
@@ -213,6 +235,17 @@ for (const [rustTarget] of EXPECTED) {
     const f = fixture();
     const { [rustTarget]: _omitted, ...rest } = f.binaries;
     assert.throws(() => run(f, { binaries: rest }), { message: `no binary given for ${rustTarget}` });
+    assert.equal(fs.existsSync(f.outDir), false);
+  });
+
+  test(`rejects_an_empty_binary_${rustTarget}`, () => {
+    const f = fixture();
+    fs.writeFileSync(f.binaries[rustTarget], '');
+    assert.throws(
+      () => run(f),
+      { message: `binary for ${rustTarget} is empty: ${f.binaries[rustTarget]}` },
+    );
+    assert.equal(fs.existsSync(f.outDir), false);
   });
 }
 
@@ -233,16 +266,31 @@ test('refuses_to_write_into_a_non_empty_output_directory', () => {
   assert.deepEqual(fs.readdirSync(f.outDir), ['stale'], 'the directory is left as it was');
 });
 
-for (const missing of ['bin', 'lib', 'package.json']) {
-  test(`rejects_a_main_source_without_${missing}_before_writing_anything`, () => {
+for (const [removed, reported] of [
+  ['bin', 'bin/minuta.js'],
+  ['bin/minuta.js', 'bin/minuta.js'],
+  ['lib', 'lib'],
+  ['package.json', 'package.json'],
+]) {
+  test(`rejects_a_main_source_without_${removed.replace('/', '_')}_before_writing_anything`, () => {
     const f = fixture();
     const mainSrc = path.join(f.root, 'main-src');
     fs.cpSync(MAIN_SRC, mainSrc, { recursive: true });
-    fs.rmSync(path.join(mainSrc, missing), { recursive: true });
-    assert.throws(() => run(f, { mainSrc }), { message: `main package source is missing ${path.join(mainSrc, missing)}` });
+    fs.rmSync(path.join(mainSrc, removed), { recursive: true });
+    assert.throws(() => run(f, { mainSrc }), { message: `main package source is missing ${path.join(mainSrc, reported)}` });
     assert.equal(fs.existsSync(f.outDir), false);
   });
 }
+
+test('rejects_a_main_source_where_lib_is_a_file', () => {
+  const f = fixture();
+  const mainSrc = path.join(f.root, 'main-src');
+  fs.cpSync(MAIN_SRC, mainSrc, { recursive: true });
+  fs.rmSync(path.join(mainSrc, 'lib'), { recursive: true });
+  fs.writeFileSync(path.join(mainSrc, 'lib'), 'x');
+  assert.throws(() => run(f, { mainSrc }), { message: `main package source is missing ${path.join(mainSrc, 'lib')}` });
+  assert.equal(fs.existsSync(f.outDir), false);
+});
 
 test('rejects_an_unparsable_main_package_json_naming_the_file_before_writing', () => {
   const f = fixture();
@@ -251,6 +299,7 @@ test('rejects_an_unparsable_main_package_json_naming_the_file_before_writing', (
   fs.writeFileSync(path.join(mainSrc, 'package.json'), '{ not json');
   assert.throws(() => run(f, { mainSrc }), (err) => {
     assert.match(err.message, new RegExp(`^cannot parse ${path.join(mainSrc, 'package.json')}: `));
+    assert.ok(err.cause instanceof SyntaxError);
     return true;
   });
   assert.equal(fs.existsSync(f.outDir), false);
@@ -337,4 +386,34 @@ test('cli_main_src_flag_selects_the_launcher_source', () => {
   const r = spawnSync(process.execPath, [SCRIPT, ...cliArgs(f, ['--main-src', mainSrc])], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   assert.ok(fs.existsSync(path.join(f.outDir, 'minuta', 'lib', 'marker.js')));
+});
+
+test('cli_exits_2_on_an_empty_out_instead_of_writing_into_the_current_directory', () => {
+  const f = fixture();
+  const args = ['--version', '1.2.3', '--cargo-toml', f.cargoToml, '--out', ''];
+  for (const [t, p] of Object.entries(f.binaries)) args.push('--binary', `${t}=${p}`);
+  const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', cwd: f.root });
+  assert.equal(r.status, 2);
+  assert.equal(r.stderr, `build-packages: --out needs a value\n${USAGE_LINE}`);
+  assert.deepEqual(fs.readdirSync(f.root).filter((n) => n.startsWith('minuta')), []);
+});
+
+for (const key of ['constructor', '__proto__', 'toString']) {
+  test(`cli_reports_${key}_as_an_unknown_target_not_a_duplicate`, () => {
+    const f = fixture();
+    const r = spawnSync(process.execPath, [SCRIPT, ...cliArgs(f, ['--binary', `${key}=/x`])], { encoding: 'utf8' });
+    assert.equal(r.status, 1);
+    assert.equal(r.stderr, `build-packages: unknown target ${key}\n`);
+  });
+}
+
+test('cli_reads_Cargo_toml_from_the_repository_by_default', () => {
+  const f = fixture();
+  const repoCargo = fs.readFileSync(path.join(here, '..', '..', '..', 'Cargo.toml'), 'utf8');
+  const version = repoCargo.match(/^version\s*=\s*"([^"]+)"/m)[1];
+  const args = ['--version', version, '--out', f.outDir];
+  for (const [t, p] of Object.entries(f.binaries)) args.push('--binary', `${t}=${p}`);
+  const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(read(path.join(f.outDir, 'minuta', 'package.json')).version, version);
 });

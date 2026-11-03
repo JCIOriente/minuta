@@ -33,9 +33,12 @@ function cargoVersion(cargoToml) {
 
 // The launcher package source: bin/, lib/ and a parsable package.json. Returns its manifest.
 function readMainSource(mainSrc) {
-  for (const entry of ['bin', 'lib', 'package.json']) {
+  const expected = [['bin/minuta.js', 'isFile'], ['lib', 'isDirectory'], ['package.json', 'isFile']];
+  for (const [entry, kind] of expected) {
     const p = path.join(mainSrc, entry);
-    if (!fs.existsSync(p)) throw new Error(`main package source is missing ${p}`);
+    if (!fs.statSync(p, { throwIfNoEntry: false })?.[kind]()) {
+      throw new Error(`main package source is missing ${p}`);
+    }
   }
   const file = path.join(mainSrc, 'package.json');
   try {
@@ -61,6 +64,7 @@ function checkInputs({ version, cargoToml, binaries, outDir, mainSrc }) {
     const stat = fs.statSync(p, { throwIfNoEntry: false });
     if (!stat) throw new Error(`binary for ${rustTarget} does not exist: ${p}`);
     if (!stat.isFile()) throw new Error(`binary for ${rustTarget} is not a file: ${p}`);
+    if (stat.size === 0) throw new Error(`binary for ${rustTarget} is empty: ${p}`);
   }
   const main = readMainSource(mainSrc);
   if (fs.existsSync(outDir) && fs.readdirSync(outDir).length > 0) {
@@ -114,11 +118,12 @@ export function buildPackages({ version, cargoToml, binaries, outDir, mainSrc })
 
 function parseArgs(argv) {
   const given = new Set();
-  const opts = { cargoToml: path.join(here, '..', '..', 'Cargo.toml'), mainSrc: path.join(here, '..', 'minuta'), binaries: {} };
+  const opts = { cargoToml: path.join(here, '..', '..', 'Cargo.toml'), mainSrc: path.join(here, '..', 'minuta'), binaries: Object.create(null) };
   for (let i = 0; i < argv.length; i += 2) {
     const flag = argv[i];
     const value = argv[i + 1];
-    if (value === undefined) throw new UsageError(`${flag} needs a value`);
+    // An empty value is as good as none: `--out "$UNSET"` must not write into the current directory.
+    if (value === undefined || value === '') throw new UsageError(`${flag} needs a value`);
     if (flag === '--binary') {
       const eq = value.indexOf('=');
       if (eq < 1) throw new UsageError(`--binary needs <rust-target>=<path>, got ${value}`);
