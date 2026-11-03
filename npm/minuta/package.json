@@ -1,0 +1,30 @@
+{
+  "name": "@jcioriente/minuta",
+  "version": "0.8.0",
+  "description": "Turn meeting recordings into transcripts and minutes",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JCIOriente/minuta.git"
+  },
+  "homepage": "https://github.com/JCIOriente/minuta",
+  "bin": {
+    "minuta": "bin/minuta.js"
+  },
+  "files": [
+    "bin/",
+    "lib/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "optionalDependencies": {
+    "@jcioriente/minuta-darwin-arm64": "0.8.0",
+    "@jcioriente/minuta-darwin-x64": "0.8.0",
+    "@jcioriente/minuta-linux-arm64": "0.8.0",
+    "@jcioriente/minuta-linux-x64": "0.8.0"
+  }
+}
