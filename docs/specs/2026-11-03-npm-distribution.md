@@ -7,7 +7,7 @@
 
 ## TL;DR
 - minuta gets published to npm as `@jcioriente/minuta`, so `npm i -g @jcioriente/minuta` or `npx @jcioriente/minuta` works without a Rust toolchain.
-- The package ships the compiled Rust binary, not WASM: minuta spawns `ffmpeg` and `whisper-cli` and signals process groups, which WASM cannot do (`src/tools.rs:322`, `:367`, `:865`; `libc` in `Cargo.toml`).
+- The package ships the compiled Rust binary, not WASM: minuta spawns `ffmpeg` and `whisper-cli` and signals process groups, which WASM cannot do (`Command::new` in `src/tools.rs:322` and `:367`, `process_group(0)` at `:182`, `libc::kill(-group, SIGKILL)` at `:217`; `libc` in `Cargo.toml`).
 - One small package per platform holds the binary (`darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`); the main package is a JS launcher that depends on all of them as optional dependencies, so npm installs only the one that fits.
 - Windows users run it in WSL2, where npm sees Linux and installs the Linux binary. Native Windows is out of scope.
 - A tag `vX.Y.Z` triggers a workflow that builds the four binaries and publishes the five packages.
@@ -92,7 +92,7 @@ Invariants: every package version equals the `Cargo.toml` version; the main pack
 - Launcher on an unlisted platform or arch: prints the platform and arch, suggests `cargo install --locked minuta`; exit 1.
 - Platform package missing although the platform is listed (install with `--omit=optional`, or a copied `node_modules` from another OS): prints which package is missing and the command to reinstall; exit 1.
 - Binary not executable: the build script sets mode 0755, and npm preserves it from the tarball; a launcher test checks the packed file mode.
-- Static Linux binaries (musl) run on glibc and musl distributions alike. minuta uses rustls (`Cargo.toml`: `ureq` with `rustls`), so no system OpenSSL is needed. Unconfirmed: that the full dependency tree builds for musl, and that `ring`/`aws-lc` cross-compiles for `aarch64`; the build task verifies it first (see Open questions).
+- Static Linux binaries (musl) run on glibc and musl distributions alike. minuta uses rustls (`Cargo.toml`: `ureq` with `rustls`), so no system OpenSSL is needed. Verified on 2026-11-03 (see Open questions, item 2). The TLS crypto is `ring` (`Cargo.lock`; no `aws-lc`, no `openssl-sys`), which needs a C compiler for the target, so the CI build job installs a musl C toolchain.
 - The launcher adds one Node start (tens of ms) to each run; accepted.
 - Partial publish (a platform package published, the next fails): re-running the workflow must be safe. `npm publish` of an existing version fails, so the publish step skips a package whose exact version is already on the registry (`npm view <pkg>@<v> version`).
 
@@ -125,7 +125,7 @@ One static binary per architecture works on Ubuntu, Debian, Alpine and WSL2 imag
 
 ## Open questions
 1. **Publish credential.** Recommended: `NPM_TOKEN` (automation token scoped to the `jcioriente` org) in repository secrets for the first release, then switch to npm trusted publishing (OIDC) once the packages exist, since trusted publishing is configured per existing package. Needs the maintainer to create the token and the secret.
-2. **musl feasibility.** Unconfirmed that all dependencies build for both musl targets in CI. If `aarch64` musl does not, fall back to `*-unknown-linux-gnu` built on the oldest runner available for that arch and document the glibc floor.
+2. **musl feasibility. Resolved: it builds.** `cargo build --release --locked` on Alpine (`rust:alpine`, Rust 1.99.1, `--platform linux/arm64` and `linux/amd64`) built the full tree for `aarch64-unknown-linux-musl` (1m17s) and `x86_64-unknown-linux-musl` (1m52s), both statically linked, and each binary printed `minuta 0.8.0`. Not covered by that check: cross-compiling from a glibc runner (ubuntu-latest). The build task uses `musl-tools` for x86_64 and a cross C compiler for aarch64 (for `ring`), and fails the job if `file` does not report static linking. The glibc fallback is not needed.
 3. **Release trigger today.** Releases are made by hand (tags `v0.6.0`..`v0.8.0` and GitHub releases exist; no release workflow). Confirm that pushing the tag is the moment to publish, or whether a GitHub Release `published` event is preferred.
 
 ## Implementation status
