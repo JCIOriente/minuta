@@ -1,3 +1,5 @@
+//! The text `templates pull` prints: file names, prompt notes, results and the catalog lists.
+
 use crate::cli::sanitize;
 use crate::template::pull::{outcome_for, Item, Outcome};
 
