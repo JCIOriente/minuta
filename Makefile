@@ -1,13 +1,19 @@
-.PHONY: ci fmt clippy test worktrees-clean
+.PHONY: ci fmt clippy file-size test worktrees-clean
 
 # Single entry point for local validation and CI.
-ci: fmt clippy test
+ci: fmt clippy file-size test
 
 fmt:
 	cargo fmt --all --check
 
 clippy:
 	cargo clippy --all-targets --all-features -- -D warnings
+
+# Size limit for .rs files under src/ (500 lines, ratchet via the allowlist).
+# Tests the check first, then runs it.
+file-size:
+	./scripts/check-file-size-test.sh
+	./scripts/check-file-size.sh
 
 test:
 	cargo test --all-features
