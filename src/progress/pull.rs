@@ -1,3 +1,5 @@
+//! Model download progress: size formatting, plain start and finish lines, the byte bar.
+
 use std::path::Path;
 use std::time::Duration;
 

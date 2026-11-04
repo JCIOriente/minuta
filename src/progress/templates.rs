@@ -1,3 +1,5 @@
+//! The count bar shown while `templates pull` downloads template files.
+
 use std::time::Duration;
 
 use indicatif::{ProgressBar, ProgressStyle};

@@ -1,3 +1,5 @@
+//! Spinner text: template events, and tool lines rendered as percents or sanitized.
+
 use crate::llm::chunk::Event;
 use crate::tools::{progress_line, ProgressLine};
 
