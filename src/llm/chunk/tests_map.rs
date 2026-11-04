@@ -1,3 +1,5 @@
+//! Tests for the single call and the map calls: fit, chunk order, concurrency, errors, events.
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::thread;

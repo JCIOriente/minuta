@@ -1,3 +1,5 @@
+//! Tests for the transcript text, the token estimate and the language instruction.
+
 use super::test_support::{request, seg, transcript, Recorder, BODY, LANG};
 use super::*;
 

@@ -1,3 +1,5 @@
+//! Tests for consolidation: reduce, merge rounds, the final block and `finish`.
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::test_support::{

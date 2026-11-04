@@ -1,3 +1,5 @@
+//! Splitting inputs into pieces that fit the context budget, and joining notes into parts.
+
 use super::{input_budget, SystemFor};
 use crate::error::Result;
 

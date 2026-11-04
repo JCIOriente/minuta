@@ -1,3 +1,5 @@
+//! Helpers shared by the chunk test modules.
+
 use std::sync::Mutex;
 
 use super::*;
@@ -48,7 +50,7 @@ pub(super) fn fits(system: &str, user: &str, context: usize) -> bool {
 }
 
 /// The `i` in "This is part i of n." of a map system prompt.
-pub(super) fn part_index(system: &str) -> usize {
+fn part_index(system: &str) -> usize {
     let rest = system.split("This is part ").nth(1).expect("map prompt");
     rest.split(' ').next().unwrap().parse().unwrap()
 }
@@ -101,7 +103,7 @@ pub(super) fn chunk_total(events: &[Event]) -> usize {
 pub(super) struct Rng(pub(super) u64);
 
 impl Rng {
-    pub(super) fn next(&mut self) -> u64 {
+    fn next(&mut self) -> u64 {
         self.0 ^= self.0 >> 12;
         self.0 ^= self.0 << 25;
         self.0 ^= self.0 >> 27;
@@ -139,7 +141,7 @@ pub(super) fn boom() -> Error {
 pub(super) const BLOCK: &str = "FIELDS: return a title and a body.";
 
 /// Recorded (system, user) pairs.
-pub(super) type Calls = Vec<(String, String)>;
+type Calls = Vec<(String, String)>;
 
 /// Runs `generate_with` with `BLOCK`, a recording `complete` answering "n" and a `finish`
 /// answering "final". Returns the output, the `complete` calls, the `finish` calls and
