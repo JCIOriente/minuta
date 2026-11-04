@@ -5,6 +5,8 @@
 //! whether it is current and runs [`TemplateRun::execute`] if not (ADR-0005).
 
 mod files;
+// The JSON-output path (`generate_json`, `repairs_exhausted`) is a second
+// `impl TemplateRun` block in json.rs.
 mod json;
 
 use std::fs;

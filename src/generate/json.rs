@@ -1,3 +1,5 @@
+//! The JSON-output path of a template run: the final JSON call and its repair loop.
+
 use crate::error::{Error, Result};
 use crate::fields::prompt::repair_user;
 use crate::fields::Violation;

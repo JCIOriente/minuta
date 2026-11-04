@@ -1,3 +1,5 @@
+//! The job-folder file helpers of the template step: artifact paths, reads and cleanup.
+
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
