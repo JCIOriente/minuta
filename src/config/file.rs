@@ -1,3 +1,5 @@
+//! The config file tables as serde reads them, and reading the file.
+
 use std::collections::BTreeMap;
 use std::path::Path;
 

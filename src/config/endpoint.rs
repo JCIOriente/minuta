@@ -1,3 +1,5 @@
+//! OpenAI-compatible endpoints: the resolved `Endpoint` and the validation of its table.
+
 use std::net::IpAddr;
 use std::time::Duration;
 
