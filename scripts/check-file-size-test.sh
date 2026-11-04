@@ -11,7 +11,7 @@ root=$(mktemp -d)
 trap 'rm -rf "$root"' EXIT
 
 shells=$(command -v bash)
-if [ -x /bin/bash ] && [ "$shells" != /bin/bash ]; then
+if [ -x /bin/bash ] && ! [ /bin/bash -ef "$shells" ]; then
   shells="$shells /bin/bash"
 fi
 
@@ -171,6 +171,21 @@ expect 1 "src/a.rs: 601 lines, allowlist allows 600; it may only shrink" "file-s
 new_case missing_allowlist_errors
 expect 2 "file-size: allow.txt: cannot read the allowlist"
 
+new_case unreadable_allowlist_errors
+allow "$header"
+chmod 000 allow.txt
+# root can read a mode-000 file, so the case only means something for other users.
+if [ "$(id -u)" != 0 ]; then
+  expect 2 "file-size: allow.txt: cannot read the allowlist"
+fi
+chmod 644 allow.txt
+
+new_case glob_in_allowlist_not_expanded
+lines src/a.rs 550
+allow "src/*.rs 600"
+expect 1 "src/a.rs: 550 lines, limit 500; split it into modules" \
+  "src/*.rs: listed in the allowlist but does not exist" "file-size: 2 violations"
+
 new_case missing_src_errors
 rmdir src
 allow "$header"
@@ -196,6 +211,10 @@ new_case malformed_count_within_limit_errors
 allow "src/a.rs 500"
 expect 2 "file-size: allow.txt:1: max lines 500 is within the limit (500); remove the entry"
 
+new_case malformed_count_too_large_errors
+allow "src/a.rs 99999999999999999999999"
+expect 2 "file-size: allow.txt:1: max lines 99999999999999999999999 is too large"
+
 new_case malformed_path_not_rs_errors
 allow "src/a.md 600"
 expect 2 "file-size: allow.txt:1: src/a.md is not a .rs file"
@@ -218,6 +237,16 @@ new_case bad_src_form_errors_trailing_slash
 allow "$header"
 src_arg=src/
 expect 2 "file-size: FILE_SIZE_SRC must be a relative path without a leading ./ or a trailing / (got 'src/')"
+
+new_case bad_src_form_errors_dot
+allow "$header"
+src_arg=.
+expect 2 "file-size: FILE_SIZE_SRC must be a relative path without a leading ./ or a trailing / (got '.')"
+
+new_case bad_src_form_errors_dot_dot
+allow "$header"
+src_arg=..
+expect 2 "file-size: FILE_SIZE_SRC must be a relative path without a leading ./ or a trailing / (got '..')"
 
 new_case bad_src_form_errors_absolute
 allow "$header"

@@ -47,6 +47,8 @@ while IFS= read -r line || [ -n "$line" ]; do
   case "$max" in
     '' | 0* | *[!0-9]*) fatal "$where: max lines must be a positive integer (got '$max')" ;;
   esac
+  # More digits than this would overflow `[ -gt ]`; no source file comes close.
+  [ ${#max} -le 9 ] || fatal "$where: max lines $max is too large"
   [ "$max" -gt "$LIMIT" ] || fatal "$where: max lines $max is within the limit ($LIMIT); remove the entry"
   case "$path" in *.rs) ;; *) fatal "$where: $path is not a .rs file" ;; esac
   case "$path" in "$src"/*) ;; *) fatal "$where: $path is not under $src/" ;; esac
