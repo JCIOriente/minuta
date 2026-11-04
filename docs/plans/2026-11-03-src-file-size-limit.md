@@ -2,7 +2,7 @@
 
 - Spec: [docs/specs/2026-11-03-src-file-size-limit.md](../specs/2026-11-03-src-file-size-limit.md)
 - Date: 2026-11-03
-- Status: approved
+- Status: in backlog
 
 ## Overview
 T1 lands the guard: the check script, its tests, the allowlist with the eleven current
@@ -74,7 +74,7 @@ the series is stacked by decision. The split work itself would not conflict.
 
 ## Tasks
 
-### T1: File size guard: check script, tests, allowlist, make target
+### T1: File size guard: check script, tests, allowlist, make target  (#253)
 - Priority: 1
 - Depends on: none
 - Owns: `scripts/check-file-size.sh`, `scripts/check-file-size-test.sh`,
@@ -108,7 +108,7 @@ the series is stacked by decision. The split work itself would not conflict.
   possibly empty array under `set -u` (bash 3.2). Read the allowlist into newline-separated
   strings instead of arrays.
 
-### T2: Split `src/runner.rs` (1651)
+### T2: Split `src/runner.rs` (1651)  (#254)
 - Priority: 1
 - Depends on: T1
 - Owns: `src/runner.rs` → `src/runner/{mod,preflight,pipeline,templates,test_support}.rs`
@@ -140,7 +140,7 @@ the series is stacked by decision. The split work itself would not conflict.
   `crate::runner::preflight` via `pub(crate) use preflight::preflight;`. If the clash is
   awkward, name the module `checks.rs` instead.
 
-### T3: Split `src/llm/chunk.rs` (1383)
+### T3: Split `src/llm/chunk.rs` (1383)  (#255)
 - Priority: 1
 - Depends on: T2
 - Owns: `src/llm/chunk.rs` → `src/llm/chunk/{mod,pack,test_support}.rs` plus test files;
@@ -162,7 +162,7 @@ the series is stacked by decision. The split work itself would not conflict.
   same path.
 - Tests first: none new (see T2).
 
-### T4: Split `src/llm/call.rs` (891)
+### T4: Split `src/llm/call.rs` (891)  (#256)
 - Priority: 2
 - Depends on: T3
 - Owns: `src/llm/call.rs` → `src/llm/call/{mod,clean,cache}.rs` plus test files; its
@@ -178,7 +178,7 @@ the series is stacked by decision. The split work itself would not conflict.
 - Acceptance: the split checks; `minuta::llm::call::{call, call_json, clean, CallCache,
   Policy, Answer}` resolve.
 
-### T5: Split `src/chapters/validate.rs` (888)
+### T5: Split `src/chapters/validate.rs` (888)  (#257)
 - Priority: 2
 - Depends on: T4
 - Owns: `src/chapters/validate.rs` → `src/chapters/validate/{mod,snap,test_support}.rs`
@@ -191,7 +191,7 @@ the series is stacked by decision. The split work itself would not conflict.
   `accepts_*`) go to `validate/tests_edges.rs`. Helpers go to `test_support.rs`.
 - Acceptance: the split checks; `minuta::chapters::validate::parse_answer` resolves.
 
-### T6: Split `src/tools.rs` (880)
+### T6: Split `src/tools.rs` (880)  (#258)
 - Priority: 2
 - Depends on: T5
 - Owns: `src/tools.rs` → `src/tools/{mod,process,locate}.rs` plus test files; its
@@ -210,7 +210,7 @@ the series is stacked by decision. The split work itself would not conflict.
 - Acceptance: the split checks; every `pub` and `pub(crate)` item of `tools` resolves at
   the same path (`tools::run`, `tools::run_capture`, `tools::progress_line`, ...).
 
-### T7: Split `src/progress.rs` (827)
+### T7: Split `src/progress.rs` (827)  (#259)
 - Priority: 2
 - Depends on: T6
 - Owns: `src/progress.rs` → `src/progress/{mod,render,templates,pull}.rs` plus test files;
@@ -228,7 +228,7 @@ the series is stacked by decision. The split work itself would not conflict.
   PullReport, human_size, pull_start_line, pull_finish_line, format_duration,
   template_detail}` resolve.
 
-### T8: Split `src/cli.rs` (753)
+### T8: Split `src/cli.rs` (753)  (#260)
 - Priority: 2
 - Depends on: T7
 - Owns: `src/cli.rs` → `src/cli/{mod,commands,templates}.rs` plus test files; its
@@ -244,7 +244,7 @@ the series is stacked by decision. The split work itself would not conflict.
     `known_templates`, `templates_pull`, `layer_name` (377-543), with the `pull_*` tests.
 - Acceptance: the split checks; `src/main.rs` compiles unchanged against `minuta::cli`.
 
-### T9: Split `src/config.rs` (670)
+### T9: Split `src/config.rs` (670)  (#261)
 - Priority: 3
 - Depends on: T8
 - Owns: `src/config.rs` → `src/config/{mod,file,endpoint}.rs`; its allowlist entry.
@@ -261,7 +261,7 @@ the series is stacked by decision. The split work itself would not conflict.
   Endpoint, default_path, default_path_in, env_snapshot, resolve_path, expand_tilde}`
   resolve.
 
-### T10: Split `src/generate.rs` (605)
+### T10: Split `src/generate.rs` (605)  (#262)
 - Priority: 3
 - Depends on: T9
 - Owns: `src/generate.rs` → `src/generate/{mod,files}.rs`; its allowlist entry.
@@ -273,7 +273,7 @@ the series is stacked by decision. The split work itself would not conflict.
 - Acceptance: the split checks; `minuta::generate::{output_lang, backend_id, TemplateRun}`
   resolve.
 
-### T11: Split `src/fields/validate.rs` (579)
+### T11: Split `src/fields/validate.rs` (579)  (#263)
 - Priority: 3
 - Depends on: T10
 - Owns: `src/fields/validate.rs` → `src/fields/validate/{mod,tests}.rs`; its allowlist
@@ -283,7 +283,7 @@ the series is stacked by decision. The split work itself would not conflict.
 - Acceptance: the split checks; `crate::fields::validate::{parse_object, normalize}` and
   `minuta::fields::validate::parse_answer` resolve.
 
-### T12: Split `src/template/pull_cmd.rs` (525)
+### T12: Split `src/template/pull_cmd.rs` (525)  (#264)
 - Priority: 3
 - Depends on: T11
 - Owns: `src/template/pull_cmd.rs` → `src/template/pull_cmd/{mod,render}.rs`; its allowlist
