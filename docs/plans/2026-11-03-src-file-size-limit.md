@@ -95,13 +95,15 @@ the series is stacked by decision. The split work itself would not conflict.
   - [ ] No file under `src/` or `tests/` changes.
 - Tests first: `scripts/check-file-size-test.sh` cases `exactly_500_passes`,
   `over_501_fails`, `no_trailing_newline_counts`, `listed_grew_fails`,
-  `listed_shrank_over_limit_passes`, `listed_within_limit_fails`, `missing_entry_fails`,
-  `two_offenders_both_reported`, `nested_rs_counted`, `non_rs_ignored`,
-  `missing_allowlist_errors`, `comments_and_blanks_ignored`, `tabs_separate_fields`,
-  `header_only_allowlist_passes`, and one case per malformed form, pattern
-  `malformed_*_errors` (`field_count`, `count_not_a_number`, `count_within_limit`,
-  `path_not_rs`, `path_outside_src`, `duplicate_path`), plus `bad_src_form_errors_*`
-  (`dot_slash`, `trailing_slash`, `absolute`).
+  `listed_at_its_count_passes`, `listed_shrank_over_limit_passes`,
+  `listed_within_limit_fails`, `missing_entry_fails`, `two_offenders_both_reported`,
+  `each_rule_reported_in_one_run`, `nested_rs_counted`, `non_rs_ignored`, `nested_src_dir`,
+  `header_only_allowlist_passes`, `empty_allowlist_passes`, `comments_and_blanks_ignored`,
+  `tabs_separate_fields`, `last_entry_without_newline_read`, `missing_allowlist_errors`,
+  `missing_src_errors`, and one case per malformed form, pattern `malformed_*_errors`
+  (`field_count_one`, `field_count_three`, `count_not_a_number`, `count_leading_zero`,
+  `count_within_limit`, `path_not_rs`, `path_outside_src`, `duplicate_path`), plus
+  `bad_src_form_errors_*` (`dot_slash`, `trailing_slash`, `absolute`).
 - Notes: build fixtures under `mktemp -d` and remove them with a `trap`. Run the check with
   `cd "$fixture" && FILE_SIZE_SRC=src FILE_SIZE_ALLOWLIST=allow.txt "$script"`. Sort the
   file list (`find ... | LC_ALL=C sort`) so the violation order is stable. Do not expand a

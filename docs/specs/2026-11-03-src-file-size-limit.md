@@ -102,8 +102,10 @@ These terms are defined in `CONTEXT.md`.
   - `FILE_SIZE_ALLOWLIST`: the allowlist file. Default `scripts/file-size-allowlist.txt`.
 
   Both are resolved against the current directory. `FILE_SIZE_SRC` must be a relative path
-  with no leading `./` and no trailing `/` (`src`, or `src/llm` in a fixture). Any other form
-  is an error (exit 2), so file paths always print in one form. Allowlist paths are relative
+  with no leading `./` and no trailing `/`, and not `.` or `..` (`src`, or `src/llm` in a
+  fixture). Any other form is an error (exit 2), so file paths always print in one form. So is
+  a `FILE_SIZE_SRC` that is not a directory, because scanning a missing directory would find
+  no files and pass. Allowlist paths are relative
   to the current directory and begin with the value of `FILE_SIZE_SRC` (`src/runner.rs`).
   Files are checked in byte order (`LC_ALL=C sort`), so the violation lines always come in
   the same order.
@@ -118,7 +120,8 @@ These terms are defined in `CONTEXT.md`.
 - `scripts/file-size-allowlist.txt`: one entry per line, `<path> <max lines>`, separated by
   one or more spaces or tabs. Blank lines and lines starting with `#` are ignored. An entry is
   malformed (exit 2) if it has more or fewer than two fields, a count that is not a positive
-  integer, a count of 500 or less, a path that does not end in `.rs`, a path that does not
+  integer written in plain decimal digits with no leading zero (`600`, not `0600` or `6e2`),
+  a count of 500 or less, a path that does not end in `.rs`, a path that does not
   start with `FILE_SIZE_SRC/`, or a path already listed.
 - `scripts/check-file-size-test.sh`: the script's tests. It builds fixture trees in a
   temporary directory and runs the check against each one, using the two variables above.
