@@ -121,7 +121,7 @@ These terms are defined in `CONTEXT.md`.
   one or more spaces or tabs. Blank lines and lines starting with `#` are ignored. An entry is
   malformed (exit 2) if it has more or fewer than two fields, a count that is not a positive
   integer written in plain decimal digits with no leading zero (`600`, not `0600` or `6e2`),
-  a count of 500 or less, a path that does not end in `.rs`, a path that does not
+  a count with more than 9 digits (too large to compare in bash), a count of 500 or less, a path that does not end in `.rs`, a path that does not
   start with `FILE_SIZE_SRC/`, or a path already listed.
 - `scripts/check-file-size-test.sh`: the script's tests. It builds fixture trees in a
   temporary directory and runs the check against each one, using the two variables above.
