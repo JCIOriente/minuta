@@ -1,3 +1,5 @@
+//! Cleanup of raw LLM output: a leading think block and one wrapping code fence.
+
 /// Trims, drops a leading `<think>…</think>` block and unwraps output that is exactly one
 /// fenced code block. Output with prose around a fence, or with several fences, is kept.
 pub fn clean(output: &str) -> String {

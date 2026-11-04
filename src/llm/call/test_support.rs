@@ -1,3 +1,5 @@
+//! Helpers shared by the call test modules.
+
 use super::*;
 use crate::llm::fake::ScriptedBackend;
 

@@ -1,3 +1,5 @@
+//! Per-job cache of cleaned LLM outputs: keys, entry reads, atomic writes and temp cleanup.
+
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};

@@ -1,3 +1,5 @@
+//! Tests for `call` and `call_json`: cache use, retries, backoff, cleanup and JSON answers.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
