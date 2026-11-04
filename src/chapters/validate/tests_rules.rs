@@ -1,3 +1,5 @@
+//! Tests for rules 1-9 of `parse_answer`, each alone and in combination.
+
 use serde_json::json;
 
 use super::parse_answer;

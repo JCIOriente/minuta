@@ -1,3 +1,5 @@
+//! Tests for valid answers, rule boundaries, normalization and inputs that must not panic.
+
 use super::parse_answer;
 use super::test_support::{
     answer, chapter, messages, no_limits, parse, parse_with, per_second, segments, NOT_A_TIME,

@@ -1,3 +1,5 @@
+//! Helpers shared by the chapter validation test modules.
+
 use serde_json::json;
 
 use super::parse_answer;

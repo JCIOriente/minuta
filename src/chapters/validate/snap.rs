@@ -1,3 +1,5 @@
+//! Snapping chapter starts to the nearest segment start, the first one to 0.
+
 use crate::chapters::Chapter;
 use crate::transcript::Segment;
 
