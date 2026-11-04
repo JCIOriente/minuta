@@ -1,3 +1,5 @@
+//! The templates of a run, after the pipeline, in dependency order.
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;

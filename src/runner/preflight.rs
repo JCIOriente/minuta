@@ -1,3 +1,6 @@
+//! Preflight before a run, and what `doctor` reports: the media tools, the whisper and VAD
+//! models and the backends of the run.
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;

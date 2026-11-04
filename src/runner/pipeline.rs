@@ -1,3 +1,5 @@
+//! The five steps of a run in order, with progress, staleness and interrupts.
+
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};

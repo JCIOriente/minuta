@@ -1,3 +1,5 @@
+//! Helpers for the runner's test modules.
+
 use std::fs;
 use std::path::Path;
 
