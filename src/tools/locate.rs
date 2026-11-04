@@ -1,3 +1,5 @@
+//! Finding the tools and probing their versions, for `doctor` and preflight.
+
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};

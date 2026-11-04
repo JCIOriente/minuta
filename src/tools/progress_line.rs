@@ -1,3 +1,5 @@
+//! Recognizing the progress lines that ffmpeg and whisper-cli print.
+
 /// A progress report recognized in one line of a tool's output.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum ProgressLine {

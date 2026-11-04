@@ -1,3 +1,5 @@
+//! Running a tool: spawn in its own process group, stream its output, keep a stderr tail.
+
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
