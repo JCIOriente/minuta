@@ -232,7 +232,7 @@ pub(crate) fn sanitize(text: &str) -> String {
 }
 
 /// An error message on one line, for listings.
-pub(super) fn single_line(text: &str) -> String {
+fn single_line(text: &str) -> String {
     text.lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())

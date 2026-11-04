@@ -1,3 +1,5 @@
+//! The `templates` commands: `list`, `show` and `pull`.
+
 use std::io::IsTerminal;
 use std::path::PathBuf;
 

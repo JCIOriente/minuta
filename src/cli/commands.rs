@@ -1,3 +1,5 @@
+//! The `run`, `transcribe`, `doctor`, `models` and `config` commands.
+
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
