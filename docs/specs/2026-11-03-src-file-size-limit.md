@@ -295,6 +295,6 @@ None at approval time.
 
 ## Implementation status
 Updated by the PRs that implement this spec. Plan: [docs/plans/2026-11-03-src-file-size-limit.md](../plans/2026-11-03-src-file-size-limit.md).
-- [ ] PR 1: guard (check script and its tests, allowlist, make target, conventions rule): #266 (task #253)
-- [ ] Split PRs: the eleven files, largest first, until the allowlist has no entries: #268 runner (#254), #269 llm/chunk (#255), #270 llm/call (#256), #271 chapters/validate (#257), #273 tools (#258), #274 progress (#259), #275 cli (#260), #276 config (#261), #277 generate (#262), #278 fields/validate (#263), #279 template/pull_cmd (#264)
+- [x] PR 1: guard (check script and its tests, allowlist, make target, conventions rule): #266 (task #253)
+- [x] Split PRs: the eleven files, largest first, until the allowlist has no entries: #268 runner (#254), #269 llm/chunk (#255), #270 llm/call (#256), #271 chapters/validate (#257), #273 tools (#258), #274 progress (#259), #275 cli (#260), #276 config (#261), #277 generate (#262), #278 fields/validate (#263), #279 template/pull_cmd (#264)
 - Found along the way, filed as issues: #267, #272
