@@ -3,7 +3,6 @@
 # Checked by scripts/check-file-size.sh (make file-size).
 # Spec: docs/specs/2026-11-03-src-file-size-limit.md
 # path                      max lines
-src/progress.rs             827
 src/cli.rs                  753
 src/config.rs               670
 src/generate.rs             605
