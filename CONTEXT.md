@@ -44,6 +44,9 @@ code, specs and issues. When a term is ambiguous or keeps needing explanation, a
 | Chunk | A slice of a template's input that fits the backend's context budget, cut at line boundaries. | A transcript segment |
 | Consolidation | The final call that turns the notes from all chunks into one document (the reduce step). | A template chained on another template |
 | Call cache | `<job>/.minuta/llm-cache/`: one file per LLM call, keyed by backend id, context budget, system prompt and input. Lets a failed run resume without repeating finished calls. | The step fingerprint cache in `.minuta/job.json` |
+| Size limit | 500 lines for each `.rs` file under `src/`, counted with the last line included. Enforced by `scripts/check-file-size.sh` in `make ci`. | clippy's `too_many_lines`, which counts lines per function |
+| Size allowlist | `scripts/file-size-allowlist.txt`: the over-limit files, each with the most lines it may have. | The `.pulled.toml` record of downloaded templates |
+| Ratchet | The size rule for allowlisted files: an entry may only shrink, and it is removed once the file is at or under the limit. | A retry, or a rate limit |
 
 ## Relationships
 A job has one source and an ordered list of steps. Each step has at most one recorded
