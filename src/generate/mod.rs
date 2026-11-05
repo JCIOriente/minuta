@@ -4,6 +4,11 @@
 //! [`backend_id`], then, once the template's input exists, asks [`TemplateRun::fingerprint`]
 //! whether it is current and runs [`TemplateRun::execute`] if not (ADR-0005).
 
+mod files;
+// The JSON-output path (`generate_json`, `repairs_exhausted`) is a second
+// `impl TemplateRun` block in json.rs.
+mod json;
+
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -16,38 +21,23 @@ use crate::chapters::{
     self, CHAPTERS_VERSION, JSON_FILE, MIN_CHAPTERS, MIN_SECONDS, MIN_TRANSCRIPT_SECONDS,
 };
 use crate::error::{Error, Result};
-use crate::fields::prompt::{fields_block, repair_system, repair_user, schema};
+use crate::fields::prompt::{fields_block, repair_system, schema};
 use crate::fields::render::{artifact_json, render};
 use crate::fields::validate::parse_answer;
-use crate::fields::{Violation, FIELDS_VERSION};
+use crate::fields::FIELDS_VERSION;
 use crate::job::{fingerprint, layout, write_atomic_in, Ctx};
 use crate::lang;
-use crate::llm::call::{call, call_json, Answer, CallCache, Policy};
+use crate::llm::call::{call, CallCache, Policy};
 use crate::llm::chunk::{self, transcript_text, Event, Generated, Request, PROMPT_VERSION};
 use crate::llm::{Backend, BackendId};
 use crate::steps::transcribe::TRANSCRIPT_FILE;
 use crate::template::{Input, Output, Template, Vars};
 use crate::transcript::Transcript;
 
-/// What to try when a JSON answer still breaks its limits or rules after every repair call.
-const REPAIRS_HINT: &str = "raise llm.repairs, relax the limit in a project template, \
-                            or use a stronger backend with --llm";
-
-/// A plain-text call through the call cache, as `chunk::generate_with` takes it.
-type Complete<'a> = &'a (dyn Fn(&str, &str) -> Result<String> + Sync);
-
-/// What the shared repair loop needs from a JSON output (fields or chapters).
-struct JsonOutput<'a, T> {
-    /// Goes before the language instruction in the final system prompt.
-    block: String,
-    /// The system prompt of every repair call.
-    repair_system: String,
-    schema: serde_json::Value,
-    /// Parses and checks a cleaned answer.
-    accept: &'a dyn Fn(&str) -> std::result::Result<T, Vec<Violation>>,
-    /// What a violation breaks, as the exhausted message words it: "limit" or "rule".
-    broken: &'static str,
-}
+use files::{
+    duration, end_seconds, exists, io_error, json_path, md_path, read_transcript, remove_written,
+};
+use json::JsonOutput;
 
 /// What every LLM call of one `execute` shares.
 struct Calls<'a> {
@@ -374,92 +364,6 @@ impl TemplateRun<'_> {
         Ok(())
     }
 
-    /// Generates a JSON output (fields or chapters): the final call asks for JSON with
-    /// `output.schema`, and a rejected answer gets up to `repairs` repair calls, each built from
-    /// the previous answer and its violations (ADR-0006). Map calls use `complete` as for
-    /// Markdown.
-    fn generate_json<T>(
-        &self,
-        request: &Request,
-        complete: Complete,
-        calls: &Calls,
-        output: &JsonOutput<T>,
-        on_event: &mut dyn FnMut(Event),
-    ) -> Result<(Generated, T)> {
-        let accept = |text: &str| (output.accept)(text).map(|value| (value, text.to_owned()));
-        let ask = |system: &str, user: &str| {
-            call_json(
-                self.backend,
-                &calls.cache,
-                calls.policy,
-                system,
-                user,
-                &output.schema,
-                self.forced,
-                calls.interrupt,
-                &accept,
-            )
-        };
-        let mut accepted = None;
-        let mut repair_calls = 0;
-        let mut finish = |system: &str, user: &str, on_event: &mut dyn FnMut(Event)| {
-            let mut answer = ask(system, user)?;
-            loop {
-                let (text, violations) = match answer {
-                    Answer::Accepted((value, text)) => {
-                        accepted = Some(value);
-                        return Ok(text);
-                    }
-                    Answer::Rejected { text, violations } => (text, violations),
-                };
-                if repair_calls == self.repairs {
-                    return Err(self.repairs_exhausted(&violations, output.broken));
-                }
-                repair_calls += 1;
-                on_event(Event::Repair {
-                    attempt: repair_calls as usize,
-                    total: self.repairs as usize,
-                });
-                answer = ask(&output.repair_system, &repair_user(&text, &violations))?;
-            }
-        };
-        let mut generated = chunk::generate_with(
-            request,
-            Some(&output.block),
-            complete,
-            &mut finish,
-            on_event,
-        )?;
-        // `generate_with` counts the final call once; add the repair calls.
-        generated.calls += repair_calls as usize;
-        let value = accepted.expect("finish returned Ok only after accepting an answer");
-        Ok((generated, value))
-    }
-
-    /// `broken` is what one violation breaks: "limit" or "rule".
-    fn repairs_exhausted(&self, violations: &[Violation], broken: &str) -> Error {
-        let count = violations.len();
-        let broken = if count == 1 {
-            broken.to_owned()
-        } else {
-            format!("{broken}s")
-        };
-        let repairs = if self.repairs == 1 {
-            "repair"
-        } else {
-            "repairs"
-        };
-        let list: Vec<&str> = violations
-            .iter()
-            .map(|v| v.0.trim_end_matches('.'))
-            .collect();
-        self.error(format!(
-            "the answer still breaks {count} {broken} after {} {repairs}: {}; {REPAIRS_HINT}",
-            self.repairs,
-            list.join("; ")
-        ))
-    }
-
     fn vars(&self, transcript: &Transcript, job_name: &str) -> Result<Vars> {
         Ok(Vars {
             output_lang: lang::validate(&self.output_lang)?.to_owned(),
@@ -536,70 +440,4 @@ impl TemplateRun<'_> {
         }
         Ok(artifact)
     }
-}
-
-/// `<name>.md`: in the job folder, or in `assets/` for an implicit template.
-fn md_path(dir: &Path, name: &str, implicit: bool) -> PathBuf {
-    if implicit {
-        layout::implicit_md(dir, name)
-    } else {
-        dir.join(format!("{name}.md"))
-    }
-}
-
-/// `<name>.json`: always in `assets/`.
-fn json_path(dir: &Path, name: &str) -> PathBuf {
-    layout::template_json(dir, name)
-}
-
-fn exists(path: &Path) -> Result<bool> {
-    path.try_exists().map_err(|e| io_error(path, e))
-}
-
-fn read_transcript(dir: &Path) -> Result<Transcript> {
-    let path = layout::transcript_json(dir);
-    let json = fs::read_to_string(&path).map_err(|e| io_error(&path, e))?;
-    serde_json::from_str(&json).map_err(|e| Error::Parse(format!("{TRANSCRIPT_FILE}: {e}")))
-}
-
-/// Removes `written`, newest first, after `error` stopped the writes, so no partial set of
-/// artifacts is left. Returns `error`, with any file that could not be removed added to it.
-fn remove_written(written: &[PathBuf], error: Error) -> Error {
-    let failures: Vec<String> = written
-        .iter()
-        .rev()
-        .filter_map(|path| {
-            fs::remove_file(path)
-                .err()
-                .map(|e| format!("could not remove {}: {e}", path.display()))
-        })
-        .collect();
-    if failures.is_empty() {
-        return error;
-    }
-    let kind = match &error {
-        Error::Io(e) => e.kind(),
-        _ => io::ErrorKind::Other,
-    };
-    Error::Io(io::Error::new(
-        kind,
-        format!("{error}; {}", failures.join("; ")),
-    ))
-}
-
-fn io_error(path: &Path, e: io::Error) -> Error {
-    Error::Io(io::Error::new(e.kind(), format!("{}: {e}", path.display())))
-}
-
-/// The end of the last segment in whole seconds: the transcript end the chapter rules use.
-fn end_seconds(t: &Transcript) -> u64 {
-    let end = t.segments.last().map_or(0.0, |s| s.end);
-    // Truncation to whole seconds is intended; negative ends clamp to zero.
-    end.max(0.0) as u64
-}
-
-/// `h:mm:ss` at the end of the last segment, truncated to whole seconds.
-fn duration(t: &Transcript) -> String {
-    let secs = end_seconds(t);
-    format!("{}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60)
 }
