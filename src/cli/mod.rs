@@ -2,24 +2,21 @@
 //! the job folder; `doctor`, `models list`, `models pull`, `config` and `templates` print
 //! their data there. Everything else goes to stderr.
 
-use std::io::IsTerminal;
+mod commands;
+mod templates;
+
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::config::{self, Config, Overrides, Source};
-use crate::config_init::{self, Written};
 use crate::error::{Error, Result};
 use crate::models;
-use crate::progress::{human_size, Mode, Progress, PullReport};
-use crate::runner::{self, ForceArg};
-use crate::template::discover::{discover, Dirs};
-use crate::template::pull::Origin;
-use crate::template::pull_cmd::{self, Choice};
-use crate::template::{Input, Layer, Output};
-use crate::tools::ToolInfo;
+use commands::{
+    config_init, config_path, config_show, doctor, models_list, models_pull, run, Templates,
+};
+use templates::{templates_list, templates_pull, templates_show};
 
 #[derive(Debug, Parser)]
 #[command(name = "minuta", version, about)]
@@ -225,319 +222,6 @@ pub fn render_error(err: &Error) -> String {
         .join("\n")
 }
 
-/// The template flags of `run`; `transcribe` has none.
-#[derive(Debug, Default)]
-struct Templates {
-    names: Vec<String>,
-    llm: Option<String>,
-    output_lang: Option<String>,
-}
-
-fn run(args: PipelineArgs, templates: Templates, interrupt: &Arc<AtomicBool>) -> Result<()> {
-    let config = Config::load(Overrides {
-        out_dir: args.out,
-        whisper_lang: args.lang,
-        whisper_model: args.model,
-        llm_default: templates.llm,
-        llm_output_lang: templates.output_lang,
-        ..Overrides::default()
-    })?;
-    let options = runner::Options {
-        files: args.files,
-        name: args.name,
-        force: args
-            .force
-            .map(|name| name.map_or(ForceArg::All, ForceArg::Name)),
-        templates: templates.names,
-    };
-    let mut progress = Progress::new(Mode::detect(args.quiet));
-    let dir = runner::run(&options, &config, interrupt, &mut progress)?;
-    println!("{}", dir.display());
-    Ok(())
-}
-
-fn doctor() -> Result<()> {
-    let config = Config::load(Overrides::default())?;
-    let report = runner::inspect(&config)?;
-    let tool = |info: &Option<ToolInfo>| match info {
-        Some(t) => format!("{} ({})", t.version, t.path.display()),
-        None => "missing".to_string(),
-    };
-    println!("{:<12} {}", "ffmpeg", tool(&report.ffmpeg));
-    println!("{:<12} {}", "ffprobe", tool(&report.ffprobe));
-    println!("{:<12} {}", "whisper-cli", tool(&report.whisper));
-    let model = match &report.model {
-        Some(path) => path.display().to_string(),
-        None => "missing".to_string(),
-    };
-    println!("{:<12} {model}", "model");
-    println!(
-        "{:<12} {} ({})",
-        "llm",
-        config.llm_default.value,
-        runner::llm_status(&config)
-    );
-    if report.missing.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::MissingTools(report.missing))
-    }
-}
-
-/// The models directory from the resolved config (env, then file, then `~/.minuta/models`).
-fn models_dir() -> Result<PathBuf> {
-    Config::load(Overrides::default())?.models_dir_path()
-}
-
-fn models_list() -> Result<()> {
-    let dir = models_dir()?;
-    let rows = models::list(&dir)?;
-    println!("models in {}", dir.display());
-    for model in rows {
-        let state = if model.installed {
-            "installed"
-        } else {
-            "available"
-        };
-        println!("{:<14} {state:<10} {}", model.name, human_size(model.size));
-    }
-    Ok(())
-}
-
-fn models_pull(name: &str, quiet: bool) -> Result<()> {
-    let spec = models::CATALOG
-        .iter()
-        .find(|m| m.name == name)
-        .ok_or_else(|| {
-            let names: Vec<_> = models::CATALOG.iter().map(|m| m.name).collect();
-            Error::Usage(format!(
-                "unknown model `{name}`; expected one of {}",
-                names.join(", ")
-            ))
-        })?;
-    let dir = models_dir()?;
-    let mut report = PullReport::new(if quiet {
-        Mode::Quiet
-    } else {
-        Mode::detect(false)
-    });
-    report.start(name, spec.size, &dir);
-    let outcome = models::pull_with_progress(spec, &dir, &mut |done| report.progress(done));
-    match outcome {
-        Ok(pulled) => report.finish(name, pulled),
-        Err(e) => {
-            report.abandon();
-            return Err(e);
-        }
-    }
-    println!("{}", models::resolve(name, &dir)?.display());
-    Ok(())
-}
-
-/// Resolves the path without reading the file, so it works when the file is malformed.
-fn config_path() -> Result<()> {
-    let env = |key: &str| std::env::var(key).ok();
-    let path = config::resolve_path(&env, config::default_path().as_deref())
-        .ok_or_else(|| Error::Config("cannot determine the config file path".into()))?;
-    println!("{}", path.display());
-    Ok(())
-}
-
-fn config_show() -> Result<()> {
-    let config = Config::load(Overrides::default())?;
-    let fixed = config
-        .entries()
-        .into_iter()
-        .map(|(key, setting)| (key.to_string(), setting));
-    for (key, setting) in fixed.chain(config.endpoint_entries()) {
-        match setting {
-            Some(s) => println!("{key} = {} ({})", s.value, source_name(s.source)),
-            None => println!("{key} = (unset)"),
-        }
-    }
-    Ok(())
-}
-
-/// Writes the template without reading an existing file, so a malformed one does not block it.
-fn config_init(force: bool) -> Result<()> {
-    let env = |key: &str| std::env::var(key).ok();
-    let path = config::resolve_path(&env, config::default_path().as_deref())
-        .ok_or_else(|| Error::Config("cannot determine the config file path".into()))?;
-    match config_init::write(&path, force)? {
-        Written::Created => println!("created {}", path.display()),
-        Written::Overwrote => println!("overwrote {}", path.display()),
-        Written::Exists => println!(
-            "{} already exists; nothing changed (use --force to overwrite)",
-            path.display()
-        ),
-    }
-    Ok(())
-}
-
-fn templates_list() -> Result<()> {
-    let catalog = discover(&Dirs::standard()?)?;
-    let mut rows = vec![[
-        "NAME".to_string(),
-        "LAYER".to_string(),
-        "INPUT".to_string(),
-        "OUTPUT".to_string(),
-        "LLM".to_string(),
-        "DESCRIPTION".to_string(),
-    ]];
-    for t in catalog.templates.values() {
-        rows.push([
-            sanitize(&t.name),
-            layer_name(t.layer).to_string(),
-            match &t.input {
-                Input::Transcript => "transcript".to_string(),
-                Input::Template(dep) => sanitize(dep),
-            },
-            match &t.output {
-                Output::Markdown => "markdown",
-                Output::Fields(_) => "fields",
-                Output::Chapters(_) => "chapters",
-            }
-            .to_string(),
-            t.llm
-                .as_ref()
-                .map_or("(default)".to_string(), |id| sanitize(&id.to_string())),
-            sanitize(t.description.as_deref().unwrap_or_default()),
-        ]);
-    }
-    let width = |col: usize| {
-        rows.iter()
-            .map(|r| r[col].chars().count())
-            .max()
-            .unwrap_or(0)
-    };
-    let widths = [width(0), width(1), width(2), width(3), width(4)];
-    for row in &rows {
-        let line = format!(
-            "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {:<w4$}  {}",
-            row[0],
-            row[1],
-            row[2],
-            row[3],
-            row[4],
-            row[5],
-            w0 = widths[0],
-            w1 = widths[1],
-            w2 = widths[2],
-            w3 = widths[3],
-            w4 = widths[4],
-        );
-        println!("{}", line.trim_end());
-    }
-    for invalid in &catalog.invalid {
-        println!(
-            "invalid  {}  {}",
-            sanitize(&invalid.path.display().to_string()),
-            sanitize(&single_line(&invalid.error))
-        );
-    }
-    Ok(())
-}
-
-/// Prints the winning file of template `name`: its path (or `built-in`) to stderr, its
-/// content to stdout.
-fn templates_show(name: &str) -> Result<()> {
-    let catalog = discover(&Dirs::standard()?)?;
-    let template = catalog.get(name)?;
-    match &template.path {
-        Some(path) => eprintln!("{}", path.display()),
-        None => eprintln!("built-in"),
-    }
-    print!("{}", template.raw);
-    Ok(())
-}
-
-/// Where `templates pull` downloads from: `MINUTA_TEMPLATES_URL` (a folder URL; used by
-/// tests, not documented) or the repository at `--ref`.
-fn pull_origin(reference: &str, url_override: Option<std::ffi::OsString>) -> Result<Origin> {
-    match url_override {
-        Some(url) if !url.is_empty() => {
-            let url = url.to_str().ok_or_else(|| {
-                Error::Usage("MINUTA_TEMPLATES_URL is not valid UTF-8".to_string())
-            })?;
-            Origin::new(url)
-        }
-        _ => Origin::github(reference),
-    }
-}
-
-/// The names of every template minuta can use: built-in, user and project.
-fn known_templates() -> Result<Vec<String>> {
-    Ok(discover(&Dirs::standard()?)?
-        .templates
-        .keys()
-        .cloned()
-        .collect())
-}
-
-fn templates_pull(args: PullArgs) -> Result<()> {
-    let origin = pull_origin(&args.reference, std::env::var_os("MINUTA_TEMPLATES_URL"))?;
-    let cwd = std::env::current_dir().map_err(|e| {
-        Error::Io(std::io::Error::new(
-            e.kind(),
-            format!("cannot determine the current directory: {e}"),
-        ))
-    })?;
-    let dest = cwd.join(args.to.unwrap_or_else(|| PathBuf::from("templates")));
-    // Only the note about a missing `input:` template needs to know what minuta can use: a
-    // folder that cannot be read must not stop a download, so it is reported and the note
-    // is skipped.
-    let known = match known_templates() {
-        Ok(names) => Some(names),
-        Err(e) => {
-            eprintln!(
-                "warning: cannot check which templates minuta already has: {}; notes about missing input templates are skipped",
-                sanitize(&e.to_string())
-            );
-            None
-        }
-    };
-    let choice = if !args.names.is_empty() {
-        Choice::Names(args.names)
-    } else if args.all {
-        Choice::All
-    } else if let Some(text) = args.filter {
-        Choice::Filter(text)
-    } else {
-        Choice::Ask
-    };
-    let options = pull_cmd::Options {
-        choice,
-        list: args.list,
-        dest,
-        force: args.force,
-        yes: args.yes,
-        known: known.as_deref(),
-        mode: Mode::detect(false),
-    };
-    let stdin = std::io::stdin();
-    let interactive = stdin.is_terminal() && std::io::stderr().is_terminal();
-    pull_cmd::run(
-        &origin,
-        &options,
-        &mut pull_cmd::Terminal {
-            interactive,
-            input: &mut stdin.lock(),
-            // Not locked: the progress bar's ticker thread writes to stderr too, and a lock
-            // held here for the whole run would block it while it holds the bar's state.
-            stdout: &mut std::io::stdout(),
-            stderr: &mut std::io::stderr(),
-        },
-    )
-}
-
-fn layer_name(layer: Layer) -> &'static str {
-    match layer {
-        Layer::BuiltIn => "built-in",
-        Layer::User => "user",
-        Layer::Project => "project",
-    }
-}
-
 /// Template files can come from a cloned repository: every control character (newlines,
 /// carriage returns, escape sequences) becomes `?`, so a listing entry stays one line and
 /// cannot drive the terminal.
@@ -556,19 +240,11 @@ fn single_line(text: &str) -> String {
         .join("; ")
 }
 
-fn source_name(source: Source) -> &'static str {
-    match source {
-        Source::Flag => "flag",
-        Source::Env => "env",
-        Source::File => "file",
-        Source::Default => "default",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::Missing;
+    use crate::progress::human_size;
 
     #[test]
     fn sizes() {
@@ -702,52 +378,6 @@ mod tests {
                 assert_eq!(args.reference, "main")
             }
             other => panic!("expected templates pull, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn pull_origin_downloads_from_the_repository_at_the_ref() {
-        let origin = pull_origin("v1", None).unwrap();
-        assert_eq!(
-            origin.url("index.toml"),
-            "https://raw.githubusercontent.com/JCIOriente/minuta/v1/templates/index.toml"
-        );
-    }
-
-    #[test]
-    fn pull_origin_url_variable_replaces_the_repository_and_the_ref() {
-        let origin = pull_origin("v1", Some("https://h.example/t".into())).unwrap();
-        assert_eq!(origin.url("a.md"), "https://h.example/t/a.md");
-    }
-
-    #[test]
-    fn pull_origin_empty_url_variable_is_ignored() {
-        let origin = pull_origin("v1", Some("".into())).unwrap();
-        assert_eq!(
-            origin.url("a.md"),
-            "https://raw.githubusercontent.com/JCIOriente/minuta/v1/templates/a.md"
-        );
-    }
-
-    #[test]
-    fn pull_origin_rejects_a_bad_ref() {
-        match pull_origin("a b", None) {
-            Err(Error::Usage(m)) => assert_eq!(
-                m,
-                "invalid ref \"a b\" (use letters, digits, '.', '_', '-' and '/')"
-            ),
-            other => panic!("expected usage error, got {other:?}"),
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn pull_origin_rejects_a_url_variable_that_is_not_utf8() {
-        use std::os::unix::ffi::OsStringExt;
-        let value = std::ffi::OsString::from_vec(vec![0xff, 0xfe]);
-        match pull_origin("main", Some(value)) {
-            Err(Error::Usage(m)) => assert_eq!(m, "MINUTA_TEMPLATES_URL is not valid UTF-8"),
-            other => panic!("expected usage error, got {other:?}"),
         }
     }
 }
