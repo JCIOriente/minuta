@@ -3,16 +3,17 @@ use std::path::Path;
 
 use assert_cmd::assert::OutputAssertExt;
 
+use crate::common::*;
 use crate::fake_tools::*;
 
 /// The whisper invocation `run` makes for job `name`, with `vad` appended when given.
-fn whisper_call(env: &Env, name: &str, vad: Option<&Path>) -> String {
+fn whisper_call(env: &FakeEnv, name: &str, vad: Option<&Path>) -> String {
     let job = env.job_dir(name);
     let mut call = format!(
         "whisper-cli -m {} -f {} -l auto -oj -of {} -pp",
         env.path("ggml-test.bin").display(),
-        job.join("assets/audio.wav").display(),
-        job.join(".minuta/whisper-raw").display()
+        audio_file(&job).display(),
+        state_dir(&job).join("whisper-raw").display()
     );
     if let Some(vad) = vad {
         call.push_str(&format!(" --vad -vm {}", vad.display()));
@@ -22,7 +23,7 @@ fn whisper_call(env: &Env, name: &str, vad: Option<&Path>) -> String {
 
 #[test]
 fn vad_model_path_runs_whisper_with_vad() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let vad = env.path("vad.bin");
     fs::write(&vad, "vad").unwrap();
     let out = env.run_cmd({
@@ -43,7 +44,7 @@ fn vad_model_path_runs_whisper_with_vad() {
 
 #[test]
 fn vad_model_catalog_name_resolves_into_models_dir() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let dir = env.path("home/.minuta/models/vad");
     fs::create_dir_all(&dir).unwrap();
     let vad = dir.join("ggml-silero-v5.1.2.bin");
@@ -64,7 +65,7 @@ fn vad_model_catalog_name_resolves_into_models_dir() {
 
 #[test]
 fn without_vad_model_whisper_runs_without_vad() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.minuta(&["run", "clase-4.mp4"]).assert().success();
     let whisper: Vec<String> = env
         .calls()
@@ -76,7 +77,7 @@ fn without_vad_model_whisper_runs_without_vad() {
 
 #[test]
 fn vad_model_not_pulled_hints_pull() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.run_cmd({
         let mut cmd = env.command(&["run", "clase-4.mp4"]);
         cmd.env("MINUTA_WHISPER_VAD_MODEL", "silero-v5.1.2");
@@ -94,7 +95,7 @@ fn vad_model_not_pulled_hints_pull() {
 
 #[test]
 fn vad_model_missing_path_is_preflight_error() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let vad = env.path("no-such-vad.bin");
     let out = env.run_cmd({
         let mut cmd = env.command(&["run", "clase-4.mp4"]);
@@ -115,7 +116,7 @@ fn vad_model_missing_path_is_preflight_error() {
 
 #[test]
 fn whisper_model_rejects_the_vad_catalog_name() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.run_cmd({
         let mut cmd = env.command(&["run", "clase-4.mp4"]);
         cmd.env("MINUTA_WHISPER_MODEL", "silero-v5.1.2");
@@ -132,7 +133,7 @@ fn whisper_model_rejects_the_vad_catalog_name() {
 
 #[test]
 fn vad_model_rejects_a_whisper_catalog_name() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.run_cmd({
         let mut cmd = env.command(&["run", "clase-4.mp4"]);
         cmd.env("MINUTA_WHISPER_VAD_MODEL", "tiny");
@@ -149,7 +150,7 @@ fn vad_model_rejects_a_whisper_catalog_name() {
 
 #[test]
 fn doctor_reports_missing_vad_model() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.run_cmd({
         let mut cmd = env.command(&["doctor"]);
         cmd.env("MINUTA_WHISPER_VAD_MODEL", "silero-v5.1.2");

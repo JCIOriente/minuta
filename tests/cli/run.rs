@@ -3,11 +3,12 @@ use std::fs;
 use assert_cmd::assert::OutputAssertExt;
 use predicates::str::contains;
 
+use crate::common::*;
 use crate::fake_tools::*;
 
 #[test]
 fn usage_error_exits_2() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.minuta(&[]).assert().code(2);
     env.minuta(&["bogus"]).assert().code(2);
     env.minuta(&["run"]).assert().code(2);
@@ -21,7 +22,7 @@ fn usage_error_exits_2() {
 
 #[test]
 fn unknown_force_step_is_usage_error() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.minuta(&["run", "clase-4.mp4", "--force", "render"])
         .assert()
         .code(2)
@@ -31,7 +32,7 @@ fn unknown_force_step_is_usage_error() {
 
 #[test]
 fn missing_source_file_is_usage_error() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.minuta(&["run", "clase-4.mp4", "nope.mp4"])
         .assert()
         .code(2)
@@ -43,7 +44,7 @@ fn missing_source_file_is_usage_error() {
 
 #[test]
 fn stdout_is_only_job_path() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.minuta(&["run", "clase-4.mp4"]);
     out.clone().assert().success();
     let job = env.job_dir("clase-4");
@@ -58,9 +59,9 @@ fn stdout_is_only_job_path() {
     ] {
         assert!(job.join(artifact).is_file(), "missing {artifact}");
     }
-    assert!(!job.join("assets/joined.mp4").exists());
+    assert!(!joined_file(&job).exists());
     assert!(!job.join("joined.mp4").exists());
-    assert!(!job.join(".minuta/whisper-raw.json").exists());
+    assert!(!state_dir(&job).join("whisper-raw.json").exists());
     assert_eq!(
         env.tools_called(),
         ["ffprobe", "ffmpeg", "whisper-cli"],
@@ -86,7 +87,7 @@ fn stdout_is_only_job_path() {
 
 #[test]
 fn name_flag_strips_media_extension() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.minuta(&["run", "clase-4.mp4", "-n", "leccion.mp4"]);
     out.clone().assert().success();
     assert_eq!(
@@ -97,7 +98,7 @@ fn name_flag_strips_media_extension() {
 
 #[test]
 fn second_run_all_cached() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.minuta(&["run", "clase-4.mp4"]).assert().success();
     let calls = env.calls();
 
@@ -105,7 +106,7 @@ fn second_run_all_cached() {
     out.clone().assert().success();
     assert_eq!(env.calls(), calls, "a cached run executes no step");
     let err = stderr(&out);
-    assert_eq!(cached_lines(&err), 5, "stderr was {err}");
+    assert_eq!(cached_steps(&err).len(), 5, "stderr was {err}");
     assert!(err.contains("[4/5] transcribe  cached"), "stderr was {err}");
     assert!(!err.contains("VAD disabled"), "stderr was {err}");
     assert_eq!(
@@ -116,12 +117,12 @@ fn second_run_all_cached() {
 
 #[test]
 fn second_run_skips_all_steps() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     fs::write(env.path("clase-5.mp4"), "more media").unwrap();
     let args = ["run", "clase-4.mp4", "clase-5.mp4", "-n", "both"];
     env.minuta(&args).assert().success();
     let job = env.job_dir("both");
-    assert!(job.join("assets/joined.mp4").is_file());
+    assert!(joined_file(&job).is_file());
     assert!(!job.join("joined.mp4").exists());
     assert!(!job.join("concat.txt").exists());
     let calls = env.calls();
@@ -130,12 +131,12 @@ fn second_run_skips_all_steps() {
     out.clone().assert().success();
 
     assert_eq!(env.calls(), calls, "a cached run executes no step");
-    assert_eq!(cached_lines(&stderr(&out)), 5, "{}", stderr(&out));
+    assert_eq!(cached_steps(&stderr(&out)).len(), 5, "{}", stderr(&out));
 }
 
 #[test]
 fn transcribe_behaves_like_run() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.minuta(&["transcribe", "clase-4.mp4"]);
     out.clone().assert().success();
     assert_eq!(
@@ -151,7 +152,7 @@ fn transcribe_behaves_like_run() {
 
 #[test]
 fn quiet_suppresses_progress() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.minuta(&["run", "clase-4.mp4", "--quiet"]);
     out.clone().assert().success().stderr("");
     assert_eq!(
@@ -162,7 +163,7 @@ fn quiet_suppresses_progress() {
 
 #[test]
 fn quiet_still_prints_warnings() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let empty = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/whisper/empty.json"
@@ -178,7 +179,7 @@ fn quiet_still_prints_warnings() {
 
 #[test]
 fn tool_failure_exits_1_and_marks_step_stale() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.whisper("echo 'model file is corrupt' >&2; exit 3");
     let out = env.minuta(&["run", "clase-4.mp4"]);
     out.clone().assert().code(1).stdout("");
@@ -186,12 +187,12 @@ fn tool_failure_exits_1_and_marks_step_stale() {
     let job = env.job_dir("clase-4");
     assert_eq!(step_status(&job, "audio").as_deref(), Some("done"));
     assert_eq!(step_status(&job, "transcribe").as_deref(), Some("stale"));
-    assert!(!job.join("assets/transcript.json").exists());
+    assert!(!transcript_json(&job).exists());
 }
 
 #[test]
 fn failing_encoder_listing_leaves_no_job_folder() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     script(
         &env.bin(),
         "ffmpeg",
@@ -211,7 +212,7 @@ exit 1"#,
 
 #[test]
 fn bare_binary_name_is_looked_up_on_path() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     fs::rename(env.bin().join("ffmpeg"), env.bin().join("ffmpeg7")).unwrap();
     let out = env.run_cmd({
         let mut cmd = env.command(&["run", "clase-4.mp4"]);
@@ -224,42 +225,38 @@ fn bare_binary_name_is_looked_up_on_path() {
 
 #[test]
 fn different_sources_without_force_is_refused() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     fs::write(env.path("other.mp4"), "more media").unwrap();
     env.minuta(&["run", "clase-4.mp4"])
         .clone()
         .assert()
         .success();
     let job = env.job_dir("clase-4");
-    let state = fs::read_to_string(minuta::job::layout::state_file(&job)).unwrap();
+    let state = fs::read_to_string(state_file(&job)).unwrap();
     let calls = env.calls();
 
     let out = env.minuta(&["run", "clase-4.mp4", "other.mp4"]);
     out.clone().assert().code(1).stdout("");
     assert!(stderr(&out).contains("--force"), "{}", stderr(&out));
     assert_eq!(env.calls(), calls);
-    assert_eq!(
-        fs::read_to_string(minuta::job::layout::state_file(&job)).unwrap(),
-        state
-    );
+    assert_eq!(fs::read_to_string(state_file(&job)).unwrap(), state);
 }
 
 #[test]
 fn different_sources_with_another_name_is_a_separate_job() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     fs::write(env.path("other.mp4"), "more media").unwrap();
     env.minuta(&["run", "clase-4.mp4"])
         .clone()
         .assert()
         .success();
-    let state =
-        fs::read_to_string(minuta::job::layout::state_file(&env.job_dir("clase-4"))).unwrap();
+    let state = fs::read_to_string(state_file(&env.job_dir("clase-4"))).unwrap();
 
     let out = env.minuta(&["run", "clase-4.mp4", "other.mp4", "--name", "both"]);
     out.clone().assert().success();
     assert_eq!(stdout(&out), format!("{}\n", env.job_dir("both").display()));
     assert_eq!(
-        fs::read_to_string(minuta::job::layout::state_file(&env.job_dir("clase-4"))).unwrap(),
+        fs::read_to_string(state_file(&env.job_dir("clase-4"))).unwrap(),
         state
     );
 
@@ -272,7 +269,7 @@ fn different_sources_with_another_name_is_a_separate_job() {
 
 #[test]
 fn different_sources_with_force_replace_the_job() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     fs::write(env.path("other.mp4"), "more media").unwrap();
     env.minuta(&["run", "clase-4.mp4"])
         .clone()
@@ -284,8 +281,7 @@ fn different_sources_with_force_replace_the_job() {
     let job = env.job_dir("clase-4");
     assert_eq!(stdout(&out), format!("{}\n", job.display()));
     let state: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(minuta::job::layout::state_file(&job)).unwrap())
-            .unwrap();
+        serde_json::from_str(&fs::read_to_string(state_file(&job)).unwrap()).unwrap();
     assert_eq!(state["sources"].as_array().unwrap().len(), 2);
     assert_eq!(step_status(&job, "outputs").as_deref(), Some("done"));
 }

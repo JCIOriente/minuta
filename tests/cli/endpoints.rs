@@ -3,13 +3,14 @@ use std::sync::Arc;
 
 use assert_cmd::assert::OutputAssertExt;
 
-use crate::fake_tools::fake_ollama::{FakeOllama, Reply};
+use crate::common::fake_ollama::{FakeOllama, Reply};
+use crate::common::*;
 use crate::fake_tools::*;
 
 const ENDPOINT_MODEL: &str = "google/gemma-4";
 
 /// A fake OpenAI-compatible server offering [`ENDPOINT_MODEL`], and a config naming it `box`.
-fn endpoint_server(env: &Env, extra: &str) -> FakeOllama {
+fn endpoint_server(env: &FakeEnv, extra: &str) -> FakeOllama {
     let fake = FakeOllama::start_with_show(
         &[],
         None,
@@ -32,7 +33,7 @@ fn endpoint_server(env: &Env, extra: &str) -> FakeOllama {
 
 #[test]
 fn run_with_endpoint_writes_output() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = endpoint_server(&env, "");
     let id = format!("box:{ENDPOINT_MODEL}");
     let out = env.minuta_llm(
@@ -58,7 +59,7 @@ fn run_with_endpoint_writes_output() {
 
 #[test]
 fn run_with_endpoint_sends_the_key_from_its_variable() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = endpoint_server(&env, "api_key_env = \"BOX_KEY\"\n");
     let id = format!("box:{ENDPOINT_MODEL}");
     let mut cmd = env.llm_command(
@@ -82,7 +83,7 @@ fn run_with_endpoint_sends_the_key_from_its_variable() {
 
 #[test]
 fn endpoint_key_variable_unset_is_reported_with_hint() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = endpoint_server(&env, "api_key_env = \"BOX_KEY\"\n");
     let id = format!("box:{ENDPOINT_MODEL}");
     let out = env.minuta_llm(
@@ -101,7 +102,7 @@ fn endpoint_key_variable_unset_is_reported_with_hint() {
 #[test]
 fn endpoint_malformed_key_is_refused_without_printing_it() {
     for key in ["s3cret\r", "s3 cret", "s3cr\u{e9}t"] {
-        let env = Env::new();
+        let env = FakeEnv::new();
         let fake = endpoint_server(&env, "api_key_env = \"BOX_KEY\"\n");
         let id = format!("box:{ENDPOINT_MODEL}");
         let mut cmd = env.llm_command(
@@ -123,7 +124,7 @@ fn endpoint_malformed_key_is_refused_without_printing_it() {
 
 #[test]
 fn endpoint_key_empty_is_reported_with_hint() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = endpoint_server(&env, "api_key_env = \"BOX_KEY\"\n");
     let id = format!("box:{ENDPOINT_MODEL}");
     let mut cmd = env.llm_command(
@@ -144,7 +145,7 @@ fn endpoint_key_empty_is_reported_with_hint() {
 #[test]
 fn endpoint_key_that_is_not_utf8_is_reported_with_hint() {
     use std::os::unix::ffi::OsStrExt;
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = endpoint_server(&env, "api_key_env = \"BOX_KEY\"\n");
     let id = format!("box:{ENDPOINT_MODEL}");
     let mut cmd = env.llm_command(
@@ -164,7 +165,7 @@ fn endpoint_key_that_is_not_utf8_is_reported_with_hint() {
 
 #[test]
 fn unknown_endpoint_is_reported_with_toml() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("unused");
     let out = env.minuta_llm(
         &["run", "clase-4.mp4", "-t", "summary", "--llm", "lmstudio:m"],
@@ -182,7 +183,7 @@ fn unknown_endpoint_is_reported_with_toml() {
 
 #[test]
 fn unknown_endpoint_is_reported_without_templates() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("unused");
     let out = env.minuta_llm(&["run", "clase-4.mp4", "--llm", "lmstudio:m"], &fake);
     assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
@@ -197,7 +198,7 @@ fn unknown_endpoint_is_reported_without_templates() {
 
 #[test]
 fn unlisted_endpoint_model_fails_before_any_call() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = endpoint_server(&env, "");
     let out = env.minuta_llm(
         &["run", "clase-4.mp4", "-t", "summary", "--llm", "box:nope"],
@@ -214,7 +215,7 @@ fn unlisted_endpoint_model_fails_before_any_call() {
     assert!(fake.requests().iter().all(|r| r.path == "/v1/models"));
 }
 
-fn doctor_llm_line(env: &Env, fake: &FakeOllama, id: &str) -> String {
+fn doctor_llm_line(env: &FakeEnv, fake: &FakeOllama, id: &str) -> String {
     let mut cmd = env.llm_command(&["doctor"], fake);
     cmd.env("MINUTA_LLM", id);
     let out = env.run_cmd(cmd);
@@ -227,7 +228,7 @@ fn doctor_llm_line(env: &Env, fake: &FakeOllama, id: &str) -> String {
 
 #[test]
 fn doctor_reports_endpoint_ok() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = endpoint_server(&env, "");
     assert_eq!(
         doctor_llm_line(&env, &fake, &format!("box:{ENDPOINT_MODEL}")),
@@ -237,7 +238,7 @@ fn doctor_reports_endpoint_ok() {
 
 #[test]
 fn doctor_reports_endpoint_model_missing() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = endpoint_server(&env, "");
     assert_eq!(
         doctor_llm_line(&env, &fake, "box:nope"),
@@ -250,7 +251,7 @@ fn doctor_reports_endpoint_model_missing() {
 
 #[test]
 fn doctor_reports_endpoint_not_reachable() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("unused");
     fs::write(
         env.path("config.toml"),
@@ -268,7 +269,7 @@ fn doctor_reports_endpoint_not_reachable() {
 
 #[test]
 fn doctor_reports_unknown_endpoint_as_invalid() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("unused");
     let line = doctor_llm_line(&env, &fake, "box:m");
     assert_eq!(
@@ -279,7 +280,7 @@ fn doctor_reports_unknown_endpoint_as_invalid() {
 
 #[test]
 fn config_show_lists_endpoints() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     fs::write(
         env.path("config.toml"),
         "[endpoints.box]\nurl = \"http://127.0.0.1:1234/v1\"\ntimeout_secs = 3600\n\
@@ -305,7 +306,7 @@ fn config_show_lists_endpoints() {
 
 #[test]
 fn config_show_marks_an_unset_endpoint_key() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     fs::write(
         env.path("config.toml"),
         "[endpoints.box]\nurl = \"http://127.0.0.1:1234/v1\"\n",
@@ -322,7 +323,7 @@ fn config_show_marks_an_unset_endpoint_key() {
 
 #[test]
 fn llm_help_names_the_endpoint_form() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.minuta(&["run", "--help"]);
     let help = stdout(&out);
     assert!(help.contains("<endpoint>:<model>"), "{help}");

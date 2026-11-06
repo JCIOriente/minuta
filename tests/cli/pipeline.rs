@@ -35,12 +35,12 @@ fn full_run_produces_artifacts() {
     }
     assert_eq!(tmp_files(&job), Vec::<String>::new());
 
-    let wav = ffprobe_json(&job.join("assets/audio.wav"));
+    let wav = ffprobe_json(&audio_file(&job));
     let stream = &wav["streams"][0];
     assert_eq!(stream["channels"], 1);
     assert_eq!(stream["sample_rate"], "16000");
     // Two 1.5 s sources joined.
-    let joined = ffprobe_json(&job.join("assets/joined.mp4"));
+    let joined = ffprobe_json(&joined_file(&job));
     let dur: f64 = joined["streams"][0]["duration"]
         .as_str()
         .or(joined["streams"][1]["duration"].as_str())
@@ -50,8 +50,7 @@ fn full_run_produces_artifacts() {
     assert!(dur > 2.5, "joined duration {dur}");
 
     let transcript: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(job.join("assets/transcript.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&fs::read_to_string(transcript_json(&job)).unwrap()).unwrap();
     assert!(transcript["segments"]
         .as_array()
         .is_some_and(|s| !s.is_empty()));
@@ -161,7 +160,7 @@ fn killed_step_resumes() {
         }
 
         let job = env.job_dir("a");
-        assert!(!job.join("assets/transcript.json").exists(), "{sig}");
+        assert!(!transcript_json(&job).exists(), "{sig}");
 
         let out = env.minuta(&["run", "a.m4a"]);
         assert!(out.status.success(), "{sig}: {}", stderr(&out));

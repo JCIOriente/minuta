@@ -3,17 +3,12 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
-use std::sync::Arc;
+use std::process::{Command, Output, Stdio};
 
-use fake_ollama::{FakeOllama, Reply};
+use crate::common::fake_ollama::FakeOllama;
+use crate::common::{output, spawn_lock, FAKE_CLAUDE, FAKE_CODEX, NO_OLLAMA};
 
-use crate::common::spawn_lock;
-
-/// An address no test server ever binds (port 9, discard), so no real Ollama is reached.
-pub const NO_OLLAMA: &str = "http://127.0.0.1:9";
-
-pub const FIXTURE: &str = concat!(
+const FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/whisper/sample.json"
 );
@@ -29,13 +24,13 @@ pub fn script(dir: &Path, name: &str, body: &str) {
 
 /// A temp dir with fake tools in `bin/`, a model, an empty config file and one source.
 /// Every tool appends its non-version invocations to `calls.log`.
-pub struct Env {
+pub struct FakeEnv {
     tmp: tempfile::TempDir,
 }
 
-impl Env {
-    pub fn new() -> Env {
-        let env = Env {
+impl FakeEnv {
+    pub fn new() -> FakeEnv {
+        let env = FakeEnv {
             tmp: tempfile::tempdir().unwrap(),
         };
         fs::create_dir_all(env.bin()).unwrap();
@@ -154,68 +149,14 @@ echo "[00:00:00.000 --> 00:00:03.500]   Buenos dias a todos."
         cmd
     }
 
-    pub fn spawn(&self, cmd: &mut Command) -> Child {
-        crate::common::spawn(cmd)
-    }
-
     pub fn run_cmd(&self, mut cmd: Command) -> Output {
-        self.spawn(&mut cmd).wait_with_output().unwrap()
+        output(&mut cmd)
     }
 
     pub fn minuta(&self, args: &[&str]) -> Output {
         self.run_cmd(self.command(args))
     }
-}
 
-pub fn stderr(out: &Output) -> String {
-    String::from_utf8_lossy(&out.stderr).into_owned()
-}
-
-pub fn stdout(out: &Output) -> String {
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
-
-/// Step lines reporting `cached`.
-pub fn cached_lines(stderr: &str) -> usize {
-    stderr
-        .lines()
-        .filter(|l| l.starts_with('[') && l.ends_with("  cached"))
-        .count()
-}
-
-pub fn step_status(job: &Path, step: &str) -> Option<String> {
-    let json: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(minuta::job::layout::state_file(job)).unwrap())
-            .unwrap();
-    json["steps"][step]["status"].as_str().map(String::from)
-}
-
-// ---------------------------------------------------------------------------------------
-// Templates and LLM backends. The fake Ollama answers chats; the fake `claude` fixture
-// stands in for Claude Code.
-
-pub use crate::common::fake_ollama;
-
-pub const FAKE_CLAUDE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/claude");
-pub const FAKE_CODEX: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/codex");
-
-/// A fake Ollama serving the default model; every chat gets `reply`.
-pub fn ollama(reply: &'static str) -> FakeOllama {
-    ollama_with(Arc::new(move |_| Reply::chat(reply)))
-}
-
-pub fn ollama_with(responder: fake_ollama::Responder) -> FakeOllama {
-    FakeOllama::start(
-        &["gemma4:26b"],
-        serde_json::json!({
-            "model_info": {"gemma3.context_length": 32768},
-            "capabilities": ["completion"]
-        }),
-        responder,
-    )
-}
-
-impl Env {
     /// Writes `<dir>/<name>.md`, where `dir` is relative to the temp dir.
     pub fn template(&self, dir: &str, name: &str, text: &str) {
         let dir = self.path(dir);
@@ -238,11 +179,4 @@ impl Env {
     pub fn minuta_llm(&self, args: &[&str], fake: &FakeOllama) -> Output {
         self.run_cmd(self.llm_command(args, fake))
     }
-}
-
-pub fn template_state(job: &Path, name: &str) -> serde_json::Value {
-    let json: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(minuta::job::layout::state_file(job)).unwrap())
-            .unwrap();
-    json["templates"][name].clone()
 }

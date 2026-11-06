@@ -2,11 +2,12 @@ use std::fs;
 
 use assert_cmd::assert::OutputAssertExt;
 
+use crate::common::*;
 use crate::fake_tools::*;
 
 #[test]
 fn models_list_shows_catalog() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let dir = env.path("home/.minuta/models");
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("ggml-tiny.bin"), "tiny").unwrap();
@@ -26,7 +27,7 @@ fn models_list_shows_catalog() {
 
 #[test]
 fn models_list_header_uses_env_models_dir() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let custom = env.path("custom-models");
     let out = env.run_cmd({
         let mut cmd = env.command(&["models", "list"]);
@@ -42,7 +43,7 @@ fn models_list_header_uses_env_models_dir() {
 
 #[test]
 fn models_list_reports_unreadable_entry() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let dir = env.path("home/.minuta/models");
     fs::create_dir_all(&dir).unwrap();
     let entry = dir.join("ggml-small.bin");
@@ -58,7 +59,7 @@ fn models_list_reports_unreadable_entry() {
 
 #[test]
 fn models_pull_unknown_name_is_usage_error() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.minuta(&["models", "pull", "huge"])
         .assert()
         .code(2)

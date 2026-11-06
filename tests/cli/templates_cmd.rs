@@ -3,11 +3,12 @@ use std::fs;
 use assert_cmd::assert::OutputAssertExt;
 use predicates::str::contains;
 
+use crate::common::*;
 use crate::fake_tools::*;
 
 #[test]
 fn templates_list_shows_layers() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.template(
         "home/.minuta/templates",
         "acta",
@@ -68,7 +69,7 @@ fn templates_list_shows_layers() {
 
 #[test]
 fn templates_list_shows_built_in() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.minuta(&["templates", "list"]);
     out.clone().assert().success();
     let text = stdout(&out);
@@ -93,7 +94,7 @@ fn templates_list_shows_built_in() {
 
 #[test]
 fn templates_list_shows_built_in_chapters() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.minuta(&["templates", "list"]);
     out.clone().assert().success();
     let text = stdout(&out);
@@ -118,7 +119,7 @@ fn templates_list_shows_built_in_chapters() {
 
 #[test]
 fn templates_show_chapters() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.minuta(&["templates", "show", "chapters"]);
     out.clone().assert().success();
     assert_eq!(stderr(&out), "built-in\n");
@@ -140,7 +141,7 @@ fn templates_show_chapters() {
 
 #[test]
 fn templates_list_shows_output_column() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.template(
         "templates",
         "post",
@@ -185,7 +186,7 @@ fn templates_list_shows_output_column() {
 
 #[test]
 fn templates_list_output_chapters() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.template(
         "templates",
         "chapters",
@@ -218,7 +219,7 @@ fn templates_list_output_chapters() {
 
 #[test]
 fn templates_show_prints_winning_file() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.minuta(&["templates", "show", "summary"]);
     out.clone().assert().success();
     assert_eq!(stderr(&out), "built-in\n");
@@ -246,7 +247,7 @@ fn templates_show_prints_winning_file() {
 
 #[test]
 fn templates_show_unknown_exits_2() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.minuta(&["templates", "show", "nope"])
         .assert()
         .code(2)
@@ -263,7 +264,7 @@ fn control_chars(text: &str) -> Vec<char> {
 
 #[test]
 fn templates_list_neutralizes_control_characters() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.template(
         "templates",
         "evil",
@@ -293,7 +294,7 @@ const EVIL_OUTPUT: &str = "---\noutput: \"x\\e[31mRED\\e]0;pwned\\a\"\n---\nX.";
 
 #[test]
 fn template_errors_reach_stderr_without_control_characters() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.template("templates", "acta", EVIL_OUTPUT);
     env.template("templates", "notes", "---\ninput: acta\n---\nNotes.");
     let fake = ollama("unused");

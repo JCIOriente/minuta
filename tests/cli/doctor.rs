@@ -3,12 +3,13 @@ use std::sync::Arc;
 
 use assert_cmd::assert::OutputAssertExt;
 
-use crate::fake_tools::fake_ollama::{FakeOllama, Reply};
+use crate::common::fake_ollama::{FakeOllama, Reply};
+use crate::common::*;
 use crate::fake_tools::*;
 
 #[test]
 fn doctor_exit_code_when_missing() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.minuta(&["doctor"]);
     out.clone().assert().success();
     let report = stdout(&out);
@@ -30,7 +31,7 @@ fn doctor_exit_code_when_missing() {
 
 #[test]
 fn doctor_reports_llm_without_affecting_exit_code() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("unused");
     let out = env.minuta_llm(&["doctor"], &fake);
     out.clone().assert().success();
@@ -68,7 +69,7 @@ fn doctor_reports_llm_without_affecting_exit_code() {
 
 #[test]
 fn doctor_reports_codex() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("unused");
     let out = env.run_cmd({
         let mut cmd = env.llm_command(&["doctor"], &fake);
@@ -100,7 +101,7 @@ fn doctor_reports_codex() {
 
 #[test]
 fn doctor_reports_ollama_show_failure_as_not_reachable() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake =
         FakeOllama::start_with_show(&["gemma4:26b"], None, Arc::new(|_| Reply::chat("unused")));
     let out = env.minuta_llm(&["doctor"], &fake);

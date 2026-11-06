@@ -1,13 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 #[path = "../../src/test_support/fake_ollama.rs"]
 pub mod fake_ollama;
 
-use fake_ollama::{FakeOllama, Request};
+use fake_ollama::{FakeOllama, Reply, Request};
 
 /// Held while writing an executable and while spawning any process, in every module of this
 /// crate. A fork in another test thread that inherits an executable still open for writing
@@ -51,9 +51,29 @@ pub fn state_file(job: &Path) -> PathBuf {
     job.join(".minuta/job.json")
 }
 
+/// `<job>/.minuta`, the state folder.
+pub fn state_dir(job: &Path) -> PathBuf {
+    job.join(".minuta")
+}
+
 /// `<job>/assets`.
 pub fn assets_dir(job: &Path) -> PathBuf {
     job.join("assets")
+}
+
+/// `<job>/assets/audio.wav`.
+pub fn audio_file(job: &Path) -> PathBuf {
+    job.join("assets/audio.wav")
+}
+
+/// `<job>/assets/joined.mp4`, written only for more than one source.
+pub fn joined_file(job: &Path) -> PathBuf {
+    job.join("assets/joined.mp4")
+}
+
+/// `<job>/assets/transcript.json`.
+pub fn transcript_json(job: &Path) -> PathBuf {
+    job.join("assets/transcript.json")
 }
 
 /// `<job>/assets/<template>.json`.
@@ -101,6 +121,7 @@ macro_rules! require_ffmpeg {
 pub(crate) use require_ffmpeg;
 
 pub const FAKE_CLAUDE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/claude");
+pub const FAKE_CODEX: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/codex");
 pub const CLASS_FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/whisper/class.json"
@@ -254,6 +275,14 @@ pub fn run_class(env: &Env, args: &[&str], fake: &FakeOllama) -> Output {
     output(&mut class_command(env, args, &fake.url()))
 }
 
+/// An address no test server ever binds (port 9, discard), so no real Ollama is reached.
+pub const NO_OLLAMA: &str = "http://127.0.0.1:9";
+
+/// A fake Ollama serving the default model; every chat gets `reply`.
+pub fn ollama(reply: &'static str) -> FakeOllama {
+    ollama_with(Arc::new(move |_| Reply::chat(reply)))
+}
+
 pub fn ollama_with(responder: fake_ollama::Responder) -> FakeOllama {
     FakeOllama::start(
         &["gemma4:26b"],
@@ -336,6 +365,18 @@ pub fn job_json(job: &Path) -> serde_json::Value {
     serde_json::from_str(&fs::read_to_string(state_file(job)).unwrap()).unwrap()
 }
 
+/// The `status` of pipeline step `step` in the job state, if the step is recorded.
+pub fn step_status(job: &Path, step: &str) -> Option<String> {
+    job_json(job)["steps"][step]["status"]
+        .as_str()
+        .map(String::from)
+}
+
+/// The state of template `name` in the job state (`null` when it never ran).
+pub fn template_state(job: &Path, name: &str) -> serde_json::Value {
+    job_json(job)["templates"][name].clone()
+}
+
 /// Steps whose progress line in `stderr` says `cached`.
 pub fn cached_steps(stderr: &str) -> Vec<String> {
     stderr
@@ -361,6 +402,15 @@ pub fn wait_for(path: &Path) {
             "{} never appeared",
             path.display()
         );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Waits for `cond` without assuming how long it takes.
+pub fn wait_until(what: &str, cond: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !cond() {
+        assert!(Instant::now() < deadline, "{what} never happened");
         std::thread::sleep(Duration::from_millis(20));
     }
 }

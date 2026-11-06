@@ -3,12 +3,13 @@ use std::sync::Arc;
 
 use assert_cmd::assert::OutputAssertExt;
 
-use crate::fake_tools::fake_ollama::{FakeOllama, Reply};
+use crate::common::fake_ollama::{FakeOllama, Reply};
+use crate::common::*;
 use crate::fake_tools::*;
 
 #[test]
 fn preflight_before_first_step() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     fs::remove_file(env.bin().join("whisper-cli")).unwrap();
     let out = env.minuta(&["run", "clase-4.mp4"]);
     out.clone().assert().code(1).stdout("");
@@ -28,7 +29,7 @@ fn preflight_before_first_step() {
 
 #[test]
 fn preflight_lists_all_missing_at_once() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     for tool in ["ffmpeg", "ffprobe", "whisper-cli"] {
         fs::remove_file(env.bin().join(tool)).unwrap();
     }
@@ -47,7 +48,7 @@ fn preflight_lists_all_missing_at_once() {
 
 #[test]
 fn catalog_model_not_pulled_hints_pull() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.minuta(&["run", "clase-4.mp4", "--model", "small"]);
     out.clone().assert().code(1);
     assert!(
@@ -59,7 +60,7 @@ fn catalog_model_not_pulled_hints_pull() {
 
 #[test]
 fn unknown_template_exits_2_before_job_folder() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("unused");
     let out = env.minuta_llm(&["run", "clase-4.mp4", "-t", "nope"], &fake);
     out.clone().assert().code(2).stdout("");
@@ -73,7 +74,7 @@ fn unknown_template_exits_2_before_job_folder() {
 
 #[test]
 fn resolution_problems_exit_2_before_job_folder() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.template("templates", "x", "---\ninput: y\n---\nX.");
     env.template("templates", "y", "---\ninput: x\n---\nY.");
     env.template("templates", "bad", "---\nllm: gpt:4\n---\nBad.");
@@ -105,7 +106,7 @@ fn resolution_problems_exit_2_before_job_folder() {
 
 #[test]
 fn preflight_reports_backend_and_tools_together() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     fs::remove_file(env.bin().join("whisper-cli")).unwrap();
     let out = env.run_cmd({
         let mut cmd = env.command(&["run", "clase-4.mp4", "-t", "summary"]);
@@ -124,7 +125,7 @@ fn preflight_reports_backend_and_tools_together() {
 
 #[test]
 fn preflight_reports_missing_ollama_model_and_claude() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.template("templates", "acta", "---\nllm: claude\n---\nMinutes.");
     let fake = FakeOllama::start(
         &["other:7b"],
@@ -154,7 +155,7 @@ fn preflight_reports_missing_ollama_model_and_claude() {
 
 #[test]
 fn missing_codex_is_reported_with_hint() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("unused");
     let out = env.run_cmd({
         let mut cmd = env.llm_command(

@@ -3,12 +3,13 @@ use std::sync::Arc;
 
 use assert_cmd::assert::OutputAssertExt;
 
-use crate::fake_tools::fake_ollama::Reply;
+use crate::common::fake_ollama::Reply;
+use crate::common::*;
 use crate::fake_tools::*;
 
 #[test]
 fn run_accepts_repeated_templates() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.template("templates", "a", "Write A.");
     env.template("templates", "b", "Write B.");
     let fake = ollama("generated text");
@@ -29,7 +30,7 @@ fn run_accepts_repeated_templates() {
 
 #[test]
 fn transcribe_rejects_template_flag() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.minuta(&["transcribe", "clase-4.mp4", "-t", "summary"])
         .assert()
         .code(2);
@@ -47,18 +48,20 @@ fn transcribe_rejects_template_flag() {
 
 #[test]
 fn run_without_templates_contacts_no_backend() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("unused");
     env.minuta_llm(&["run", "clase-4.mp4"], &fake)
         .assert()
         .success();
     assert!(fake.requests().is_empty());
-    assert!(!env.job_dir("clase-4").join(".minuta/llm-cache").exists());
+    assert!(!state_dir(&env.job_dir("clase-4"))
+        .join("llm-cache")
+        .exists());
 }
 
 #[test]
 fn second_template_run_is_cached() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("summary text");
     env.minuta_llm(&["run", "clase-4.mp4", "-t", "summary"], &fake)
         .assert()
@@ -67,14 +70,14 @@ fn second_template_run_is_cached() {
     out.clone().assert().success();
     assert_eq!(fake.chat_count(), 1);
     let err = stderr(&out);
-    assert_eq!(cached_lines(&err), 6, "stderr was {err}");
+    assert_eq!(cached_steps(&err).len(), 6, "stderr was {err}");
     assert!(err.contains("[6/6] summary     cached"), "stderr was {err}");
     assert!(err.contains("(0 run, 6 cached)"), "stderr was {err}");
 }
 
 #[test]
 fn progress_template_line_format() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("summary text");
     let out = env.minuta_llm(&["run", "clase-4.mp4", "-t", "summary"], &fake);
     out.clone().assert().success();
@@ -91,7 +94,7 @@ fn progress_template_line_format() {
 
 #[test]
 fn progress_total_includes_templates() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.template("templates", "a", "Write A.");
     env.template("templates", "b", "---\ninput: a\n---\nWrite B.");
     let fake = ollama("text");
@@ -106,7 +109,7 @@ fn progress_total_includes_templates() {
 
 #[test]
 fn off_machine_note_printed_once() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.template("templates", "acta", "---\nllm: claude\n---\nMinutes.");
     let fake = ollama("local text");
     let out = env.minuta_llm(
@@ -137,7 +140,7 @@ fn off_machine_note_printed_once() {
 
 #[test]
 fn run_with_codex_backend_writes_output() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("unused");
     let out = env.minuta_llm(
         &[
@@ -171,7 +174,7 @@ fn run_with_codex_backend_writes_output() {
 
 #[test]
 fn notice_for_claude_model_still_names_anthropic() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("unused");
     let out = env.minuta_llm(
         &[
@@ -195,7 +198,7 @@ fn notice_for_claude_model_still_names_anthropic() {
 
 #[test]
 fn llm_flag_overrides_the_backend() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("unused");
     let out = env.minuta_llm(
         &["run", "clase-4.mp4", "-t", "summary", "--llm", "claude"],
@@ -209,7 +212,7 @@ fn llm_flag_overrides_the_backend() {
 
 #[test]
 fn output_lang_flag_reaches_the_prompt() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("text");
     env.minuta_llm(
         &["run", "clase-4.mp4", "-t", "summary", "--output-lang", "en"],
@@ -231,7 +234,7 @@ fn output_lang_flag_reaches_the_prompt() {
 
 #[test]
 fn template_failure_stops_the_run() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.template("templates", "a", "Write A.");
     let fake = ollama_with(Arc::new(|_| Reply::error(400, "bad request")));
     let out = env.minuta_llm(&["run", "clase-4.mp4", "-t", "a", "-t", "summary"], &fake);

@@ -3,11 +3,12 @@ use std::fs;
 use assert_cmd::assert::OutputAssertExt;
 use predicates::str::contains;
 
+use crate::common::*;
 use crate::fake_tools::*;
 
 #[test]
 fn config_path_prints_path_even_when_malformed() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     fs::write(env.path("config.toml"), "out_dir = \n").unwrap();
     let out = env.minuta(&["config", "path"]);
     out.clone().assert().success();
@@ -23,7 +24,7 @@ fn config_path_prints_path_even_when_malformed() {
 
 #[test]
 fn config_show_models_dir_from_env() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let out = env.run_cmd({
         let mut cmd = env.command(&["config", "show"]);
         cmd.env("MINUTA_MODELS_DIR", "/data/models");
@@ -39,7 +40,7 @@ fn config_show_models_dir_from_env() {
 
 #[test]
 fn config_show_lists_values_and_sources() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     fs::write(env.path("config.toml"), "[whisper]\nlang = \"es\"\n").unwrap();
     let out = env.run_cmd({
         let mut cmd = env.command(&["config", "show"]);

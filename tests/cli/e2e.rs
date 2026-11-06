@@ -4,7 +4,7 @@
 use std::fs;
 use std::process::{Command, Stdio};
 
-use crate::common::{have_ffmpeg, output, status, try_spawn};
+use crate::common::{have_ffmpeg, output, status, transcript_json, try_spawn};
 
 fn have(tool: &str, flag: &str) -> bool {
     try_spawn(
@@ -87,7 +87,7 @@ fn e2e_real_whisper_tiny() {
     );
     let job = String::from_utf8(out.stdout).unwrap();
     let job = std::path::Path::new(job.trim());
-    let json = fs::read_to_string(job.join("assets/transcript.json")).unwrap();
+    let json = fs::read_to_string(transcript_json(job)).unwrap();
     serde_json::from_str::<serde_json::Value>(&json).expect("transcript.json parses");
     assert!(job.join("captions.srt").is_file());
 }

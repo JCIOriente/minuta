@@ -1,10 +1,11 @@
 use assert_cmd::assert::OutputAssertExt;
 
+use crate::common::*;
 use crate::fake_tools::*;
 
 #[test]
 fn force_step_reruns_it_and_later_steps() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.minuta(&["run", "clase-4.mp4"]).assert().success();
     let before = env.calls().len();
 
@@ -26,7 +27,7 @@ fn force_step_reruns_it_and_later_steps() {
 
 #[test]
 fn force_without_step_reruns_everything() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.minuta(&["run", "clase-4.mp4"]).assert().success();
     let before = env.calls().len();
 
@@ -37,7 +38,7 @@ fn force_without_step_reruns_everything() {
         ["ffprobe", "ffmpeg", "whisper-cli"]
     );
     assert_eq!(
-        cached_lines(&stderr(&out)),
+        cached_steps(&stderr(&out)).len(),
         0,
         "stderr was {}",
         stderr(&out)
@@ -46,7 +47,7 @@ fn force_without_step_reruns_everything() {
 
 #[test]
 fn force_accepts_template_name() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("summary text");
     env.minuta_llm(&["run", "clase-4.mp4", "-t", "summary"], &fake)
         .assert()
@@ -66,13 +67,13 @@ fn force_accepts_template_name() {
     );
     assert_eq!(env.calls(), calls, "no pipeline step is forced");
     let err = stderr(&out);
-    assert_eq!(cached_lines(&err), 5, "stderr was {err}");
+    assert_eq!(cached_steps(&err).len(), 5, "stderr was {err}");
     assert!(!err.contains("summary     cached"), "stderr was {err}");
 }
 
 #[test]
 fn force_template_also_forces_its_dependents() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     env.template("templates", "a", "Write A.");
     env.template("templates", "b", "---\ninput: a\n---\nWrite B.");
     env.template("templates", "c", "Write C.");
@@ -92,7 +93,7 @@ fn force_template_also_forces_its_dependents() {
 
 #[test]
 fn force_step_also_forces_templates() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("summary text");
     env.minuta_llm(&["run", "clase-4.mp4", "-t", "summary"], &fake)
         .assert()
@@ -103,12 +104,12 @@ fn force_step_also_forces_templates() {
     );
     out.clone().assert().success();
     assert_eq!(fake.chat_count(), 2);
-    assert_eq!(cached_lines(&stderr(&out)), 4, "{}", stderr(&out));
+    assert_eq!(cached_steps(&stderr(&out)).len(), 4, "{}", stderr(&out));
 }
 
 #[test]
 fn force_unknown_is_usage() {
-    let env = Env::new();
+    let env = FakeEnv::new();
     let fake = ollama("unused");
     let out = env.minuta_llm(
         &["run", "clase-4.mp4", "-t", "summary", "--force", "nope"],
