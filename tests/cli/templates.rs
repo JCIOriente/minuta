@@ -2,33 +2,13 @@
 //! the fake Ollama and the fake `claude`. Every test owns its temp HOME, config and server.
 
 use std::fs;
-use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use fake_ollama::{FakeOllama, Reply};
+use fake_ollama::Reply;
 
 use crate::common::*;
-
-const NO_OLLAMA: &str = "http://127.0.0.1:9";
-
-fn ollama(reply: &'static str) -> FakeOllama {
-    ollama_with(Arc::new(move |_| Reply::chat(reply)))
-}
-
-fn template_status(job: &Path, name: &str) -> serde_json::Value {
-    job_json(job)["templates"][name]["status"].clone()
-}
-
-/// Waits for `cond` without assuming how long it takes.
-fn wait_until(what: &str, cond: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !cond() {
-        assert!(Instant::now() < deadline, "{what} never happened");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
 
 #[test]
 fn templates_summary_is_written_then_cached() {
@@ -42,7 +22,7 @@ fn templates_summary_is_written_then_cached() {
         fs::read_to_string(job.join("summary.md")).unwrap(),
         "the summary\n"
     );
-    assert_eq!(template_status(&job, "summary"), "done");
+    assert_eq!(template_state(&job, "summary")["status"], "done");
     assert_eq!(fake.chat_count(), 1);
 
     let out = env.run_llm(&["run", "a.mp4", "-t", "summary"], &fake);

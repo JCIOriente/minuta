@@ -274,9 +274,9 @@ fn chapters_always_broken_fails_and_rerun_asks_again() {
     let first_run = (
         out.status.code(),
         last_line(&out),
-        exists(&job, "assets/chapters.json"),
+        template_json(&job, "chapters").try_exists().unwrap(),
         exists(&job, "chapters.md"),
-        exists(&job, "assets/youtube.json"),
+        template_json(&job, "youtube").try_exists().unwrap(),
         exists(&job, "youtube.md"),
     );
     let first_roles = roles(&fake, 0);

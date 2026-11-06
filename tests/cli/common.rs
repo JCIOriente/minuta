@@ -1,28 +1,39 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
-use std::sync::{Mutex, MutexGuard};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 #[path = "../../src/test_support/fake_ollama.rs"]
 pub mod fake_ollama;
 
-use fake_ollama::{FakeOllama, Request};
+use fake_ollama::{FakeOllama, Reply, Request};
 
-/// Held while writing an executable and while spawning a process. A fork in another test
-/// thread that inherits an executable still open for writing makes running it fail with
-/// ETXTBSY on Linux; serializing both rules that out.
+/// Held while writing an executable and while spawning any process, in every module of this
+/// crate. A fork in another test thread that inherits an executable still open for writing
+/// makes running it fail with ETXTBSY on Linux; serializing both rules that out.
 static SPAWN: Mutex<()> = Mutex::new(());
 
 pub fn spawn_lock() -> MutexGuard<'static, ()> {
     SPAWN.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Spawns `cmd` under `spawn_lock`. The lock is released once the child exists, so a long
-/// run does not block other tests.
-pub fn spawn(cmd: &mut Command) -> Child {
+/// Spawns `cmd` under `spawn_lock`, returning the error when it cannot start (a tool that
+/// is not installed). The lock is released once the child exists, so a long run does not
+/// block other tests.
+pub fn try_spawn(cmd: &mut Command) -> std::io::Result<Child> {
     let _guard = spawn_lock();
-    cmd.spawn().unwrap()
+    cmd.spawn()
+}
+
+/// Spawns `cmd` under `spawn_lock`.
+pub fn spawn(cmd: &mut Command) -> Child {
+    try_spawn(cmd).unwrap()
+}
+
+/// Runs `cmd` to completion like `Command::status`, but spawns it under `spawn_lock`.
+pub fn status(cmd: &mut Command) -> ExitStatus {
+    spawn(cmd).wait().unwrap()
 }
 
 /// Runs `cmd` to completion like `Command::output`, but spawns it under `spawn_lock`.
@@ -40,9 +51,29 @@ pub fn state_file(job: &Path) -> PathBuf {
     job.join(".minuta/job.json")
 }
 
+/// `<job>/.minuta`, the state folder.
+pub fn state_dir(job: &Path) -> PathBuf {
+    job.join(".minuta")
+}
+
 /// `<job>/assets`.
 pub fn assets_dir(job: &Path) -> PathBuf {
     job.join("assets")
+}
+
+/// `<job>/assets/audio.wav`.
+pub fn audio_file(job: &Path) -> PathBuf {
+    job.join("assets/audio.wav")
+}
+
+/// `<job>/assets/joined.mp4`, written only for more than one source.
+pub fn joined_file(job: &Path) -> PathBuf {
+    job.join("assets/joined.mp4")
+}
+
+/// `<job>/assets/transcript.json`.
+pub fn transcript_json(job: &Path) -> PathBuf {
+    job.join("assets/transcript.json")
 }
 
 /// `<job>/assets/<template>.json`.
@@ -63,12 +94,14 @@ pub const FAKE_WHISPER: &str = concat!(
 
 pub fn have_ffmpeg() -> bool {
     ["ffmpeg", "ffprobe"].iter().all(|t| {
-        Command::new(t)
-            .arg("-version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+        try_spawn(
+            Command::new(t)
+                .arg("-version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
+        .and_then(|mut child| child.wait())
+        .is_ok_and(|s| s.success())
     })
 }
 
@@ -88,6 +121,7 @@ macro_rules! require_ffmpeg {
 pub(crate) use require_ffmpeg;
 
 pub const FAKE_CLAUDE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/claude");
+pub const FAKE_CODEX: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/codex");
 pub const CLASS_FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/whisper/class.json"
@@ -241,6 +275,14 @@ pub fn run_class(env: &Env, args: &[&str], fake: &FakeOllama) -> Output {
     output(&mut class_command(env, args, &fake.url()))
 }
 
+/// An address no test server ever binds (port 9, discard), so no real Ollama is reached.
+pub const NO_OLLAMA: &str = "http://127.0.0.1:9";
+
+/// A fake Ollama serving the default model; every chat gets `reply`.
+pub fn ollama(reply: &'static str) -> FakeOllama {
+    ollama_with(Arc::new(move |_| Reply::chat(reply)))
+}
+
 pub fn ollama_with(responder: fake_ollama::Responder) -> FakeOllama {
     FakeOllama::start(
         &["gemma4:26b"],
@@ -323,6 +365,18 @@ pub fn job_json(job: &Path) -> serde_json::Value {
     serde_json::from_str(&fs::read_to_string(state_file(job)).unwrap()).unwrap()
 }
 
+/// The `status` of pipeline step `step` in the job state, if the step is recorded.
+pub fn step_status(job: &Path, step: &str) -> Option<String> {
+    job_json(job)["steps"][step]["status"]
+        .as_str()
+        .map(String::from)
+}
+
+/// The state of template `name` in the job state (`null` when it never ran).
+pub fn template_state(job: &Path, name: &str) -> serde_json::Value {
+    job_json(job)["templates"][name].clone()
+}
+
 /// Steps whose progress line in `stderr` says `cached`.
 pub fn cached_steps(stderr: &str) -> Vec<String> {
     stderr
@@ -352,27 +406,28 @@ pub fn wait_for(path: &Path) {
     }
 }
 
+/// Waits for `cond` without assuming how long it takes.
+pub fn wait_until(what: &str, cond: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !cond() {
+        assert!(Instant::now() < deadline, "{what} never happened");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 pub fn signal(sig: &str, child: &Child) {
-    let ok = Command::new("kill")
-        .args([sig, &child.id().to_string()])
-        .status()
-        .unwrap()
-        .success();
+    let ok = status(Command::new("kill").args([sig, &child.id().to_string()])).success();
     assert!(ok);
 }
 
 /// Whether `pid` is a live process.
 pub fn pid_alive(pid: &str) -> bool {
-    Command::new("kill")
-        .args(["-0", pid])
-        .stderr(Stdio::null())
-        .status()
-        .unwrap()
-        .success()
+    status(Command::new("kill").args(["-0", pid]).stderr(Stdio::null())).success()
 }
 
 pub fn kill_pid(pid: &str) {
-    let _ = Command::new("kill").args(["-KILL", pid]).status();
+    // The process may already be gone; only the attempt matters.
+    let _ = try_spawn(Command::new("kill").args(["-KILL", pid])).and_then(|mut child| child.wait());
 }
 
 /// Starts `minuta args` with the fake whisper hanging; returns the run and whisper's pid.
