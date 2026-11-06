@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+- minuta installs from npm: `npm i -g @jcioriente/minuta`, or `npx @jcioriente/minuta` without installing. It needs
+  Node.js 22 or newer and no Rust. Prebuilt binaries ship for macOS (Apple silicon and Intel) and
+  Linux (x64 and arm64, statically linked), each in its own package that npm picks for your system.
+
+### Fixed
+- A step's detail file that cannot be read now produces a warning instead of being skipped silently.
+
 ## 0.8.0
 
 ### Added
