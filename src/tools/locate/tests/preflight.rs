@@ -1,10 +1,11 @@
+//! Finding the tools: `inspect`, `preflight` and `locate_tool` against scripted fakes, the
+//! configured paths and the `PATH` environment variable.
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use crate::error::{Error, Result};
-use crate::tools::{inspect, locate_tool, preflight, Report, ToolInfo, ToolPaths, Toolchain};
+use super::*;
+use crate::test_support::fixture;
 
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
@@ -203,15 +204,8 @@ fn configured_path_beats_path_lookup() {
     assert_eq!(tc.ffmpeg.version, "ffmpeg version custom");
 }
 
-/// Committed, already-executable fakes (`ffmpeg`, `ffprobe`, `whisper-cli`,
-/// `spawn-grandchild`).
-const FIXTURE_TOOLS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tools");
 /// Set in the child process that [`run_child_test`] starts.
 const CHILD_ENV: &str = "MINUTA_TOOLS_TEST_CHILD";
-
-fn fixture_tool(name: &str) -> PathBuf {
-    Path::new(FIXTURE_TOOLS).join(name)
-}
 
 #[test]
 fn configured_missing_model_reported_without_need_model() {
@@ -253,13 +247,13 @@ fn inspect_reports_model_metadata_error() {
 }
 
 /// Runs the `#[ignore]`d test `name` of this binary in a child process whose `PATH` is
-/// only the fixture tools dir. Setting `PATH` in this process would race with the other
+/// only the committed, already-executable fakes in `tests/fixtures/tools`. Setting `PATH` in this process would race with the other
 /// test threads, which spawn tools.
 fn run_child_test(name: &str) {
     let out = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", name, "--ignored", "--test-threads=1"])
         .env_clear()
-        .env("PATH", FIXTURE_TOOLS)
+        .env("PATH", fixture("tools"))
         .env(CHILD_ENV, "1")
         .output()
         .unwrap();
@@ -273,7 +267,7 @@ fn run_child_test(name: &str) {
 
 fn fixture_info(name: &str, version: &str) -> ToolInfo {
     ToolInfo {
-        path: fixture_tool(name),
+        path: fixture("tools").join(name),
         version: version.into(),
     }
 }

@@ -1,13 +1,12 @@
-use std::ffi::OsString;
+//! `run` and `run_capture` on real child processes: argv handling, streaming, the stderr
+//! tail and interrupts.
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use crate::error::{Error, Result};
-use crate::tools::{run, run_capture, Output, RunOpts};
+use super::*;
+use crate::test_support::fixture;
 
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
@@ -185,14 +184,6 @@ fn spawn_failure_names_the_program() {
     );
 }
 
-/// Committed, already-executable fakes (`ffmpeg`, `ffprobe`, `whisper-cli`,
-/// `spawn-grandchild`).
-const FIXTURE_TOOLS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tools");
-
-fn fixture_tool(name: &str) -> PathBuf {
-    Path::new(FIXTURE_TOOLS).join(name)
-}
-
 #[test]
 fn pump_splits_carriage_returns() {
     let dir = tempfile::tempdir().unwrap();
@@ -255,7 +246,7 @@ exit 1",
 
 #[test]
 fn progress_lines_kept_out_of_tail() {
-    let bin = fixture_tool("whisper-fails-late").into_os_string();
+    let bin = fixture("tools/whisper-fails-late").into_os_string();
     match run_r(&[bin], &RunOpts::default(), &mut |_| {}).unwrap_err() {
         Error::Tool { tool, code, stderr } => {
             assert_eq!(tool, "whisper-fails-late");
@@ -340,7 +331,7 @@ fn kill_reaches_grandchild() {
         })
     };
     let argv = [
-        fixture_tool("spawn-grandchild").into_os_string(),
+        fixture("tools/spawn-grandchild").into_os_string(),
         pid_file.into_os_string(),
     ];
     let opts = RunOpts {

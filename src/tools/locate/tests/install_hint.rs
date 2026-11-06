@@ -1,4 +1,6 @@
-use crate::tools::{inspect, install_hint, ToolPaths};
+//! The install hint each missing tool gets, per operating system.
+
+use super::*;
 
 const INSTALL_GUIDE: &str = "https://github.com/JCIOriente/minuta/blob/main/docs/install.md";
 
