@@ -35,7 +35,7 @@ pub struct ModelSpec<'a> {
 }
 
 impl ModelSpec<'_> {
-    /// Where [`pull`] downloads the file from.
+    /// Where [`pull_with_progress`] downloads the file from.
     pub fn url(&self) -> String {
         format!("{}/{}", self.base_url.trim_end_matches('/'), self.file)
     }
@@ -115,20 +115,6 @@ pub enum Pulled {
 /// large models take a long time on slow links.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// `~/.minuta/models`: the folder for models that work with whisper.
-#[cfg(test)]
-pub fn default_dir() -> Result<PathBuf> {
-    let base = directories::BaseDirs::new()
-        .ok_or_else(|| Error::Config("cannot determine the home directory".into()))?;
-    Ok(default_dir_for(base.home_dir()))
-}
-
-/// [`default_dir`] for the given home directory.
-#[cfg(test)]
-pub fn default_dir_for(home: &Path) -> PathBuf {
-    home.join(".minuta").join("models")
-}
 
 /// Where `spec` lives under `dir`: whisper models sit flat (as in whisper.cpp), VAD models
 /// in `vad/`.
@@ -255,14 +241,8 @@ fn download(
 
 /// Downloads `spec` into `dir` unless a file with the pinned checksum is already there.
 /// The bytes come from [`ModelSpec::url`] and go to a temp file that is renamed into place
-/// only after the checksum matches.
-#[cfg(test)]
-pub fn pull(spec: &ModelSpec, dir: &Path) -> Result<Pulled> {
-    pull_with_progress(spec, dir, &mut |_| {})
-}
-
-/// [`pull`], calling `on_bytes` with the running byte count after each chunk is written.
-/// Nothing is reported when the file is already present.
+/// only after the checksum matches. `on_bytes` gets the running byte count after each chunk
+/// is written; nothing is reported when the file is already present.
 pub fn pull_with_progress(
     spec: &ModelSpec,
     dir: &Path,

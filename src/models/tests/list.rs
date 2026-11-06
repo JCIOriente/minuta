@@ -8,7 +8,7 @@ fn old_cache_folder_is_ignored() {
     let old = home.path().join(".cache/minuta/models");
     std::fs::create_dir_all(&old).unwrap();
     std::fs::write(old.join("ggml-tiny.bin"), b"old").unwrap();
-    let rows = list(&default_dir_for(home.path())).unwrap();
+    let rows = list(&home.path().join(".minuta").join("models")).unwrap();
     let tiny = rows.iter().find(|r| r.name == "tiny").unwrap();
     assert!(!tiny.installed);
 }

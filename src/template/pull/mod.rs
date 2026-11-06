@@ -67,16 +67,6 @@ impl Origin {
         Origin::new(&format!("{GITHUB}/{reference}/templates"))
     }
 
-    /// The host (and port, if any) files come from.
-    #[cfg(test)]
-    pub fn host(&self) -> &str {
-        let rest = self
-            .base
-            .split_once("://")
-            .map_or(self.base.as_str(), |(_, rest)| rest);
-        rest.split('/').next().unwrap_or(rest)
-    }
-
     pub fn url(&self, file: &str) -> String {
         format!("{}/{file}", self.base)
     }

@@ -1,4 +1,4 @@
-//! `resolve` and `default_dir_for`: from a name or path to a model file.
+//! `resolve`: from a name or path to a model file.
 
 use super::*;
 
@@ -33,12 +33,6 @@ fn whisper_model_resolves_flat() {
         resolve("tiny", dir.path()).unwrap(),
         dir.path().join("ggml-tiny.bin")
     );
-}
-
-#[test]
-fn default_dir_is_minuta_models() {
-    let home = Path::new("/home/u");
-    assert_eq!(default_dir_for(home), Path::new("/home/u/.minuta/models"));
 }
 
 #[test]
