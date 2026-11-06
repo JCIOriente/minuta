@@ -278,6 +278,7 @@ Ejecuta `claude` una vez para iniciar sesión y luego úsalo desde minuta:
 
 ```sh
 minuta run meeting.mp4 -t summary --llm claude
+minuta run meeting.mp4 -t summary --llm claude:<model>   # un modelo específico, como sonnet
 ```
 
 Para usar Claude en todas las ejecuciones, define `default = "claude"` en `[llm]`.
