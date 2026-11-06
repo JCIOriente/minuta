@@ -58,7 +58,7 @@ impl Origin {
     }
 
     /// The repository's `templates/` folder at `reference` (a branch, tag or commit).
-    pub fn github(reference: &str) -> Result<Origin> {
+    pub(crate) fn github(reference: &str) -> Result<Origin> {
         if !valid_ref(reference) {
             return Err(Error::Usage(format!(
                 "invalid ref {reference:?} (use letters, digits, '.', '_', '-' and '/')"
@@ -67,7 +67,7 @@ impl Origin {
         Origin::new(&format!("{GITHUB}/{reference}/templates"))
     }
 
-    pub fn url(&self, file: &str) -> String {
+    pub(crate) fn url(&self, file: &str) -> String {
         format!("{}/{file}", self.base)
     }
 }

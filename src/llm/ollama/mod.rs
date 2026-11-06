@@ -15,8 +15,8 @@ const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 /// What `/api/show` says about a model.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OllamaInfo {
-    pub context_length: Option<usize>,
-    pub thinking: bool,
+    pub(crate) context_length: Option<usize>,
+    pub(crate) thinking: bool,
 }
 
 /// Verifies the server is reachable and `model` is pulled, then reads its limits.

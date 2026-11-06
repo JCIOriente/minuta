@@ -17,22 +17,22 @@ const MANIFEST_WARNING: &str = "invalid manifest, treating every file as modifie
 /// One template offered by the catalog. `sha256` is the hash of the file's bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Entry {
-    pub name: String,
+pub(crate) struct Entry {
+    pub(crate) name: String,
     /// `description`, `platform`, `tags` and `input` are free text from the network. They are
     /// not validated here: pass them through the CLI's `sanitize` before printing.
-    pub description: String,
-    pub platform: Option<String>,
+    pub(crate) description: String,
+    pub(crate) platform: Option<String>,
     #[serde(default)]
-    pub tags: Vec<String>,
+    pub(crate) tags: Vec<String>,
     /// The template's `input:` chain. Informational: pull does not resolve it.
-    pub input: Option<String>,
-    pub sha256: String,
+    pub(crate) input: Option<String>,
+    pub(crate) sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Catalog {
-    pub entries: Vec<Entry>,
+    pub(crate) entries: Vec<Entry>,
 }
 
 #[derive(Deserialize)]
@@ -46,7 +46,7 @@ struct CatalogFile {
 impl Catalog {
     /// Parses `index.toml`. The text comes from the network: names and hashes are validated
     /// here, and any string put in an error is escaped with `{:?}`.
-    pub fn parse(text: &str) -> Result<Catalog> {
+    pub(crate) fn parse(text: &str) -> Result<Catalog> {
         let fail = |message: String| Error::Parse(format!("template catalog: {message}"));
         let file: CatalogFile = toml::from_str(text).map_err(|e| fail(e.to_string()))?;
         if file.version != VERSION {

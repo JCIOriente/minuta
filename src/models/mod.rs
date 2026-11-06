@@ -37,7 +37,7 @@ pub struct ModelSpec<'a> {
 
 impl ModelSpec<'_> {
     /// Where [`pull_with_progress`] downloads the file from.
-    pub fn url(&self) -> String {
+    pub(crate) fn url(&self) -> String {
         format!("{}/{}", self.base_url.trim_end_matches('/'), self.file)
     }
 }

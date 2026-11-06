@@ -22,7 +22,7 @@ pub enum Problem {
 }
 
 impl Problem {
-    pub fn into_missing(self) -> Missing {
+    pub(crate) fn into_missing(self) -> Missing {
         match self {
             Problem::Unreachable(m) | Problem::ModelMissing(m) => m,
         }
