@@ -4,7 +4,7 @@
 use std::fs;
 use std::process::{Command, Stdio};
 
-use crate::common::output;
+use crate::common::{have_ffmpeg, output};
 
 fn have(tool: &str, flag: &str) -> bool {
     Command::new(tool)
@@ -21,10 +21,7 @@ fn e2e_real_whisper_tiny() {
         eprintln!("skipping: set MINUTA_E2E=1 to run the real whisper-cli end to end");
         return;
     }
-    assert!(
-        have("ffmpeg", "-version") && have("ffprobe", "-version"),
-        "ffmpeg/ffprobe needed"
-    );
+    assert!(have_ffmpeg(), "ffmpeg/ffprobe needed");
     assert!(
         have("whisper-cli", "--version") || have("whisper-cli", "-h"),
         "whisper-cli needed"
