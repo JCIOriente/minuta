@@ -15,15 +15,15 @@ use serde_json::{json, Value};
 /// A request as received. `chat_index` is the 0-based count of earlier `/api/chat` requests,
 /// `None` for any other path.
 #[derive(Debug, Clone)]
-pub struct Request {
-    pub method: String,
-    pub path: String,
-    pub body: Value,
-    pub chat_index: Option<usize>,
-    pub authorization: Option<String>,
+pub(crate) struct Request {
+    pub(crate) method: String,
+    pub(crate) path: String,
+    pub(crate) body: Value,
+    pub(crate) chat_index: Option<usize>,
+    pub(crate) authorization: Option<String>,
 }
 
-pub enum Reply {
+pub(crate) enum Reply {
     /// Any status with a raw body.
     Status(u16, String),
     /// A 307 to `location`.
@@ -36,11 +36,11 @@ pub enum Reply {
 
 impl Reply {
     /// 200 with a well-formed non-streaming chat response.
-    pub fn chat(content: &str) -> Reply {
+    pub(crate) fn chat(content: &str) -> Reply {
         Reply::chat_done(content, "stop")
     }
 
-    pub fn chat_done(content: &str, done_reason: &str) -> Reply {
+    pub(crate) fn chat_done(content: &str, done_reason: &str) -> Reply {
         let body = json!({
             "model": "fake",
             "message": {"role": "assistant", "content": content},
@@ -51,14 +51,14 @@ impl Reply {
     }
 
     /// An Ollama-style error body: `{"error": message}`.
-    pub fn error(status: u16, message: &str) -> Reply {
+    pub(crate) fn error(status: u16, message: &str) -> Reply {
         Reply::Status(status, json!({ "error": message }).to_string())
     }
 }
 
-pub type Responder = Arc<dyn Fn(&Request) -> Reply + Send + Sync>;
+pub(crate) type Responder = Arc<dyn Fn(&Request) -> Reply + Send + Sync>;
 
-pub struct FakeOllama {
+pub(crate) struct FakeOllama {
     addr: String,
     requests: Arc<Mutex<Vec<Request>>>,
     chats: Arc<AtomicUsize>,
@@ -68,17 +68,17 @@ pub struct FakeOllama {
 impl FakeOllama {
     /// `models` are the names `/api/tags` lists; `show_info` is the full `/api/show` body
     /// (for a listed model; unlisted ones get 404).
-    pub fn start(models: &[&str], show_info: Value, responder: Responder) -> FakeOllama {
+    pub(crate) fn start(models: &[&str], show_info: Value, responder: Responder) -> FakeOllama {
         FakeOllama::start_with_show(models, Some(show_info), responder)
     }
 
     /// Like `start`, but `/api/tags` answers 200 with `tags` verbatim.
-    pub fn start_with_tags(tags: Value, responder: Responder) -> FakeOllama {
+    pub(crate) fn start_with_tags(tags: Value, responder: Responder) -> FakeOllama {
         FakeOllama::spawn(&[], None, Some(tags), responder)
     }
 
     /// Like `start`, but `show_info: None` makes `/api/show` fail with a 500.
-    pub fn start_with_show(
+    pub(crate) fn start_with_show(
         models: &[&str],
         show_info: Option<Value>,
         responder: Responder,
@@ -131,17 +131,17 @@ impl FakeOllama {
         }
     }
 
-    pub fn url(&self) -> String {
+    pub(crate) fn url(&self) -> String {
         format!("http://{}", self.addr)
     }
 
     /// Every request received so far, in arrival order.
-    pub fn requests(&self) -> Vec<Request> {
+    pub(crate) fn requests(&self) -> Vec<Request> {
         self.requests.lock().expect("requests mutex").clone()
     }
 
     /// Number of `/api/chat` requests received so far.
-    pub fn chat_count(&self) -> usize {
+    pub(crate) fn chat_count(&self) -> usize {
         self.chats.load(Ordering::SeqCst)
     }
 }

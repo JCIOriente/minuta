@@ -11,8 +11,8 @@ pub mod chunk;
 pub mod claude;
 pub mod codex;
 pub mod endpoint;
-#[doc(hidden)] // Not cfg(test): integration tests in tests/ need it.
-pub mod fake;
+#[cfg(test)]
+pub(crate) mod fake;
 pub(crate) mod http;
 pub mod ollama;
 mod subprocess;

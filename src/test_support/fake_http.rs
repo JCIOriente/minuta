@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-pub struct Route {
+pub(crate) struct Route {
     path: String,
     status: u16,
     body: Vec<u8>,
@@ -17,12 +17,12 @@ pub struct Route {
 
 impl Route {
     /// 200 with `body`.
-    pub fn ok(path: &str, body: impl Into<Vec<u8>>) -> Route {
+    pub(crate) fn ok(path: &str, body: impl Into<Vec<u8>>) -> Route {
         Route::status(path, 200, body)
     }
 
     /// Any status with `body`.
-    pub fn status(path: &str, status: u16, body: impl Into<Vec<u8>>) -> Route {
+    pub(crate) fn status(path: &str, status: u16, body: impl Into<Vec<u8>>) -> Route {
         Route {
             path: path.to_string(),
             status,
@@ -32,7 +32,7 @@ impl Route {
     }
 
     /// 302 to `to` (a path on this server).
-    pub fn redirect(path: &str, to: &str) -> Route {
+    pub(crate) fn redirect(path: &str, to: &str) -> Route {
         Route {
             path: path.to_string(),
             status: 302,
@@ -42,14 +42,14 @@ impl Route {
     }
 }
 
-pub struct FakeHttp {
+pub(crate) struct FakeHttp {
     addr: String,
     requests: Arc<Mutex<Vec<String>>>,
     stop: Arc<AtomicBool>,
 }
 
 impl FakeHttp {
-    pub fn start(routes: Vec<Route>) -> FakeHttp {
+    pub(crate) fn start(routes: Vec<Route>) -> FakeHttp {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake http");
         let addr = listener.local_addr().expect("local addr").to_string();
         let routes = Arc::new(routes);
@@ -78,12 +78,12 @@ impl FakeHttp {
     }
 
     /// `http://127.0.0.1:PORT/templates`: the origin the tests point minuta at.
-    pub fn base(&self) -> String {
+    pub(crate) fn base(&self) -> String {
         format!("http://{}/templates", self.addr)
     }
 
     /// Request paths received so far, in arrival order.
-    pub fn requests(&self) -> Vec<String> {
+    pub(crate) fn requests(&self) -> Vec<String> {
         self.requests.lock().expect("requests mutex").clone()
     }
 }
