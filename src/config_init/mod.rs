@@ -10,7 +10,7 @@ use crate::error::{Error, Result};
 /// out, with its default (or an example for keys that are unset by default). `[whisper]` is
 /// the only live line, so the file parses as an empty config. `src/config_init/tests.rs`
 /// checks it against the key list.
-pub const TEMPLATE: &str = r##"# minuta configuration, written by `minuta config init`.
+pub(crate) const TEMPLATE: &str = r##"# minuta configuration, written by `minuta config init`.
 # Every key is commented out and shows its default. Remove the leading "# " to set one.
 # MINUTA_* environment variables and command-line flags override this file.
 
@@ -69,7 +69,7 @@ pub const TEMPLATE: &str = r##"# minuta configuration, written by `minuta config
 
 /// What [`write`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Written {
+pub(crate) enum Written {
     /// The file did not exist and was created.
     Created,
     /// The file existed and `force` replaced it.
@@ -80,7 +80,7 @@ pub enum Written {
 
 /// Write [`TEMPLATE`] to `path`, creating its parent folder. An existing file is never read:
 /// it is left alone, or replaced when `force` is set. I/O errors name the path involved.
-pub fn write(path: &Path, force: bool) -> Result<Written> {
+pub(crate) fn write(path: &Path, force: bool) -> Result<Written> {
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent).map_err(|source| io_error(parent, source))?;
     }

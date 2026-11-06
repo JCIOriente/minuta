@@ -2,7 +2,7 @@
 
 /// Trims, drops a leading `<think>…</think>` block and unwraps output that is exactly one
 /// fenced code block. Output with prose around a fence, or with several fences, is kept.
-pub fn clean(output: &str) -> String {
+pub(crate) fn clean(output: &str) -> String {
     let mut text = output.trim();
     if let Some(rest) = text.strip_prefix("<think>") {
         if let Some((_, after)) = rest.split_once("</think>") {

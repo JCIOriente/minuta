@@ -1,8 +1,8 @@
 //! Structured fields: the shared field set and the value types (ADR-0006).
 
-pub mod prompt;
-pub mod render;
-pub mod validate;
+pub(crate) mod prompt;
+pub(crate) mod render;
+pub(crate) mod validate;
 
 use std::fmt;
 
@@ -10,10 +10,10 @@ use crate::chapters::{self, Chapter};
 
 /// Bumped when the fields block, repair prompt, normalization or rendering changes; part of
 /// the fingerprint of fields templates only. (The artifact's own `"version"` is separate, ADR-0007.)
-pub const FIELDS_VERSION: u32 = 1;
+pub(crate) const FIELDS_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Field {
+pub(crate) enum Field {
     Title,
     Body,
     Tags,
@@ -25,7 +25,7 @@ pub enum Field {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
+pub(crate) enum Kind {
     Text,
     List,
     Chapters,
@@ -33,7 +33,7 @@ pub enum Kind {
 
 impl Field {
     /// Every field, in the order of the spec table.
-    pub const ALL: [Field; 7] = [
+    pub(crate) const ALL: [Field; 7] = [
         Field::Title,
         Field::Body,
         Field::Tags,
@@ -43,7 +43,7 @@ impl Field {
         Field::Chapters,
     ];
 
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Field::Title => "title",
             Field::Body => "body",
@@ -56,11 +56,11 @@ impl Field {
     }
 
     /// `None` for unknown names; the parser words that error.
-    pub fn from_name(s: &str) -> Option<Field> {
+    pub(crate) fn from_name(s: &str) -> Option<Field> {
         Field::ALL.into_iter().find(|f| f.name() == s)
     }
 
-    pub fn kind(self) -> Kind {
+    pub(crate) fn kind(self) -> Kind {
         match self {
             Field::Title | Field::Body | Field::ThumbnailText | Field::Notes => Kind::Text,
             Field::Tags | Field::Hashtags => Kind::List,
@@ -70,12 +70,12 @@ impl Field {
 
     /// Whether minuta supplies the value instead of the model: such a field stays out of the
     /// fields block, the schema and answer validation. Only `chapters`.
-    pub fn is_filled(self) -> bool {
+    pub(crate) fn is_filled(self) -> bool {
         matches!(self, Field::Chapters)
     }
 
     /// The description given to the model. Never sent for `chapters` (it is filled, not asked).
-    pub fn description(self) -> &'static str {
+    pub(crate) fn description(self) -> &'static str {
         match self {
             Field::Title => "A title.",
             Field::Body => "The main text.",
@@ -90,40 +90,40 @@ impl Field {
 
 /// Per-field limits: `max_chars` bounds the rendered length, `max` the number of list items.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Limit {
+pub(crate) struct Limit {
     pub max_chars: Option<usize>,
     pub max: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Format {
+pub(crate) enum Format {
     #[default]
     Plain,
     Markdown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FieldSpec {
+pub(crate) struct FieldSpec {
     pub field: Field,
     pub limit: Limit,
 }
 
 /// The fields a template declares, in declared order.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FieldsSpec {
+pub(crate) struct FieldsSpec {
     pub fields: Vec<FieldSpec>,
     pub format: Format,
 }
 
 impl FieldsSpec {
     /// Whether the template declares the filled `chapters` field.
-    pub fn declares_chapters(&self) -> bool {
+    pub(crate) fn declares_chapters(&self) -> bool {
         self.fields.iter().any(|f| f.field == Field::Chapters)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Value {
+pub(crate) enum Value {
     Text(String),
     List(Vec<String>),
     Chapters(Vec<Chapter>),
@@ -141,7 +141,7 @@ impl Value {
     }
 
     /// The text a reader sees, and what `max_chars` measures.
-    pub fn rendered(&self, field: Field) -> String {
+    pub(crate) fn rendered(&self, field: Field) -> String {
         // A mismatched pair is a bug in the caller; the value decides what is printed, so
         // release builds render something sensible instead of panicking.
         debug_assert!(self.fits(field), "{self:?} does not fit field {field:?}");
@@ -160,12 +160,12 @@ impl Value {
 
 /// Validated values, in declared order.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Values(pub Vec<(Field, Value)>);
+pub(crate) struct Values(pub Vec<(Field, Value)>);
 
 impl Values {
     /// Inserts `Value::Chapters(chapters)` at the declared position of `chapters`; unchanged
     /// when the spec does not declare it.
-    pub fn fill_chapters(mut self, spec: &FieldsSpec, chapters: Vec<Chapter>) -> Values {
+    pub(crate) fn fill_chapters(mut self, spec: &FieldsSpec, chapters: Vec<Chapter>) -> Values {
         let Some(position) = spec.fields.iter().position(|f| f.field == Field::Chapters) else {
             return self;
         };
@@ -185,7 +185,7 @@ impl Values {
 
 /// One problem with a model answer, worded for the model and for the user.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Violation(pub String);
+pub(crate) struct Violation(pub String);
 
 impl fmt::Display for Violation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -10,18 +10,18 @@ const ARTIFACT_VERSION: u64 = 1;
 
 /// A chapters artifact as read back from `chapters.json`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Artifact {
+pub(crate) struct Artifact {
     pub output_lang: String,
     pub chapters: Vec<Chapter>,
 }
 
 /// The `chapters.md` text: the chapter lines, one trailing newline.
-pub fn markdown(chapters: &[Chapter]) -> String {
+pub(crate) fn markdown(chapters: &[Chapter]) -> String {
     format!("{}\n", lines(chapters))
 }
 
 /// The `chapters.json` artifact (ADR-0009), pretty-printed with a trailing newline.
-pub fn artifact_json(output_lang_code: &str, chapters: &[Chapter]) -> String {
+pub(crate) fn artifact_json(output_lang_code: &str, chapters: &[Chapter]) -> String {
     let artifact = ArtifactJson {
         version: ARTIFACT_VERSION,
         output_lang: output_lang_code,
@@ -58,7 +58,7 @@ struct WireChapter {
 }
 
 /// Reads a `chapters.json` text. Errors are the spec's wording after "chapters.json".
-pub fn read_artifact(text: &str) -> Result<Artifact, String> {
+pub(crate) fn read_artifact(text: &str) -> Result<Artifact, String> {
     let value: Json = serde_json::from_str(text).map_err(|e| e.to_string())?;
     let Some(object) = value.as_object() else {
         return Err("expected an object".to_string());

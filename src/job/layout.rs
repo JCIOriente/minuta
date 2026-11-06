@@ -7,9 +7,9 @@
 use std::path::{Path, PathBuf};
 
 /// Folder of reusable machine files: JSON results, `audio.wav`, the joined recording.
-pub const ASSETS_DIR: &str = "assets";
+pub(crate) const ASSETS_DIR: &str = "assets";
 /// Hidden folder of minuta's own state.
-pub const STATE_DIR: &str = ".minuta";
+pub(crate) const STATE_DIR: &str = ".minuta";
 
 fn assets(dir: &Path) -> PathBuf {
     dir.join(ASSETS_DIR)
@@ -20,53 +20,53 @@ fn state_dir(dir: &Path) -> PathBuf {
 }
 
 /// `.minuta/job.json`.
-pub fn state_file(dir: &Path) -> PathBuf {
+pub(crate) fn state_file(dir: &Path) -> PathBuf {
     state_dir(dir).join("job.json")
 }
 
 /// `.minuta/probe.json`.
-pub fn probe_file(dir: &Path) -> PathBuf {
+pub(crate) fn probe_file(dir: &Path) -> PathBuf {
     state_dir(dir).join("probe.json")
 }
 
 /// `.minuta/llm-cache`.
-pub fn call_cache_dir(dir: &Path) -> PathBuf {
+pub(crate) fn call_cache_dir(dir: &Path) -> PathBuf {
     state_dir(dir).join("llm-cache")
 }
 
 /// `.minuta/whisper-raw.json`, whisper's own output while transcribing. whisper-cli is given
 /// the same path without `.json` as its output prefix.
-pub fn raw_whisper(dir: &Path) -> PathBuf {
+pub(crate) fn raw_whisper(dir: &Path) -> PathBuf {
     state_dir(dir).join("whisper-raw.json")
 }
 
 /// `.minuta/concat.txt`, ffmpeg's list of sources while joining. Removed after the join.
-pub fn concat_list(dir: &Path) -> PathBuf {
+pub(crate) fn concat_list(dir: &Path) -> PathBuf {
     state_dir(dir).join("concat.txt")
 }
 
 /// `assets/transcript.json`.
-pub fn transcript_json(dir: &Path) -> PathBuf {
+pub(crate) fn transcript_json(dir: &Path) -> PathBuf {
     assets(dir).join("transcript.json")
 }
 
 /// `assets/audio.wav`.
-pub fn audio_file(dir: &Path) -> PathBuf {
+pub(crate) fn audio_file(dir: &Path) -> PathBuf {
     assets(dir).join("audio.wav")
 }
 
 /// `assets/joined.<ext>`.
-pub fn joined_file(dir: &Path, ext: &str) -> PathBuf {
+pub(crate) fn joined_file(dir: &Path, ext: &str) -> PathBuf {
     assets(dir).join(format!("joined.{ext}"))
 }
 
 /// `assets/<name>.md`, the Markdown of template `name` when it ran only because another
 /// needed it. A requested template writes `<name>.md` at the root instead.
-pub fn implicit_md(dir: &Path, name: &str) -> PathBuf {
+pub(crate) fn implicit_md(dir: &Path, name: &str) -> PathBuf {
     assets(dir).join(format!("{name}.md"))
 }
 
 /// `assets/<name>.json`, the result of template `name`.
-pub fn template_json(dir: &Path, name: &str) -> PathBuf {
+pub(crate) fn template_json(dir: &Path, name: &str) -> PathBuf {
     assets(dir).join(format!("{name}.json"))
 }

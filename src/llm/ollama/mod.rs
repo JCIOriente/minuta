@@ -82,7 +82,7 @@ fn name_matches(listed: &str, wanted: &str) -> bool {
 }
 
 #[derive(Clone)]
-pub struct Ollama {
+pub(crate) struct Ollama {
     id: String,
     model: String,
     url: String,
@@ -93,7 +93,7 @@ pub struct Ollama {
 }
 
 impl Ollama {
-    pub fn new(url: &str, model: &str, num_ctx: usize, info: &OllamaInfo) -> Ollama {
+    pub(crate) fn new(url: &str, model: &str, num_ctx: usize, info: &OllamaInfo) -> Ollama {
         Ollama {
             id: format!("ollama:{model}"),
             model: model.to_string(),
@@ -107,7 +107,7 @@ impl Ollama {
 
     /// Read timeout for a chat request (default 10 minutes).
     #[cfg(test)]
-    pub fn with_timeout(mut self, timeout: Duration) -> Ollama {
+    pub(crate) fn with_timeout(mut self, timeout: Duration) -> Ollama {
         self.timeout = timeout;
         self
     }

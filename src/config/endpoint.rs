@@ -13,7 +13,7 @@ use crate::llm::{is_endpoint_name, RESERVED_ENDPOINT_NAMES};
 
 /// An OpenAI-compatible server. Valid by construction in `Config::resolve`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Endpoint {
+pub(crate) struct Endpoint {
     pub url: Setting,
     pub context_tokens: Setting,
     pub timeout_secs: Setting,
@@ -24,22 +24,22 @@ pub struct Endpoint {
 
 impl Endpoint {
     /// Prompt + output budget per call.
-    pub fn context_tokens(&self) -> usize {
+    pub(crate) fn context_tokens(&self) -> usize {
         parse_checked(&self.context_tokens)
     }
 
     /// Read timeout for one request.
-    pub fn timeout(&self) -> Duration {
+    pub(crate) fn timeout(&self) -> Duration {
         Duration::from_secs(parse_checked(&self.timeout_secs))
     }
 
     /// The URL's host, as the off-machine notice shows it.
-    pub fn host(&self) -> &str {
+    pub(crate) fn host(&self) -> &str {
         &self.host
     }
 
     /// True when requests stay on this machine. A LAN address does not count.
-    pub fn is_local(&self) -> bool {
+    pub(crate) fn is_local(&self) -> bool {
         let unbracketed = self.host.trim_start_matches('[').trim_end_matches(']');
         self.host == "localhost"
             || unbracketed

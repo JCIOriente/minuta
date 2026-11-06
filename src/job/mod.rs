@@ -1,9 +1,9 @@
 //! Job folders: naming, `job.json`, fingerprints, staleness and atomic writes.
 
-pub mod fingerprint;
-pub mod layout;
-pub mod stale;
-pub mod state;
+pub(crate) mod fingerprint;
+pub(crate) mod layout;
+pub(crate) mod stale;
+pub(crate) mod state;
 #[cfg(test)]
 mod tests;
 
@@ -16,13 +16,15 @@ use std::path::{Path, PathBuf, MAIN_SEPARATOR};
 use crate::error::{Error, Result};
 
 use fingerprint::source_digest;
-pub use fingerprint::{fingerprint, source_record, step_fingerprint};
-pub use stale::{plan_stale, template_reason, Force, Reason};
-pub use state::{JobState, Source, Status, StepName, StepState};
+pub(crate) use fingerprint::{fingerprint, source_record, step_fingerprint};
+pub(crate) use stale::{plan_stale, template_reason, Force, Reason};
+#[cfg(test)]
+use state::Source;
+pub(crate) use state::{JobState, Status, StepName, StepState};
 
 /// What a step sees of its job.
 #[derive(Debug, Clone)]
-pub struct Ctx {
+pub(crate) struct Ctx {
     /// The job folder, where every artifact is written.
     pub dir: PathBuf,
     /// Canonical source paths, in join order.
@@ -33,7 +35,7 @@ pub struct Ctx {
 
 /// One stage of a job. The runner fingerprints a step with [`step_fingerprint`], asks
 /// [`plan_stale`] whether it must run, and records the result with [`Job::mark_done`].
-pub trait Step {
+pub(crate) trait Step {
     const NAME: StepName;
     /// Everything besides the sources that determines the outputs, including the version
     /// string of any tool the step runs.
@@ -45,7 +47,7 @@ pub trait Step {
 
 /// A job folder `<out>/<name>/` and its `job.json` state.
 #[derive(Debug)]
-pub struct Job {
+pub(crate) struct Job {
     pub dir: PathBuf,
     pub state: JobState,
 }
@@ -58,7 +60,12 @@ impl Job {
     /// an `Error::Job` unless `allow_replace` is set, in which case the job starts over. A name
     /// that is empty, `.`, `..` or contains a path separator is an `Error::Usage`. Names,
     /// sources, `job.json` and conflicts are all checked before anything is created or changed.
-    pub fn open(out: &Path, name: &str, sources: &[PathBuf], allow_replace: bool) -> Result<Job> {
+    pub(crate) fn open(
+        out: &Path,
+        name: &str,
+        sources: &[PathBuf],
+        allow_replace: bool,
+    ) -> Result<Job> {
         if name.is_empty() || name == "." || name == ".." || name.contains(['/', MAIN_SEPARATOR]) {
             return Err(Error::Usage(format!("invalid job name `{name}`")));
         }
@@ -104,13 +111,13 @@ impl Job {
     }
 
     /// Writes `job.json` atomically.
-    pub fn save(&self) -> Result<()> {
+    pub(crate) fn save(&self) -> Result<()> {
         reject_symlinked_tier(&self.dir.join(layout::STATE_DIR))?;
         self.state.save(&layout::state_file(&self.dir))
     }
 
     /// The context steps of this job run in.
-    pub fn ctx(&self) -> Ctx {
+    pub(crate) fn ctx(&self) -> Ctx {
         Ctx {
             dir: self.dir.clone(),
             sources: self.state.sources.iter().map(|s| s.path.clone()).collect(),
@@ -122,7 +129,7 @@ impl Job {
     /// absolute or relative to the job folder and are stored relative to it. Fails with
     /// `Error::Job`, recording nothing, if any artifact does not exist, cannot be checked, or
     /// lies outside the job folder.
-    pub fn mark_done(
+    pub(crate) fn mark_done(
         &mut self,
         step: StepName,
         fingerprint: &str,
@@ -135,7 +142,7 @@ impl Job {
     }
 
     /// Marks each planned step stale with its reason, then saves `job.json`.
-    pub fn mark_stale(&mut self, plan: &[(StepName, Reason)]) -> Result<()> {
+    pub(crate) fn mark_stale(&mut self, plan: &[(StepName, Reason)]) -> Result<()> {
         for (step, reason) in plan {
             set_stale(&mut self.state.steps, *step, reason);
         }
@@ -144,7 +151,7 @@ impl Job {
 
     /// Records template `name` as done with `fingerprint`, then saves `job.json`. `artifacts`
     /// are handled and checked as in [`Job::mark_done`].
-    pub fn mark_template_done(
+    pub(crate) fn mark_template_done(
         &mut self,
         name: &str,
         fingerprint: &str,
@@ -157,7 +164,7 @@ impl Job {
     }
 
     /// Marks template `name` stale with `reason`, then saves `job.json`.
-    pub fn mark_template_stale(&mut self, name: &str, reason: &Reason) -> Result<()> {
+    pub(crate) fn mark_template_stale(&mut self, name: &str, reason: &Reason) -> Result<()> {
         set_stale(&mut self.state.templates, name.to_owned(), reason);
         self.save()
     }
@@ -220,7 +227,7 @@ impl Job {
 
     /// Removes leftover `*.tmp` files from the job folder, `assets/` and `.minuta/` (after an
     /// interrupt, for example). A tier that does not exist yet has none.
-    pub fn clean_tmp(&self) -> Result<()> {
+    pub(crate) fn clean_tmp(&self) -> Result<()> {
         remove_tmp_files(&self.dir)?;
         for tier in [layout::ASSETS_DIR, layout::STATE_DIR] {
             let tier = self.dir.join(tier);
@@ -251,7 +258,7 @@ fn set_stale<K: Ord>(states: &mut BTreeMap<K, StepState>, key: K, reason: &Reaso
 /// `.minuta`): a link planted there would make writes and the `*.tmp` cleanup reach outside the
 /// job folder. Other names and missing paths pass. A tier folder that is a symlink on purpose
 /// (to keep `assets/` on another disk, say) is refused on purpose too.
-pub fn reject_symlinked_tier(path: &Path) -> Result<()> {
+pub(crate) fn reject_symlinked_tier(path: &Path) -> Result<()> {
     let is_tier = path
         .file_name()
         .is_some_and(|n| n == layout::ASSETS_DIR || n == layout::STATE_DIR);
@@ -292,7 +299,7 @@ const MEDIA_EXTENSIONS: [&str; 9] = [
 /// A path without a file name is an `Error::Usage`, and so is a file name that is only media
 /// extensions (`.mp4`, `.mp4.wav`): stripping would leave nothing, and keeping `.mp4` as the name
 /// would hide the job folder and still end in a media extension.
-pub fn derive_name(first: &Path) -> Result<String> {
+pub(crate) fn derive_name(first: &Path) -> Result<String> {
     let mut name = first
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -326,7 +333,7 @@ fn is_media_extension(ext: &str) -> bool {
 /// Like [`write_atomic`] for a file inside `job_dir`: it first refuses a symlinked tier folder
 /// (`assets` or `.minuta`) between `job_dir` and `path`. Only folders below `job_dir` count, so
 /// a job folder that is itself a symlink, or lives under one, is fine.
-pub fn write_atomic_in(
+pub(crate) fn write_atomic_in(
     job_dir: &Path,
     path: &Path,
     f: impl FnOnce(&Path) -> Result<()>,
@@ -347,7 +354,7 @@ pub fn write_atomic_in(
 /// A job folder can come from elsewhere, and a symlink planted at `<path>.tmp` would otherwise
 /// make `f` write through it to the link's target. `remove_file` removes the link itself.
 /// `f` creates the file (an external tool may be the one writing it), so it is not `create_new`.
-pub fn write_atomic(path: &Path, f: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
+pub(crate) fn write_atomic(path: &Path, f: impl FnOnce(&Path) -> Result<()>) -> Result<()> {
     let tmp = tmp_path(path);
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(parent).map_err(|e| with_path(parent, e))?;

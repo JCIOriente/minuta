@@ -1,14 +1,16 @@
-pub mod audio;
-pub mod join;
-pub mod outputs;
-pub mod probe;
-pub mod transcribe;
+pub(crate) mod audio;
+pub(crate) mod join;
+pub(crate) mod outputs;
+pub(crate) mod probe;
+pub(crate) mod transcribe;
 
-pub use audio::Audio;
-pub use join::{joined_path, plan_join, Encoder, Join, Mode};
-pub use outputs::Outputs;
-pub use probe::{Probe, SourceProbe};
-pub use transcribe::{Transcribe, TranscribeOutcome};
+pub(crate) use audio::Audio;
+#[cfg(test)]
+pub(crate) use join::Encoder;
+pub(crate) use join::{plan_join, Join, Mode};
+pub(crate) use outputs::Outputs;
+pub(crate) use probe::{Probe, SourceProbe};
+pub(crate) use transcribe::Transcribe;
 
 #[cfg(test)]
 mod test_support;

@@ -15,7 +15,7 @@ const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Configured tool locations. `None` means look the tool up on the search path.
 /// The config layer maps its settings onto this.
 #[derive(Debug, Default, Clone)]
-pub struct ToolPaths {
+pub(crate) struct ToolPaths {
     pub ffmpeg: Option<PathBuf>,
     pub ffprobe: Option<PathBuf>,
     pub whisper: Option<PathBuf>,
@@ -33,7 +33,7 @@ pub struct ToolInfo {
 
 /// What `doctor` reports: every tool found, and everything missing.
 #[derive(Debug, Clone, Default)]
-pub struct Report {
+pub(crate) struct Report {
     pub ffmpeg: Option<ToolInfo>,
     pub ffprobe: Option<ToolInfo>,
     pub whisper: Option<ToolInfo>,
@@ -43,7 +43,7 @@ pub struct Report {
 
 /// A fully resolved toolchain, as returned by [`preflight`].
 #[derive(Debug, Clone)]
-pub struct Toolchain {
+pub(crate) struct Toolchain {
     pub ffmpeg: ToolInfo,
     pub ffprobe: ToolInfo,
     pub whisper: ToolInfo,
@@ -160,7 +160,7 @@ fn locate(
 
 /// Find a single tool by configured path (when `bin` has a directory part) or on `PATH`
 /// and probe its version. `label` names it in the `Missing` entry.
-pub fn locate_tool(
+pub(crate) fn locate_tool(
     bin: &str,
     label: &str,
     version_flag: &str,
@@ -202,7 +202,7 @@ const INSTALL_GUIDE: &str = "https://github.com/JCIOriente/minuta/blob/main/docs
 /// What to tell the user when `tool` is missing on `os` (a `std::env::consts::OS` value).
 /// Homebrew installs all three tools on macOS and Linux; elsewhere the install guide is
 /// the only place that covers the system.
-pub fn install_hint(tool: &str, os: &str) -> String {
+pub(crate) fn install_hint(tool: &str, os: &str) -> String {
     match (os, tool) {
         ("macos" | "linux", "ffmpeg") => "brew install ffmpeg".to_string(),
         ("macos" | "linux", "ffprobe") => {
@@ -214,7 +214,7 @@ pub fn install_hint(tool: &str, os: &str) -> String {
 }
 
 /// Look at every tool and report what was found and what is missing; never fails.
-pub fn inspect(paths: &ToolPaths, need_model: bool) -> Report {
+pub(crate) fn inspect(paths: &ToolPaths, need_model: bool) -> Report {
     let env_path = std::env::var_os("PATH").unwrap_or_default();
     let search = paths.path.as_deref().unwrap_or(&env_path);
     let mut missing = Vec::new();
@@ -279,7 +279,7 @@ fn not_a_file(path: &Path) -> String {
 }
 
 /// Resolve the toolchain, reporting every missing item at once in `Error::MissingTools`.
-pub fn preflight(paths: &ToolPaths, need_model: bool) -> Result<Toolchain> {
+pub(crate) fn preflight(paths: &ToolPaths, need_model: bool) -> Result<Toolchain> {
     let report = inspect(paths, need_model);
     match (report.ffmpeg, report.ffprobe, report.whisper) {
         (Some(ffmpeg), Some(ffprobe), Some(whisper)) if report.missing.is_empty() => {

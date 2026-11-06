@@ -52,7 +52,7 @@ struct Calls<'a> {
 /// (the speech language in `transcript.json`). A chosen flag, template or config code that is
 /// unknown is a usage error. An unknown detected code with no other source fails the template
 /// with a hint to pass `--output-lang`.
-pub fn output_lang(
+pub(crate) fn output_lang(
     name: &str,
     flag: Option<&str>,
     template: Option<&str>,
@@ -76,7 +76,7 @@ pub fn output_lang(
 }
 
 /// The backend a template runs on: `flag` > `template` > `default`.
-pub fn backend_id(
+pub(crate) fn backend_id(
     flag: Option<&BackendId>,
     template: Option<&BackendId>,
     default: &BackendId,
@@ -85,7 +85,7 @@ pub fn backend_id(
 }
 
 /// One template, resolved for a run.
-pub struct TemplateRun<'a> {
+pub(crate) struct TemplateRun<'a> {
     pub template: &'a Template,
     pub backend: &'a dyn Backend,
     /// Output language code.
@@ -108,7 +108,7 @@ impl TemplateRun<'_> {
     /// or `<name>.json` then `<name>.md` for a fields template (ADR-0007), or `chapters.json`
     /// then `<name>.md` for the chapters template (ADR-0009). The `.md` is in `dir` and the
     /// `.json` in `assets/`; an implicit template keeps its `.md` in `assets/` too.
-    pub fn artifacts(&self, dir: &Path) -> Vec<PathBuf> {
+    pub(crate) fn artifacts(&self, dir: &Path) -> Vec<PathBuf> {
         self.artifacts_at(dir, self.implicit)
     }
 
@@ -125,7 +125,7 @@ impl TemplateRun<'_> {
     /// implicit dependency then) gets it moved to the job folder, so an unchanged template
     /// needs no new run. Returns whether a file moved or was removed, so the caller records
     /// the new paths. Does nothing for an implicit template.
-    pub fn move_implicit(&self, ctx: &Ctx) -> Result<bool> {
+    pub(crate) fn move_implicit(&self, ctx: &Ctx) -> Result<bool> {
         if self.implicit {
             return Ok(false);
         }
@@ -162,7 +162,7 @@ impl TemplateRun<'_> {
     /// A fields template adds `FIELDS_VERSION`, then, when it declares `chapters`, the content
     /// hash of `chapters.json` and `CHAPTERS_VERSION`. The chapters template adds
     /// `CHAPTERS_VERSION`. Markdown templates keep their parts.
-    pub fn fingerprint(&self, ctx: &Ctx, job_name: &str) -> Result<String> {
+    pub(crate) fn fingerprint(&self, ctx: &Ctx, job_name: &str) -> Result<String> {
         let input = self.read_input(ctx)?;
         let vars = self.vars(&read_transcript(&ctx.dir)?, job_name)?;
         let t = self.template;
@@ -211,7 +211,7 @@ impl TemplateRun<'_> {
     /// fails, the artifacts this call already wrote are removed (an earlier run's version of
     /// them is not restored), and the write error is returned, naming any file that could not
     /// be removed.
-    pub fn execute(
+    pub(crate) fn execute(
         &self,
         ctx: &Ctx,
         job_name: &str,

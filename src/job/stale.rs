@@ -7,14 +7,14 @@ use crate::error::{Error, Result};
 
 /// `--force`: every step, or the named step and every later one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Force {
+pub(crate) enum Force {
     All,
     From(StepName),
 }
 
 /// Why a step must run again. Its `Display` text is stored in `steps.<name>.reason`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Reason {
+pub(crate) enum Reason {
     /// No result is recorded for the step.
     NotRun,
     /// The step was marked stale and never finished afterwards.
@@ -44,7 +44,7 @@ impl fmt::Display for Reason {
 
 /// Returns the steps of `current` (step, current fingerprint) that must run, in pipeline order,
 /// each with the reason. A stale step makes every later step stale.
-pub fn plan_stale(
+pub(crate) fn plan_stale(
     job: &Job,
     current: &[(StepName, String)],
     force: Option<Force>,
@@ -101,7 +101,7 @@ fn recorded_reason(recorded: Option<&StepState>, fingerprint: &str) -> Option<Re
 /// Why template `name` must run, judged by its recorded state in `job.json`. `forced` wins over
 /// every other reason. An I/O error while checking an artifact is returned, never read as
 /// "missing".
-pub fn template_reason(
+pub(crate) fn template_reason(
     job: &Job,
     name: &str,
     fingerprint: &str,

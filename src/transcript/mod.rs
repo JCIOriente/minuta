@@ -3,14 +3,14 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Segment {
+pub(crate) struct Segment {
     pub start: f64,
     pub end: f64,
     pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Transcript {
+pub(crate) struct Transcript {
     pub language: String,
     pub segments: Vec<Segment>,
 }
@@ -40,7 +40,7 @@ struct WhisperOffsets {
 
 /// Parse `whisper-cli -oj` output. Segments are made ascending and
 /// non-overlapping: overlaps are clamped, inverted segments are dropped.
-pub fn from_whisper_json(json: &str) -> Result<Transcript> {
+pub(crate) fn from_whisper_json(json: &str) -> Result<Transcript> {
     let out: WhisperOutput =
         serde_json::from_str(json).map_err(|e| Error::Parse(format!("whisper JSON: {e}")))?;
     let mut segments: Vec<Segment> = Vec::with_capacity(out.transcription.len());
@@ -69,7 +69,7 @@ pub fn from_whisper_json(json: &str) -> Result<Transcript> {
 }
 
 /// One trimmed segment per line, no timestamps.
-pub fn to_txt(t: &Transcript) -> String {
+pub(crate) fn to_txt(t: &Transcript) -> String {
     let mut out = String::new();
     for s in &t.segments {
         out.push_str(s.text.trim());
@@ -89,7 +89,7 @@ fn srt_time(seconds: f64) -> String {
     )
 }
 
-pub fn to_srt(t: &Transcript) -> String {
+pub(crate) fn to_srt(t: &Transcript) -> String {
     t.segments
         .iter()
         .enumerate()

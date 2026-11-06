@@ -103,7 +103,7 @@ struct ManifestOut {
 
 /// The hash each pulled template had when it was written, by template name.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Manifest {
+pub(crate) struct Manifest {
     files: BTreeMap<String, String>,
 }
 
@@ -111,7 +111,7 @@ impl Manifest {
     /// Reads `.pulled.toml`. Text that cannot be trusted gives an empty manifest and a
     /// warning, so every file on disk reads as modified and none is overwritten. The
     /// warning is safe to print: control characters from the file are escaped.
-    pub fn parse(text: &str) -> (Manifest, Option<String>) {
+    pub(crate) fn parse(text: &str) -> (Manifest, Option<String>) {
         if text.trim().is_empty() {
             return (Manifest::default(), None);
         }
@@ -145,21 +145,21 @@ impl Manifest {
         Ok(Manifest { files })
     }
 
-    pub fn get(&self, name: &str) -> Option<&str> {
+    pub(crate) fn get(&self, name: &str) -> Option<&str> {
         self.files.get(name).map(String::as_str)
     }
 
     /// Records the hash of a template just written. `name` and `sha256` come from a parsed
     /// [`Catalog`] and [`sha256_hex`]; anything else would make `to_toml` write a file that
     /// `parse` rejects, so it is a caller bug and panics.
-    pub fn set(&mut self, name: &str, sha256: &str) {
+    pub(crate) fn set(&mut self, name: &str, sha256: &str) {
         assert!(valid_stem(name), "invalid template name {name:?}");
         assert!(is_sha256(sha256), "invalid sha256 {sha256:?}");
         self.files.insert(name.to_string(), sha256.to_string());
     }
 
     /// The file's text, sorted by name so the output is stable.
-    pub fn to_toml(&self) -> String {
+    pub(crate) fn to_toml(&self) -> String {
         let out = ManifestOut {
             version: VERSION,
             file: self
@@ -177,7 +177,7 @@ impl Manifest {
 
 /// Where a template in the destination folder stands against the catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum State {
+pub(crate) enum State {
     New,
     UpToDate,
     UpdateAvailable,
@@ -185,7 +185,7 @@ pub enum State {
 }
 
 impl State {
-    pub fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             State::New => "new",
             State::UpToDate => "up to date",
@@ -197,7 +197,7 @@ impl State {
 
 /// `local` is the hash of the file on disk (None if absent), `manifest` the hash recorded
 /// when it was pulled, `catalog` the hash the catalog offers now.
-pub fn state(local: Option<&str>, manifest: Option<&str>, catalog: &str) -> State {
+pub(crate) fn state(local: Option<&str>, manifest: Option<&str>, catalog: &str) -> State {
     match local {
         None => State::New,
         Some(local) if local == catalog => State::UpToDate,
@@ -206,14 +206,14 @@ pub fn state(local: Option<&str>, manifest: Option<&str>, catalog: &str) -> Stat
     }
 }
 
-pub enum Selection<'a> {
+pub(crate) enum Selection<'a> {
     Names(&'a [String]),
     All,
     /// Case-insensitive text matched against name, platform and tags.
     Filter(&'a str),
 }
 
-pub fn select<'c>(catalog: &'c Catalog, selection: Selection<'_>) -> Result<Vec<&'c Entry>> {
+pub(crate) fn select<'c>(catalog: &'c Catalog, selection: Selection<'_>) -> Result<Vec<&'c Entry>> {
     match selection {
         Selection::All => Ok(catalog.entries.iter().collect()),
         Selection::Names(names) => {
@@ -261,7 +261,7 @@ pub fn select<'c>(catalog: &'c Catalog, selection: Selection<'_>) -> Result<Vec<
 }
 
 /// Lowercase hex SHA-256 of `bytes`.
-pub fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|b| format!("{b:02x}"))

@@ -113,7 +113,7 @@ fn locate_bin(
 
 /// The status of the default backend for `doctor`: `ok`, `not reachable: …`,
 /// `model missing: …` or `invalid: …`.
-pub fn llm_status(config: &Config) -> String {
+pub(crate) fn llm_status(config: &Config) -> String {
     let id = match config.llm_default.value.parse::<BackendId>() {
         Ok(id) => id,
         Err(e) => return invalid_status(e),
@@ -155,7 +155,7 @@ fn invalid_status(error: Error) -> String {
 }
 
 /// What `doctor` shows for `config`.
-pub fn inspect(config: &Config) -> Result<Report> {
+pub(crate) fn inspect(config: &Config) -> Result<Report> {
     let mut report = tools::inspect(&tool_paths(config)?, true);
     locate_vad_model(config, &mut report.missing)?;
     report.missing = with_pull_hint(report.missing, config);
@@ -165,7 +165,7 @@ pub fn inspect(config: &Config) -> Result<Report> {
 /// Maps the configured binaries and model onto [`ToolPaths`]. A model name from the catalog
 /// resolves into the models dir; a value that is neither a file nor a catalog name is kept
 /// as a path, so preflight reports it as missing.
-pub fn tool_paths(config: &Config) -> Result<ToolPaths> {
+pub(crate) fn tool_paths(config: &Config) -> Result<ToolPaths> {
     let model = config
         .whisper_model
         .as_ref()

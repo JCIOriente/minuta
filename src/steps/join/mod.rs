@@ -17,14 +17,14 @@ const JOIN_EXTENSIONS: [&str; 9] = [
 
 /// The H.264 encoder used when sources have to be re-encoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Encoder {
+pub(crate) enum Encoder {
     VideoToolbox,
     X264,
 }
 
 impl Encoder {
     /// VideoToolbox when the output of `ffmpeg -encoders` lists it, else libx264.
-    pub fn pick(listing: &str) -> Encoder {
+    pub(crate) fn pick(listing: &str) -> Encoder {
         let has_videotoolbox = listing
             .lines()
             .any(|l| l.split_whitespace().nth(1) == Some("h264_videotoolbox"));
@@ -36,7 +36,7 @@ impl Encoder {
     }
 
     /// The ffmpeg encoder name.
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Encoder::VideoToolbox => "h264_videotoolbox",
             Encoder::X264 => "libx264",
@@ -46,7 +46,7 @@ impl Encoder {
 
 /// How the sources become one file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
+pub(crate) enum Mode {
     /// Several sources with matching streams: concat demuxer with `-c copy`.
     StreamCopy,
     /// Several sources that differ: decode and encode again.
@@ -57,7 +57,7 @@ pub enum Mode {
 /// nothing to join. Streams match when codec, resolution and
 /// frame rate agree, and so do the audio codec, sample rate and channel count, which stream
 /// copy needs as much as the video parameters.
-pub fn plan_join(probes: &[SourceProbe]) -> Option<Mode> {
+pub(crate) fn plan_join(probes: &[SourceProbe]) -> Option<Mode> {
     match probes {
         [] | [_] => None,
         [first, rest @ ..] => {
@@ -76,7 +76,7 @@ pub fn plan_join(probes: &[SourceProbe]) -> Option<Mode> {
 /// Where the joined file goes: `assets/joined.<ext>`, or `None` for fewer than two sources,
 /// which are not joined. The sources keep the extension they share when it is a known
 /// container, else the result is `joined.mkv`, which holds any stream.
-pub fn joined_path(ctx: &Ctx) -> Option<PathBuf> {
+pub(crate) fn joined_path(ctx: &Ctx) -> Option<PathBuf> {
     if ctx.sources.len() < 2 {
         return None;
     }
@@ -135,19 +135,19 @@ fn audio_codec_for(path: &Path) -> &'static str {
 
 /// Joins the sources into `joined.<ext>`.
 #[derive(Debug, Clone)]
-pub struct Join {
+pub(crate) struct Join {
     ffmpeg: ToolInfo,
     encoder: Encoder,
 }
 
 impl Join {
     #[cfg(test)]
-    pub fn new(ffmpeg: ToolInfo, encoder: Encoder) -> Self {
+    pub(crate) fn new(ffmpeg: ToolInfo, encoder: Encoder) -> Self {
         Join { ffmpeg, encoder }
     }
 
     /// A `Join` that re-encodes with the best encoder this ffmpeg offers.
-    pub fn detect(ffmpeg: ToolInfo) -> Result<Self> {
+    pub(crate) fn detect(ffmpeg: ToolInfo) -> Result<Self> {
         let argv = [
             ffmpeg.path.clone().into_os_string(),
             "-hide_banner".into(),
@@ -308,7 +308,12 @@ impl Join {
     /// `Error::Interrupted` when `opts.interrupt` is set. No `joined.<ext>` is left behind
     /// on failure. An empty source list is an `Error::Job`. One source writes nothing. The runner uses this;
     /// [`Step::run`] is the same without progress or interrupt.
-    pub fn run_with(&self, ctx: &Ctx, opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<()> {
+    pub(crate) fn run_with(
+        &self,
+        ctx: &Ctx,
+        opts: RunOpts,
+        on_line: &mut dyn FnMut(&str),
+    ) -> Result<()> {
         if ctx.sources.is_empty() {
             return Err(Error::Job("no sources to join".into()));
         }

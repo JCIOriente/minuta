@@ -13,7 +13,7 @@ const TITLE_LINE: &str =
 const KEYS_LINE: &str = r#"Keep the keys exactly as written, in English; write the titles in the language given below."#;
 
 /// The chapters block of the final and repair system prompts (no language instruction).
-pub fn chapters_block(spec: &ChaptersSpec) -> String {
+pub(crate) fn chapters_block(spec: &ChaptersSpec) -> String {
     let count = match spec.max {
         Some(max) => format!("Give at least {MIN_CHAPTERS} and at most {max} chapters."),
         None => format!("Give at least {MIN_CHAPTERS} chapters."),
@@ -28,7 +28,7 @@ pub fn chapters_block(spec: &ChaptersSpec) -> String {
 }
 
 /// System prompt of a repair call; the language instruction is last.
-pub fn repair_system(spec: &ChaptersSpec, output_lang: &str) -> String {
+pub(crate) fn repair_system(spec: &ChaptersSpec, output_lang: &str) -> String {
     format!(
         "{REPAIR_INTRO}\n\n{}\n\n{}",
         chapters_block(spec),
@@ -37,7 +37,7 @@ pub fn repair_system(spec: &ChaptersSpec, output_lang: &str) -> String {
 }
 
 /// JSON schema for structured output: the `chapters` list, no length constraints.
-pub fn schema() -> Json {
+pub(crate) fn schema() -> Json {
     json!({
         "type": "object",
         "properties": {

@@ -30,14 +30,14 @@ mod test_support;
 mod tests;
 
 use pipeline::{Pipeline, Runnable};
-pub use preflight::{inspect, llm_status, tool_paths};
+pub(crate) use preflight::{inspect, llm_status};
 pub(crate) use preflight::{preflight, Ready};
 use templates::TemplatePhase;
 
 /// What `run` and `transcribe` were asked to do, besides the settings in [`Config`]. The
 /// `--llm` and `--output-lang` flags travel in [`Config`] as settings with [`Source::Flag`].
 #[derive(Debug, Clone, Default)]
-pub struct Options {
+pub(crate) struct Options {
     /// Sources, in join order.
     pub files: Vec<PathBuf>,
     /// `--name`; the job name is derived from it, or else from the first source. It only
@@ -52,7 +52,7 @@ pub struct Options {
 /// The value of `--force`, before it is resolved against the steps and the templates in the
 /// run.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ForceArg {
+pub(crate) enum ForceArg {
     /// No value: every step and every template in the run.
     All,
     /// A step (it, every later step and every template in the run) or a template in the run
@@ -67,7 +67,7 @@ pub enum ForceArg {
 /// and not run. When `interrupt` is set the running tool or LLM call is stopped, temp files
 /// are removed and the result is `Error::Interrupted`, with the unfinished step or template
 /// left stale.
-pub fn run(
+pub(crate) fn run(
     options: &Options,
     config: &Config,
     interrupt: &Arc<AtomicBool>,

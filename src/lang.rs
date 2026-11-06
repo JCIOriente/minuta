@@ -108,12 +108,12 @@ const LANGUAGES: &[(&str, &str)] = &[
 ];
 
 /// English name of a whisper language code, e.g. `"es"` -> `Some("Spanish")`.
-pub fn name(code: &str) -> Option<&'static str> {
+pub(crate) fn name(code: &str) -> Option<&'static str> {
     LANGUAGES.iter().find(|(c, _)| *c == code).map(|(_, n)| *n)
 }
 
 /// Like [`name`], but an unknown code is a usage error naming the code.
-pub fn validate(code: &str) -> Result<&'static str> {
+pub(crate) fn validate(code: &str) -> Result<&'static str> {
     name(code).ok_or_else(|| {
         Error::Usage(format!(
             "unknown language code '{code}' (use a whisper.cpp code such as en, es, pt; see `minuta run --help`)"

@@ -10,7 +10,7 @@ use crate::error::{Error, Result};
 
 /// Where user and project templates live.
 #[derive(Debug, Clone)]
-pub struct Dirs {
+pub(crate) struct Dirs {
     /// `<home>/.minuta/templates`; `None` when the home directory is unknown.
     pub user: Option<PathBuf>,
     pub project: PathBuf,
@@ -18,7 +18,7 @@ pub struct Dirs {
 
 impl Dirs {
     /// The real locations: the user's `~/.minuta/templates` and `./templates`.
-    pub fn standard() -> Result<Dirs> {
+    pub(crate) fn standard() -> Result<Dirs> {
         let cwd = std::env::current_dir().map_err(|e| {
             Error::Io(io::Error::new(
                 e.kind(),
@@ -32,7 +32,7 @@ impl Dirs {
     }
 
     /// The locations for a given home directory and working directory.
-    pub fn for_home(home: &Path, cwd: &Path) -> Dirs {
+    pub(crate) fn for_home(home: &Path, cwd: &Path) -> Dirs {
         Dirs {
             user: Some(home.join(".minuta/templates")),
             project: cwd.join("templates"),
@@ -42,13 +42,13 @@ impl Dirs {
 
 /// A template file that could not be loaded.
 #[derive(Debug, Clone)]
-pub struct Invalid {
+pub(crate) struct Invalid {
     pub path: PathBuf,
     pub error: String,
 }
 
 #[derive(Debug, Default)]
-pub struct Catalog {
+pub(crate) struct Catalog {
     pub templates: BTreeMap<String, Template>,
     pub invalid: Vec<Invalid>,
 }
@@ -59,7 +59,7 @@ fn io_err(path: &Path, e: io::Error) -> Error {
 
 /// Load built-in, then user, then project templates; a later layer replaces an
 /// earlier one by name.
-pub fn discover(dirs: &Dirs) -> Result<Catalog> {
+pub(crate) fn discover(dirs: &Dirs) -> Result<Catalog> {
     let mut catalog = Catalog::default();
     for t in builtins()? {
         catalog.templates.insert(t.name.clone(), t);
@@ -204,7 +204,7 @@ fn reject_hard_link(_path: &Path) -> std::result::Result<(), String> {
 impl Catalog {
     /// Find a template by name. Unknown: usage error listing the names. Invalid:
     /// that file's error.
-    pub fn get(&self, name: &str) -> Result<&Template> {
+    pub(crate) fn get(&self, name: &str) -> Result<&Template> {
         if let Some(t) = self.templates.get(name) {
             return Ok(t);
         }

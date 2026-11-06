@@ -8,7 +8,7 @@ use super::Backend;
 use crate::error::{Error, Result};
 
 /// Returns scripted replies in order and records each `(system, user)` it receives.
-pub struct ScriptedBackend {
+pub(crate) struct ScriptedBackend {
     id: String,
     context_tokens: usize,
     replies: Mutex<VecDeque<Result<String>>>,
@@ -17,7 +17,7 @@ pub struct ScriptedBackend {
 }
 
 impl ScriptedBackend {
-    pub fn new(id: &str, context_tokens: usize, replies: Vec<Result<String>>) -> Self {
+    pub(crate) fn new(id: &str, context_tokens: usize, replies: Vec<Result<String>>) -> Self {
         ScriptedBackend {
             id: id.to_string(),
             context_tokens,
@@ -28,12 +28,12 @@ impl ScriptedBackend {
     }
 
     /// Every `(system, user)` pair received so far, in order.
-    pub fn calls(&self) -> Vec<(String, String)> {
+    pub(crate) fn calls(&self) -> Vec<(String, String)> {
         self.calls.lock().expect("calls mutex poisoned").clone()
     }
 
     /// The schema of each call, in order: `None` for `complete`, `Some` for `complete_json`.
-    pub fn schemas(&self) -> Vec<Option<serde_json::Value>> {
+    pub(crate) fn schemas(&self) -> Vec<Option<serde_json::Value>> {
         self.schemas.lock().expect("schemas mutex poisoned").clone()
     }
 

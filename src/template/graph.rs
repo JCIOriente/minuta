@@ -9,7 +9,7 @@ type DepsOf<'a> = &'a dyn Fn(&str) -> Option<Vec<String>>;
 /// The requested templates plus everything they read, dependencies first, each template's
 /// dependencies in list order. Where dependencies do not force an order, the request order is
 /// kept.
-pub fn order(requested: &[String], deps_of: DepsOf) -> Result<Vec<String>> {
+pub(crate) fn order(requested: &[String], deps_of: DepsOf) -> Result<Vec<String>> {
     let mut done = Vec::new();
     let mut stack = Vec::new();
     for name in requested {
@@ -58,7 +58,7 @@ fn visit(
 /// `of` plus every template in `order` that transitively depends on it, in `order`.
 /// `order` must be topological (as returned by [`order`]).
 /// `of` must be in `order`; callers check membership first (an unknown name returns an empty Vec).
-pub fn dependents(order: &[String], of: &str, deps_of: DepsOf) -> Vec<String> {
+pub(crate) fn dependents(order: &[String], of: &str, deps_of: DepsOf) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for name in order {
         let depends = deps_of(name).is_some_and(|deps| deps.iter().any(|d| out.contains(d)));

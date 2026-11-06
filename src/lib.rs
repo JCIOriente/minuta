@@ -1,21 +1,23 @@
-pub mod chapters;
+#![warn(unreachable_pub)]
+
+mod chapters;
 pub mod cli;
-pub mod config;
-pub mod config_init;
+mod config;
+mod config_init;
 pub mod error;
-pub mod fields;
-pub mod generate;
-pub mod job;
-pub mod lang;
-pub mod llm;
-pub mod models;
-pub mod progress;
-pub mod runner;
-pub mod steps;
-pub mod template;
+mod fields;
+mod generate;
+mod job;
+mod lang;
+mod llm;
+mod models;
+mod progress;
+mod runner;
+mod steps;
+mod template;
 #[cfg(test)]
 mod test_support;
 #[doc(hidden)]
 pub mod testing;
-pub mod tools;
-pub mod transcript;
+mod tools;
+mod transcript;

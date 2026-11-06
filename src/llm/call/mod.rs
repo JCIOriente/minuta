@@ -17,7 +17,7 @@ mod tests;
 
 pub use cache::CallCache;
 use cache::{cache_key, json_cache_key};
-pub use clean::clean;
+pub(crate) use clean::clean;
 
 /// Longest single sleep, so `interrupt` is noticed promptly.
 const SLEEP_SLICE: Duration = Duration::from_millis(25);
@@ -53,7 +53,7 @@ pub fn call(
 
 /// Outcome of a `call_json` answer checked by `accept`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Answer<T> {
+pub(crate) enum Answer<T> {
     Accepted(T),
     /// `text` is the cleaned answer, for a repair call.
     Rejected {
@@ -68,7 +68,7 @@ pub enum Answer<T> {
 /// skips the cache read. Transient failures, including empty output, are retried per `policy`.
 // Signature fixed by the plan's shared interfaces.
 #[allow(clippy::too_many_arguments)]
-pub fn call_json<T>(
+pub(crate) fn call_json<T>(
     backend: &dyn Backend,
     cache: &CallCache,
     policy: &Policy,

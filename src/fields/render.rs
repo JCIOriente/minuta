@@ -7,7 +7,7 @@ use super::{Field, Format, Value, Values};
 use crate::chapters;
 
 /// The `<name>.md` text: declared fields separated by a blank line, one trailing newline.
-pub fn render(values: &Values, format: Format) -> String {
+pub(crate) fn render(values: &Values, format: Format) -> String {
     let blocks: Vec<String> = values
         .0
         .iter()
@@ -25,7 +25,7 @@ pub fn render(values: &Values, format: Format) -> String {
 }
 
 /// The `<name>.json` artifact (ADR-0007), pretty-printed with a trailing newline.
-pub fn artifact_json(template: &str, output_lang_code: &str, values: &Values) -> String {
+pub(crate) fn artifact_json(template: &str, output_lang_code: &str, values: &Values) -> String {
     let artifact = Artifact {
         version: 1,
         template,
