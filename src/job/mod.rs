@@ -4,6 +4,8 @@ pub mod fingerprint;
 pub mod layout;
 pub mod stale;
 pub mod state;
+#[cfg(test)]
+mod tests;
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
