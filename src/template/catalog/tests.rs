@@ -1,7 +1,7 @@
-use crate::error::{Error, Result};
-use crate::template::catalog::{
-    select, sha256_hex, state, Catalog, Entry, Manifest, Selection, State,
-};
+//! Tests for the template catalog, the manifest of pulled files, template states and
+//! selection, split by behavior.
+
+use super::*;
 
 mod manifest;
 mod parse;

@@ -3,11 +3,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::result::Result;
 
-use crate::error::Error;
-use crate::template::catalog::{sha256_hex, Catalog};
-use crate::template::{Layer, Template};
 use tempfile::TempDir;
+
+use super::*;
+use crate::template::{Input, Layer, Template};
 
 const VALID: &str = "---\ndescription: A valid template\n---\nbody\n";
 const OTHER: &str = "---\ndescription: Another valid template\n---\nother body\n";
@@ -104,21 +105,15 @@ fn check_catalog_dir(dir: &Path) -> Result<(), Vec<String>> {
     }
 }
 
-fn entry_text(name: &str, text: &str) -> String {
-    format!(
-        "\n[[template]]\nname = \"{name}\"\ndescription = \"d\"\nsha256 = \"{}\"\n",
-        sha256_hex(text.as_bytes())
-    )
+/// The hash `index.toml` records for a template whose file holds `text`.
+fn sha_of(text: &str) -> String {
+    sha256_hex(text.as_bytes())
 }
 
 /// A folder with `index.toml` made of `version = 1` and `entries`, plus the given files.
 fn folder(entries: &str, files: &[(&str, &str)]) -> TempDir {
     let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("index.toml"),
-        format!("version = 1\n{entries}"),
-    )
-    .unwrap();
+    fs::write(tmp.path().join("index.toml"), catalog_text(entries)).unwrap();
     for (name, text) in files {
         fs::write(tmp.path().join(name), text).unwrap();
     }
@@ -146,14 +141,22 @@ fn catalog_check_passes_empty_catalog() {
 
 #[test]
 fn catalog_check_passes_fixture_catalog() {
-    let entries = format!("{}{}", entry_text("one", VALID), entry_text("two", OTHER));
+    let entries = format!(
+        "{}{}",
+        entry_text("one", &sha_of(VALID)),
+        entry_text("two", &sha_of(OTHER))
+    );
     let dir = folder(&entries, &[("one.md", VALID), ("two.md", OTHER)]);
     assert_eq!(check_catalog_dir(dir.path()), Ok(()));
 }
 
 #[test]
 fn catalog_check_flags_missing_file() {
-    let entries = format!("{}{}", entry_text("one", VALID), entry_text("two", OTHER));
+    let entries = format!(
+        "{}{}",
+        entry_text("one", &sha_of(VALID)),
+        entry_text("two", &sha_of(OTHER))
+    );
     let dir = folder(&entries, &[("one.md", VALID)]);
     assert_eq!(
         problems(&dir),
@@ -163,7 +166,11 @@ fn catalog_check_flags_missing_file() {
 
 #[test]
 fn catalog_check_flags_hash_mismatch_with_hint() {
-    let entries = format!("{}{}", entry_text("one", VALID), entry_text("two", OTHER));
+    let entries = format!(
+        "{}{}",
+        entry_text("one", &sha_of(VALID)),
+        entry_text("two", &sha_of(OTHER))
+    );
     let edited = format!("{OTHER}edited\n");
     let dir = folder(&entries, &[("one.md", VALID), ("two.md", &edited)]);
     assert_eq!(
@@ -179,7 +186,11 @@ fn catalog_check_flags_hash_mismatch_with_hint() {
 #[test]
 fn catalog_check_flags_unparsable_template() {
     let broken = "---\nbody without a closing delimiter\n";
-    let entries = format!("{}{}", entry_text("one", VALID), entry_text("two", broken));
+    let entries = format!(
+        "{}{}",
+        entry_text("one", &sha_of(VALID)),
+        entry_text("two", &sha_of(broken))
+    );
     let dir = folder(&entries, &[("one.md", VALID), ("two.md", broken)]);
     assert_eq!(
         problems(&dir),
@@ -190,7 +201,11 @@ fn catalog_check_flags_unparsable_template() {
 #[test]
 fn catalog_check_flags_name_stem_mismatch() {
     // The entry says "two" but the file (same bytes) is called "deux.md".
-    let entries = format!("{}{}", entry_text("one", VALID), entry_text("two", OTHER));
+    let entries = format!(
+        "{}{}",
+        entry_text("one", &sha_of(VALID)),
+        entry_text("two", &sha_of(OTHER))
+    );
     let dir = folder(&entries, &[("one.md", VALID), ("deux.md", OTHER)]);
     assert_eq!(
         problems(&dir),
@@ -204,7 +219,7 @@ fn catalog_check_flags_name_stem_mismatch() {
 #[test]
 fn catalog_check_flags_file_without_entry() {
     let dir = folder(
-        &entry_text("one", VALID),
+        &entry_text("one", &sha_of(VALID)),
         &[("one.md", VALID), ("extra.md", OTHER)],
     );
     assert_eq!(
@@ -217,12 +232,12 @@ fn catalog_check_flags_file_without_entry() {
 fn catalog_check_reports_every_problem_in_order() {
     let broken = "---\nbody without a closing delimiter\n";
     let entries = [
-        entry_text("a-missing", VALID),
-        entry_text("b-stale", VALID),
-        entry_text("c-broken", broken),
-        entry_text("d-ok", VALID),
-        entry_text("e-stale", OTHER),
-        entry_text("f-missing", OTHER),
+        entry_text("a-missing", &sha_of(VALID)),
+        entry_text("b-stale", &sha_of(VALID)),
+        entry_text("c-broken", &sha_of(broken)),
+        entry_text("d-ok", &sha_of(VALID)),
+        entry_text("e-stale", &sha_of(OTHER)),
+        entry_text("f-missing", &sha_of(OTHER)),
     ]
     .concat();
     let stale_b = format!("{VALID}edited\n");
@@ -263,7 +278,7 @@ fn catalog_check_reports_every_problem_in_order() {
 #[test]
 fn catalog_check_matches_names_exactly() {
     // Entry `one` is not satisfied by `One.md`, and `One.md` is not listed by `one`.
-    let dir = folder(&entry_text("one", VALID), &[("One.md", OTHER)]);
+    let dir = folder(&entry_text("one", &sha_of(VALID)), &[("One.md", OTHER)]);
     assert_eq!(
         problems(&dir),
         vec![
@@ -276,7 +291,7 @@ fn catalog_check_matches_names_exactly() {
 #[test]
 fn catalog_check_ignores_files_that_are_not_md() {
     let dir = folder(
-        &entry_text("one", VALID),
+        &entry_text("one", &sha_of(VALID)),
         &[("one.md", VALID), ("notes.txt", "not a template\n")],
     );
     assert_eq!(check_catalog_dir(dir.path()), Ok(()));
@@ -289,7 +304,11 @@ fn catalog_check_flags_non_utf8_name_and_keeps_going() {
     use std::os::unix::ffi::OsStrExt;
 
     let dir = folder(
-        &format!("{}{}", entry_text("one", VALID), entry_text("two", OTHER)),
+        &format!(
+            "{}{}",
+            entry_text("one", &sha_of(VALID)),
+            entry_text("two", &sha_of(OTHER))
+        ),
         &[("one.md", VALID)],
     );
     fs::write(dir.path().join(OsStr::from_bytes(b"bad\xff.md")), VALID).unwrap();
@@ -309,7 +328,7 @@ fn catalog_check_orders_non_utf8_names_after_other_problems() {
     use std::os::unix::ffi::OsStrExt;
 
     let dir = folder(
-        &entry_text("one", VALID),
+        &entry_text("one", &sha_of(VALID)),
         &[("one.md", VALID), ("extra.md", OTHER)],
     );
     for name in [&b"b\xff.md"[..], &b"a\xff.md"[..]] {
@@ -330,7 +349,11 @@ fn catalog_check_flags_hash_mismatch_and_parse_failure_together() {
     let broken = "---\nbody without a closing delimiter\n";
     let edited = format!("{broken}edited\n");
     let dir = folder(
-        &format!("{}{}", entry_text("one", VALID), entry_text("two", broken)),
+        &format!(
+            "{}{}",
+            entry_text("one", &sha_of(VALID)),
+            entry_text("two", &sha_of(broken))
+        ),
         &[("one.md", VALID), ("two.md", &edited)],
     );
     assert_eq!(
@@ -356,12 +379,7 @@ fn catalog_templates_declare_transcript_input() {
         }
         let text = fs::read_to_string(dir.join(format!("{}.md", entry.name))).unwrap();
         let t = Template::parse(&entry.name, Layer::Project, None, &text).unwrap();
-        assert_ne!(
-            t.input,
-            crate::template::Input::Template("summary".into()),
-            "{}",
-            entry.name
-        );
+        assert_ne!(t.input, Input::Template("summary".into()), "{}", entry.name);
         assert!(!t.body.contains("summary of"), "{}", entry.name);
         assert!(!t.body.contains("input summary"), "{}", entry.name);
     }

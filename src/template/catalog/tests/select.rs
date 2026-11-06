@@ -1,6 +1,6 @@
-use super::*;
+//! `select`: choosing catalog entries by name, all of them or a filter.
 
-// ---- select ----
+use super::*;
 
 fn sample() -> Catalog {
     let text = format!(

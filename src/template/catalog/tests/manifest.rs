@@ -1,6 +1,6 @@
-use super::*;
+//! `Manifest`: reading, writing and recording `.pulled.toml`, and the warning for an invalid one.
 
-// ---- manifest ----
+use super::*;
 
 #[test]
 fn manifest_round_trip() {

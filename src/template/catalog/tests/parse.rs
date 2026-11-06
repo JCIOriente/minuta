@@ -1,6 +1,6 @@
-use super::*;
+//! `Catalog::parse`: the fields of `index.toml` and how invalid catalogs are rejected.
 
-// ---- catalog ----
+use super::*;
 
 #[test]
 fn catalog_parses_valid() {
