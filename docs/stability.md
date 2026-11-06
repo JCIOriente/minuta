@@ -74,7 +74,7 @@ key it does not know.
 
 Programs that read the JSON files must ignore keys they do not know: a minor
 version may add keys. `assets/<template>.json`, `chapters.json` and `transcript.json` each carry a
-`version` (`transcript.json` gets it in 1.0.0). Changing or removing a key raises
+`version` (`transcript.json` has had one since 1.0.0; files written by 0.9.0 have none and still load). Changing or removing a key raises
 that `version` and only happens in a major version. A job folder made by an earlier version is not
 migrated: the next run in it starts over.
 

@@ -75,7 +75,7 @@ una clave de encabezado que no conoce.
 
 Los programas que lean los archivos JSON deben ignorar las claves que no conozcan:
 una versión menor puede añadir claves. `assets/<plantilla>.json`, `chapters.json` y `transcript.json` llevan cada uno una
-`version` (`transcript.json` la recibe en la 1.0.0). Cambiar o quitar una clave sube
+`version` (`transcript.json` la tiene desde la 1.0.0; los archivos escritos por la 0.9.0 no la tienen y aún se leen). Cambiar o quitar una clave sube
 esa `version` y solo ocurre en una versión mayor. Una carpeta de trabajo
 creada por una versión anterior no se migra: la siguiente ejecución empieza de cero.
 
