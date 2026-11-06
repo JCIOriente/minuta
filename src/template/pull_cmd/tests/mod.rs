@@ -1,15 +1,12 @@
 use super::*;
 use crate::template::catalog::{sha256_hex, State};
+
 use std::fs;
 use std::io::Cursor;
 
-use crate::error::{Error, Result};
-use crate::progress::Mode;
-use crate::template::catalog::Manifest;
-use crate::template::pull::Origin;
-use crate::template::pull_cmd::{parse_choice, run, Choice, Options, Terminal};
-use crate::test_support::fake_http::{FakeHttp, Route};
 use tempfile::TempDir;
+
+use crate::test_support::fake_http::{FakeHttp, Route};
 
 mod choosing;
 mod list;
