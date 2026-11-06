@@ -28,6 +28,32 @@ jobs:
         env:
           MINUTA_REQUIRE_FFMPEG: "1"
 
+  # The oldest Rust the crate claims to support: `rust-version` in Cargo.toml, read here so the two
+  # cannot drift. rust-toolchain.toml pins `stable`, so RUSTUP_TOOLCHAIN overrides it (as in
+  # release.yml). Only the build and the lib tests: the integration tests need ffmpeg and add nothing
+  # to the compiler-version question.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: msrv
+        run: |
+          version=$(sed -n '/^\[package\]/,/^\[/{s/^rust-version = "\(.*\)"$/\1/p;}' Cargo.toml)
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "could not read rust-version from Cargo.toml: '$version'"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - run: |
+          cargo --version
+          cargo build --locked
+          cargo test --locked --lib
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
+
   # Lints every workflow file. The image tag pins the actionlint version (it bundles shellcheck
   # for the `run:` scripts). Locally: `actionlint`, or the same docker command.
   actionlint:
