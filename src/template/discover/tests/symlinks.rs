@@ -15,7 +15,7 @@ fn user_symlink_outside_layer_loads() {
 #[test]
 fn relative_symlink_outside_is_invalid() {
     let e = env();
-    fs::write(e.project.parent().unwrap().join("x"), "x").ok();
+    fs::write(e.project.parent().unwrap().join("x"), "x").unwrap();
     write(&e.project, "real.md", "r");
     symlink("../x", e.project.join("rel.md")).unwrap();
     let c = discover(&e.dirs()).unwrap();

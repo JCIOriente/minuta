@@ -129,8 +129,10 @@ fn srt_preserves_utf8() {
         seg(1.0, 2.0, "你好，世界"),
     ]);
     let srt = to_srt(&t);
-    assert!(srt.contains("café ñandú"));
-    assert!(srt.contains("你好，世界"));
+    assert_eq!(
+        srt,
+        "1\n00:00:00,000 --> 00:00:01,000\ncafé ñandú\n\n2\n00:00:01,000 --> 00:00:02,000\n你好，世界\n"
+    );
 }
 
 #[test]

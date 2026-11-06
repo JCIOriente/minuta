@@ -163,9 +163,13 @@ fn apply_verification_failure_with_force_leaves_backups_alone() {
         &mut f,
         &mut Manifest::default(),
     ));
-    assert!(
-        text.starts_with("template beta: downloaded file does not match the catalog checksum"),
-        "{text}"
+    assert_eq!(
+        text,
+        format!(
+            "template beta: downloaded file does not match the catalog checksum (expected {}, got {})",
+            sha256_hex(template_text("expected").as_bytes()),
+            sha256_hex(template_text("tampered").as_bytes())
+        )
     );
     assert_eq!(
         fs::read_to_string(d.dir().join("alpha.md")).unwrap(),

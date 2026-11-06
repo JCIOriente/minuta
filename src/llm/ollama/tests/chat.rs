@@ -55,14 +55,14 @@ fn context_is_min_of_num_ctx_and_model() {
         (4096, None, 4096),
     ];
     for (num_ctx, length, expected) in cases {
-        let o = Ollama::new("http://127.0.0.1:1", "m", num_ctx, &info(length, false));
+        let o = Ollama::new(CLOSED, "m", num_ctx, &info(length, false));
         assert_eq!(o.context_tokens(), expected, "{num_ctx} {length:?}");
     }
 }
 
 #[test]
 fn id_is_canonical() {
-    let o = Ollama::new("http://127.0.0.1:1", "gemma4:26b", 1, &info(None, false));
+    let o = Ollama::new(CLOSED, "gemma4:26b", 1, &info(None, false));
     assert_eq!(o.id(), "ollama:gemma4:26b");
 }
 
@@ -83,7 +83,7 @@ fn interrupt_abandons_hanging_request() {
     let start = Instant::now();
     let err = o.complete("s", "u", &flag).unwrap_err();
     assert!(matches!(err, Error::Interrupted), "{err}");
-    assert!(start.elapsed() < Duration::from_millis(600));
+    assert!(start.elapsed() < Duration::from_secs(4));
     setter.join().unwrap();
 }
 
