@@ -1,15 +1,8 @@
 use std::collections::BTreeMap;
-use std::fs;
-use std::path::{Path, PathBuf};
 
-use crate::error::{Error, Result};
-use crate::template::catalog::{sha256_hex, Catalog, Entry, Manifest, State};
-use crate::template::pull::{
-    apply, fetch_catalog, fetch_file, outcome_for, plan, read_manifest, Done, Origin, Outcome,
-    CATALOG_CAP, FILE_CAP, LOCAL_CAP,
-};
 use tempfile::TempDir;
 
+use super::*;
 use crate::test_support::fake_http::{FakeHttp, Route};
 
 mod apply_force;
@@ -30,7 +23,8 @@ fn template_text(tag: &str) -> String {
     format!("---\ndescription: {tag}\n---\nWrite about {{{{job_name}}}} ({tag}).\n")
 }
 
-fn entry_for(name: &str, text: &str) -> Entry {
+/// An entry for `name` whose catalog hash is that of `text`.
+fn entry(name: &str, text: &str) -> Entry {
     Entry {
         name: name.to_string(),
         description: "d".to_string(),
@@ -39,11 +33,6 @@ fn entry_for(name: &str, text: &str) -> Entry {
         input: None,
         sha256: sha256_hex(text.as_bytes()),
     }
-}
-
-/// An entry for `name` whose catalog hash is that of `text`.
-fn entry(name: &str, text: &str) -> Entry {
-    entry_for(name, text)
 }
 
 /// Serves file contents by template name and records which were asked for.
