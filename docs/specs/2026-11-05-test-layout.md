@@ -216,19 +216,33 @@ count toward the 500-line limit like any other file.
 None.
 
 ## Implementation status
-Updated by the PRs that implement this spec. Plan: [docs/plans/2026-11-05-test-layout.md](../plans/2026-11-05-test-layout.md) (#305), tasks #286-#304.
+Updated by the PRs that implement this spec. Plan:
+[docs/plans/2026-11-05-test-layout.md](../plans/2026-11-05-test-layout.md) (#305), tasks
+#286-#304.
 - [x] Shared test support in `src/test_support/` (#309, task #286)
-- [x] White-box tests moved into `src/`: config #306, job #310, generate #307, transcript #311, template #312, catalog #319, pull #314, endpoint #316, ollama #317, models #318, tools #321, steps #322, pull command #320, config init #313 (tasks #287-#300)
+- [x] White-box tests moved into `src/`: config #306, job #310, generate #307, transcript
+      #311, template #312, catalog #319, pull #314, endpoint #316, ollama #317, models #318,
+      tools #321, steps #322, pull command #320, config init #313 (tasks #287-#300)
 - [x] Black-box crate `tests/cli/`: #323, #324, #325 (tasks #301-#303)
 - [x] End state checked and recorded (task #304)
 
 End state (checked by task #304):
-- `ls tests/*.rs`: `claude.rs`, `codex.rs`, `proxy_env.rs`, `worktrees_clean.rs`. `tests/integration/` and `tests/support/` do not exist. `tests/cli/` is the one black-box crate and uses no `minuta::` item.
-- Test count: 1,474 at the baseline (`1c064a5`), 1,481 at the end. The difference is +5 new `retry_busy`/`fixture` tests (#309) and +2 library halves of split `config init` tests (#313). No test was dropped.
+- `ls tests/*.rs`: `claude.rs`, `codex.rs`, `proxy_env.rs`, `worktrees_clean.rs`.
+  `tests/integration/` and `tests/support/` do not exist. `tests/cli/` is the one black-box
+  crate and uses no `minuta::` item.
+- Test count: 1,474 at the baseline (`1c064a5`), 1,481 at the end. The difference is +5 new
+  `retry_busy`/`fixture` tests (#309) and +2 library halves of split `config init` tests
+  (#313). No test was dropped.
 - `minuta::` paths used outside the library crate, the starting point for sub-project B:
   - `src/main.rs`: `minuta::cli::{self, Cli}`, `minuta::error::{Error, Result}`
-  - `tests/claude.rs`: `minuta::error::Error`, `minuta::llm::call::{call, CallCache, Policy}`, `minuta::llm::claude::{check, Claude}`, `minuta::llm::Backend`, `minuta::tools::{run_capture, RunOpts}`
-  - `tests/codex.rs`: `minuta::error::Error`, `minuta::llm::call::{call, CallCache, Policy}`, `minuta::llm::codex::{check, Codex}`, `minuta::llm::Backend`
-  - `tests/proxy_env.rs`: `minuta::llm::{endpoint, ollama}`, `minuta::models::{self, ModelKind, ModelSpec, Pulled}`, `minuta::template::pull::{fetch_catalog, Origin}`
-  - `llm::fake` is still `pub` and `#[doc(hidden)]` (`src/llm/mod.rs`) though only unit tests use it now; sub-project B can make it `#[cfg(test)]`.
-- Follow-ups filed during the moves: #308 (permission tests pass silently as root), #315 (test hygiene notes on code that predates the moves).
+  - `tests/claude.rs`: `minuta::error::Error`, `minuta::llm::call::{call, CallCache,
+    Policy}`, `minuta::llm::claude::{check, Claude}`, `minuta::llm::Backend`,
+    `minuta::tools::{run_capture, RunOpts}`
+  - `tests/codex.rs`: `minuta::error::Error`, `minuta::llm::call::{call, CallCache,
+    Policy}`, `minuta::llm::codex::{check, Codex}`, `minuta::llm::Backend`
+  - `tests/proxy_env.rs`: `minuta::llm::{endpoint, ollama}`, `minuta::models::{self,
+    ModelKind, ModelSpec, Pulled}`, `minuta::template::pull::{fetch_catalog, Origin}`
+  - `llm::fake` is still `pub` and `#[doc(hidden)]` (`src/llm/mod.rs`) though only unit
+    tests use it now; sub-project B can make it `#[cfg(test)]`.
+- Follow-ups filed during the moves: #308 (permission tests pass silently as root), #315
+  (test hygiene notes on code that predates the moves).
