@@ -273,6 +273,7 @@ Run `claude` once to log in, then use it from minuta:
 
 ```sh
 minuta run meeting.mp4 -t summary --llm claude
+minuta run meeting.mp4 -t summary --llm claude:<model>   # a given model, such as sonnet
 ```
 
 To use Claude for every run, set `default = "claude"` under `[llm]`. The
