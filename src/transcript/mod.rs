@@ -105,3 +105,6 @@ pub fn to_srt(t: &Transcript) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+#[cfg(test)]
+mod tests;
