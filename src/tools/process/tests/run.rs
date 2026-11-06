@@ -6,7 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::time::Instant;
 
 use super::*;
-use crate::test_support::fixture;
+use crate::test_support::{fixture, retry_busy};
 
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
@@ -15,31 +15,8 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     path
 }
 
-/// Retry while a freshly written script is still held open by a concurrent fork in
-/// another test thread (ETXTBSY on Linux).
-fn retry<T>(mut f: impl FnMut() -> Result<T>) -> Result<T> {
-    let mut attempts = 0;
-    loop {
-        let res = f();
-        let busy = match &res {
-            Err(Error::Io(e)) => e.to_string().contains("Text file busy"),
-            Err(Error::MissingTools(m)) => busy_hint(m.iter().map(|m| m.hint.as_str())),
-            _ => false,
-        };
-        attempts += 1;
-        if !busy || attempts >= 20 {
-            return res;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-}
-
-fn busy_hint<'a>(mut hints: impl Iterator<Item = &'a str>) -> bool {
-    hints.any(|h| h.contains("Text file busy"))
-}
-
 fn run_r(argv: &[OsString], opts: &RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<Output> {
-    retry(|| run(argv, opts.clone(), on_line))
+    retry_busy(|| run(argv, opts.clone(), on_line))
 }
 
 #[test]
