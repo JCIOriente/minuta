@@ -3,6 +3,7 @@
 
 use super::*;
 
+mod docs;
 mod manifest;
 mod parse;
 mod repo;

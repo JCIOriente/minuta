@@ -114,7 +114,9 @@ cat "$(minuta run talk.mp4 -t linkedin -q)/linkedin.md"
 ```
 
 The built-in templates are `summary`, `chapters`, `youtube`, `linkedin` and
-`instagram`.
+`instagram`. The
+[curated templates](https://github.com/JCIOriente/minuta/blob/main/docs/templates.md#curated-templates)
+are downloaded with `minuta templates pull`.
 
 ## Documentation
 
