@@ -1,3 +1,5 @@
+//! `whisper.models_dir`: precedence and `~` expansion.
+
 use super::*;
 
 #[test]

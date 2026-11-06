@@ -1,4 +1,7 @@
+//! `env_snapshot`: which `MINUTA_*` variables it reads and how it rejects bad values.
+
 use super::*;
+use std::os::unix::ffi::OsStringExt;
 
 #[test]
 fn env_snapshot_reads_minuta_names() {

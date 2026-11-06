@@ -1,3 +1,5 @@
+//! `[endpoints.<name>]` tables: defaults, validation, host locality and entries.
+
 use super::*;
 
 fn with_endpoints(text: &str) -> Result<Config> {

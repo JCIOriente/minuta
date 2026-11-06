@@ -1,3 +1,5 @@
+//! Numeric keys: parsing, rejection of bad values, typed accessors and `llm.repairs`.
+
 use super::*;
 
 #[test]
@@ -235,7 +237,7 @@ fn repairs_rejects_non_integer() {
 }
 
 #[test]
-fn config_show_lists_repairs() {
+fn show_lists_repairs() {
     let cfg = Config::resolve(Overrides::default(), &no_env, None).unwrap();
     let (key, setting) = cfg
         .entries()

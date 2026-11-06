@@ -1,3 +1,6 @@
+//! Locating and reading the config file: `MINUTA_CONFIG`, the default path, missing,
+//! malformed and unreadable files.
+
 use super::*;
 
 #[test]
@@ -129,7 +132,7 @@ fn unreadable_config(dir: &tempfile::TempDir) -> PathBuf {
 }
 
 #[test]
-fn config_unreadable_file_keeps_io_kind_for_directory() {
+fn unreadable_file_keeps_io_kind_for_directory() {
     let dir = tempfile::tempdir().unwrap();
     let env = env_with("MINUTA_CONFIG", dir.path().to_str().unwrap());
     let (message, path, kind, source) =
@@ -147,7 +150,7 @@ fn config_unreadable_file_keeps_io_kind_for_directory() {
 }
 
 #[test]
-fn config_unreadable_file_keeps_io_kind_for_explicit_file() {
+fn unreadable_file_keeps_io_kind_for_explicit_file() {
     let dir = tempfile::tempdir().unwrap();
     let file = unreadable_config(&dir);
     let env = env_with("MINUTA_CONFIG", file.to_str().unwrap());
@@ -166,7 +169,7 @@ fn config_unreadable_file_keeps_io_kind_for_explicit_file() {
 }
 
 #[test]
-fn config_unreadable_file_keeps_io_kind_for_default_file() {
+fn unreadable_file_keeps_io_kind_for_default_file() {
     let dir = tempfile::tempdir().unwrap();
     let file = unreadable_config(&dir);
     let (message, path, kind, source) = config_io_err(Config::resolve(
@@ -187,7 +190,7 @@ fn config_unreadable_file_keeps_io_kind_for_default_file() {
 }
 
 #[test]
-fn config_parse_error_message() {
+fn parse_error_message() {
     let dir = tempfile::tempdir().unwrap();
     let file = write_config(&dir, "out_dir = \"ok\"\n\n[whisper\nbin = \"x\"\n");
     let env = env_with("MINUTA_CONFIG", file.to_str().unwrap());

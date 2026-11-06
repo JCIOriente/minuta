@@ -1,3 +1,5 @@
+//! Every key loaded from the file and listed by `entries`, and the newer keys' precedence.
+
 use super::*;
 
 #[test]

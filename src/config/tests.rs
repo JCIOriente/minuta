@@ -1,11 +1,6 @@
-use crate::config::{
-    default_path_in, env_snapshot, expand_tilde, resolve_path, Config, Overrides, Setting, Source,
-};
-use crate::error::{Error, Result};
-use std::ffi::OsString;
-use std::os::unix::ffi::OsStringExt;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+//! Tests for `Config::resolve` and its helpers, split by behavior.
+
+use super::*;
 
 mod endpoints;
 mod env;
