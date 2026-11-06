@@ -4,7 +4,6 @@
 
 #[cfg(unix)]
 mod chapters;
-#[cfg(unix)]
 mod common;
 #[cfg(unix)]
 mod e2e;

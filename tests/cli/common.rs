@@ -1,12 +1,60 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 #[path = "../../src/test_support/fake_ollama.rs"]
 pub mod fake_ollama;
 
 use fake_ollama::{FakeOllama, Request};
+
+/// Held while writing an executable and while spawning a process. A fork in another test
+/// thread that inherits an executable still open for writing makes running it fail with
+/// ETXTBSY on Linux; serializing both rules that out.
+static SPAWN: Mutex<()> = Mutex::new(());
+
+pub fn spawn_lock() -> MutexGuard<'static, ()> {
+    SPAWN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Spawns `cmd` under `spawn_lock`. The lock is released once the child exists, so a long
+/// run does not block other tests.
+pub fn spawn(cmd: &mut Command) -> Child {
+    let _guard = spawn_lock();
+    cmd.spawn().unwrap()
+}
+
+/// Runs `cmd` to completion like `Command::output`, but spawns it under `spawn_lock`.
+pub fn output(cmd: &mut Command) -> Output {
+    spawn(cmd.stdout(Stdio::piped()).stderr(Stdio::piped()))
+        .wait_with_output()
+        .unwrap()
+}
+
+// The documented job layout (CONTEXT.md: "Job", "Assets folder", "State folder"), spelled out
+// on purpose instead of taken from the library: a layout change must fail these tests.
+
+/// `<job>/.minuta/job.json`.
+pub fn state_file(job: &Path) -> PathBuf {
+    job.join(".minuta/job.json")
+}
+
+/// `<job>/assets`.
+pub fn assets_dir(job: &Path) -> PathBuf {
+    job.join("assets")
+}
+
+/// `<job>/assets/<template>.json`.
+pub fn template_json(job: &Path, template: &str) -> PathBuf {
+    job.join(format!("assets/{template}.json"))
+}
+
+/// `<job>/assets/<template>.md`, the Markdown of a template that ran only because another
+/// needed it.
+pub fn implicit_md(job: &Path, template: &str) -> PathBuf {
+    job.join(format!("assets/{template}.md"))
+}
 
 pub const FAKE_WHISPER: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -85,7 +133,7 @@ impl Env {
             ])
             .args(["-c:v", "mpeg4", "-c:a", "aac", "-shortest"]);
         }
-        let status = cmd.arg(&path).status().unwrap();
+        let status = spawn(cmd.arg(&path)).wait().unwrap();
         assert!(status.success(), "ffmpeg could not generate {name}");
         path
     }
@@ -111,7 +159,7 @@ impl Env {
     }
 
     pub fn minuta(&self, args: &[&str]) -> Output {
-        self.command(args).output().unwrap()
+        output(&mut self.command(args))
     }
 
     /// Runs minuta and asserts success (for setup steps).
@@ -149,7 +197,7 @@ impl Env {
     }
 
     pub fn run_llm(&self, args: &[&str], fake: &FakeOllama) -> Output {
-        self.llm_command(args, &fake.url()).output().unwrap()
+        output(&mut self.llm_command(args, &fake.url()))
     }
 }
 
@@ -190,7 +238,7 @@ pub fn class_command(env: &Env, args: &[&str], url: &str) -> Command {
 }
 
 pub fn run_class(env: &Env, args: &[&str], fake: &FakeOllama) -> Output {
-    class_command(env, args, &fake.url()).output().unwrap()
+    output(&mut class_command(env, args, &fake.url()))
 }
 
 pub fn ollama_with(responder: fake_ollama::Responder) -> FakeOllama {
@@ -272,8 +320,7 @@ pub fn stdout(out: &Output) -> String {
 }
 
 pub fn job_json(job: &Path) -> serde_json::Value {
-    serde_json::from_str(&fs::read_to_string(minuta::job::layout::state_file(job)).unwrap())
-        .unwrap()
+    serde_json::from_str(&fs::read_to_string(state_file(job)).unwrap()).unwrap()
 }
 
 /// Steps whose progress line in `stderr` says `cached`.
@@ -333,7 +380,7 @@ pub fn start_hanging(env: &Env, args: &[&str]) -> (Child, String) {
     let pid_file = env.path("whisper.pid");
     let mut cmd = env.command(args);
     cmd.env("FAKE_WHISPER_HANG", &pid_file);
-    let child = cmd.spawn().unwrap();
+    let child = spawn(&mut cmd);
     wait_for(&pid_file);
     let pid = fs::read_to_string(&pid_file).unwrap().trim().to_string();
     (child, pid)

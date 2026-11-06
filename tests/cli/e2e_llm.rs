@@ -6,6 +6,8 @@
 use std::fs;
 use std::process::{Command, Stdio};
 
+use crate::common::output;
+
 const CLASS_FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/whisper/class.json"
@@ -71,7 +73,7 @@ fn run_real(template: &str, fixture: Option<&str>) -> Option<(tempfile::TempDir,
     if let Some(fixture) = fixture {
         cmd.env("FAKE_WHISPER_FIXTURE", fixture);
     }
-    let out = cmd.output().unwrap();
+    let out = output(&mut cmd);
     assert!(
         out.status.success(),
         "run failed: {}",

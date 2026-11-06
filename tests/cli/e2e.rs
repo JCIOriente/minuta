@@ -4,6 +4,8 @@
 use std::fs;
 use std::process::{Command, Stdio};
 
+use crate::common::output;
+
 fn have(tool: &str, flag: &str) -> bool {
     Command::new(tool)
         .arg(flag)
@@ -50,7 +52,7 @@ fn e2e_real_whisper_tiny() {
     let model = match std::env::var("MINUTA_E2E_MODEL") {
         Ok(m) if !m.is_empty() => m,
         _ => {
-            let pull = minuta(&["models", "pull", "tiny"]).output().unwrap();
+            let pull = output(&mut minuta(&["models", "pull", "tiny"]));
             assert!(
                 pull.status.success(),
                 "models pull tiny failed: {}",
@@ -78,9 +80,7 @@ fn e2e_real_whisper_tiny() {
         .success();
     assert!(ok, "ffmpeg could not generate the clip");
 
-    let out = minuta(&["run", "tone.wav", "--model", &model])
-        .output()
-        .unwrap();
+    let out = output(&mut minuta(&["run", "tone.wav", "--model", &model]));
     assert!(
         out.status.success(),
         "{}",

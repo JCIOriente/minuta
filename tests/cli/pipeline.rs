@@ -218,14 +218,14 @@ fn name_conflict_errors() {
         .minuta(&["run", "a.m4a", "--name", "talk"])
         .status
         .success());
-    let state = fs::read_to_string(minuta::job::layout::state_file(&env.job_dir("talk"))).unwrap();
+    let state = fs::read_to_string(state_file(&env.job_dir("talk"))).unwrap();
 
     let out = env.minuta(&["run", "b.m4a", "--name", "talk"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(stderr(&out).contains("--force"), "{}", stderr(&out));
     assert_eq!(stdout(&out), "");
     assert_eq!(
-        fs::read_to_string(minuta::job::layout::state_file(&env.job_dir("talk"))).unwrap(),
+        fs::read_to_string(state_file(&env.job_dir("talk"))).unwrap(),
         state,
         "the existing job is untouched"
     );
@@ -274,13 +274,12 @@ fn signal_stops_tool_and_grandchild(sig: &str) {
     let env = Env::new();
     env.clip("a.m4a", 440);
     let pid_file = env.path("whisper.pids");
-    let mut child = env
-        .command(&["run", "a.m4a"])
-        .env("FAKE_WHISPER_GRANDCHILD", &pid_file)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = spawn(
+        env.command(&["run", "a.m4a"])
+            .env("FAKE_WHISPER_GRANDCHILD", &pid_file)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped()),
+    );
     wait_for(&pid_file);
     let pids: Vec<String> = fs::read_to_string(&pid_file)
         .unwrap()
