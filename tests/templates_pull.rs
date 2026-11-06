@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
-use minuta::template::catalog::sha256_hex;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 #[path = "../src/test_support/fake_http.rs"]
@@ -26,9 +26,13 @@ const ENTRIES: [(&str, Option<&str>, &str, Option<&str>); 3] = [
 fn catalog_text(entries: &[(&str, Option<&str>, &str, Option<&str>)]) -> String {
     let mut s = String::from("version = 1\n");
     for (name, platform, description, input) in entries {
+        // Lowercase hex SHA-256 of the file, as the catalog records it.
+        let sha256: String = Sha256::digest(template_text(name).as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         s.push_str(&format!(
-            "\n[[template]]\nname = \"{name}\"\ndescription = \"{description}\"\nsha256 = \"{}\"\n",
-            sha256_hex(template_text(name).as_bytes())
+            "\n[[template]]\nname = \"{name}\"\ndescription = \"{description}\"\nsha256 = \"{sha256}\"\n"
         ));
         if let Some(platform) = platform {
             s.push_str(&format!("platform = \"{platform}\"\n"));
