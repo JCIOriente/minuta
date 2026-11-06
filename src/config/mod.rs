@@ -8,6 +8,8 @@ use crate::error::{Error, Result};
 
 mod endpoint;
 mod file;
+#[cfg(all(test, unix))]
+mod tests;
 
 use endpoint::endpoint;
 pub use endpoint::Endpoint;
