@@ -184,3 +184,21 @@ fn template_matches_the_committed_fixture() {
         include_str!("../../tests/fixtures/config_init/config.toml")
     );
 }
+
+/// The library half of `config_init_creates_file_and_parent` in `tests/config_init.rs`,
+/// which compares `config show` after a fresh `config init` with the same fixture.
+#[test]
+fn defaults_match_the_committed_show_fixture() {
+    let rendered: String = defaults()
+        .entries()
+        .into_iter()
+        .map(|(key, setting)| match setting {
+            Some(s) => format!("{key} = {} (default)\n", s.value),
+            None => format!("{key} = (unset)\n"),
+        })
+        .collect();
+    assert_eq!(
+        rendered,
+        include_str!("../../tests/fixtures/config_init/show.txt")
+    );
+}

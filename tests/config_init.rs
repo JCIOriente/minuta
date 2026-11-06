@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
-use minuta::config::{Config, Overrides};
-
 /// A temp folder with an empty `home/`; the binary sees only `HOME` (and `MINUTA_CONFIG`
 /// when a test sets it).
 struct Env {
@@ -62,8 +60,14 @@ fn template_fixture() -> String {
     .unwrap()
 }
 
-fn defaults() -> Config {
-    Config::resolve(Overrides::default(), &|_| None, None).unwrap()
+/// The exact `config show` output after a fresh `config init`. `config_init::tests` pins the
+/// library's defaults to it.
+fn show_fixture() -> String {
+    std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/config_init/show.txt"
+    ))
+    .unwrap()
 }
 
 #[test]
@@ -81,16 +85,7 @@ fn config_init_creates_file_and_parent() {
     // `config show` then reports only defaults and unset keys.
     let show = env.minuta(&["config", "show"]);
     assert_ok(&show);
-    let lines: Vec<String> = stdout(&show).lines().map(String::from).collect();
-    let want: Vec<String> = defaults()
-        .entries()
-        .into_iter()
-        .map(|(key, setting)| match setting {
-            Some(s) => format!("{key} = {} (default)", s.value),
-            None => format!("{key} = (unset)"),
-        })
-        .collect();
-    assert_eq!(lines, want);
+    assert_eq!(stdout(&show), show_fixture());
 }
 
 #[test]
