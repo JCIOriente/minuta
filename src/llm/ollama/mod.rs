@@ -246,3 +246,6 @@ impl Ollama {
         )
     }
 }
+
+#[cfg(test)]
+mod tests;
