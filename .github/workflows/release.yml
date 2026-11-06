@@ -1,6 +1,7 @@
 name: release
 
-# Publishes @jcioriente/minuta and its four platform packages to npm.
+# Publishes @jcioriente/minuta and its four platform packages to npm, with no stored token:
+# npm trusted publishing (OIDC) authenticates this workflow and its `npm-publish` environment.
 # Pushing a tag v<X.Y.Z> that matches Cargo.toml publishes for real.
 # workflow_dispatch builds everything and runs `npm publish --dry-run` (the default).
 # Nothing is published from a branch or a pull request.
@@ -29,7 +30,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       dry_run: ${{ steps.v.outputs.dry_run }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # the ancestry check below needs main's history
       - id: v
@@ -91,7 +92,7 @@ jobs:
       CC_x86_64_unknown_linux_musl: musl-gcc
       CC_aarch64_unknown_linux_musl: musl-gcc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -115,7 +116,7 @@ jobs:
           got=$("target/$TARGET/release/minuta" --version)
           echo "$got"
           [ "$got" = "minuta $VERSION" ]
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: minuta-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/minuta
@@ -126,18 +127,17 @@ jobs:
   publish:
     needs: [verify, build]
     runs-on: ubuntu-latest
-    # Holds the NPM_TOKEN secret and the required-reviewer rule.
+    # The required-reviewer rule, and the environment named in the npm trusted publisher settings.
     environment: npm-publish
     permissions:
       contents: read
-      id-token: write # npm --provenance
+      id-token: write # npm trusted publishing (OIDC) and --provenance
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
-          registry-url: https://registry.npmjs.org
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: binaries
       - name: Build the packages
@@ -154,13 +154,14 @@ jobs:
           cat "$RUNNER_TEMP/dirs.txt"
       - name: Publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.verify.outputs.version }}
           DRY_RUN: ${{ needs.verify.outputs.dry_run }}
         run: |
           set -euo pipefail
-          if [ "$DRY_RUN" != true ] && [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::error::the NPM_TOKEN secret is not set"
+          # Trusted publishing needs npm 11.5.1 or newer; an older npm would fail with a misleading auth error.
+          npm_version=$(npm --version)
+          if [ "$(printf '%s\n11.5.1\n' "$npm_version" | sort -V | head -n1)" != 11.5.1 ]; then
+            echo "::error::npm $npm_version is older than 11.5.1, which trusted publishing requires"
             exit 1
           fi
           mapfile -t dirs < "$RUNNER_TEMP/dirs.txt"
