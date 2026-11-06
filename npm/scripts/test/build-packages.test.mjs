@@ -118,7 +118,7 @@ test('main_package_ships_bin_and_lib_and_not_the_tests', () => {
   const f = fixture();
   run(f);
   const dir = path.join(f.outDir, 'minuta');
-  assert.deepEqual(fs.readdirSync(dir).sort(), ['bin', 'lib', 'package.json']);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['LICENSE', 'README.es.md', 'README.md', 'bin', 'docs', 'lib', 'package.json']);
   assert.deepEqual(fs.readdirSync(path.join(dir, 'bin')), ['minuta.js']);
   assert.deepEqual(fs.readdirSync(path.join(dir, 'lib')).sort(), ['launcher.js', 'platform.js']);
 });
@@ -420,4 +420,149 @@ test('cli_reads_Cargo_toml_from_the_repository_by_default', () => {
   const r = cli(args, f.root);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(read(path.join(f.outDir, 'minuta', 'package.json')).version, version);
+});
+
+// ---- User docs shipped in the main package (#340) ----
+
+const REPO_ROOT = path.join(here, '..', '..', '..');
+const SHIPPED = [
+  'README.md',
+  'README.es.md',
+  'LICENSE',
+  ...['install', 'reference', 'templates'].flatMap((n) => [`docs/${n}.md`, `docs/${n}.es.md`]),
+];
+
+// A repository root holding every shipped file; `files` overrides the content of some of them.
+function repoFixture(files = {}) {
+  const root = tmp();
+  for (const rel of SHIPPED) {
+    const p = path.join(root, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, files[rel] ?? `content of ${rel}\n`);
+  }
+  fs.mkdirSync(path.join(root, 'docs', 'template-briefs'));
+  fs.writeFileSync(path.join(root, 'docs', 'plans.md'), 'not shipped\n');
+  fs.writeFileSync(path.join(root, 'docs', 'adr.md'), 'not shipped\n');
+  return root;
+}
+
+const relativeLinks = (text) =>
+  [...text.matchAll(/\]\(([^)\s]+)\)/g)]
+    .map((m) => m[1])
+    .filter((t) => !/^([a-z][a-z0-9+.-]*:|#|\/)/i.test(t));
+
+const markdownFiles = (dir) =>
+  fs.readdirSync(dir, { recursive: true }).filter((f) => f.endsWith('.md')).map((f) => path.join(dir, f));
+
+test('main_package_ships_readmes_license_and_user_docs_from_the_repository', () => {
+  const f = fixture();
+  run(f, { repoRoot: REPO_ROOT });
+  const dir = path.join(f.outDir, 'minuta');
+  for (const rel of SHIPPED) assert.ok(fs.statSync(path.join(dir, rel)).isFile(), rel);
+  assert.deepEqual(fs.readdirSync(path.join(dir, 'docs')).sort(), SHIPPED.filter((s) => s.startsWith('docs/')).map((s) => s.slice(5)).sort());
+  assert.equal(
+    fs.readFileSync(path.join(dir, 'LICENSE'), 'utf8'),
+    fs.readFileSync(path.join(REPO_ROOT, 'LICENSE'), 'utf8'),
+  );
+});
+
+test('main_package_lists_the_shipped_files_in_package_json_files', () => {
+  const f = fixture();
+  run(f, { repoRoot: REPO_ROOT });
+  const { files } = read(path.join(f.outDir, 'minuta', 'package.json'));
+  for (const entry of ['bin/', 'lib/', 'docs/', 'README.md', 'README.es.md', 'LICENSE']) {
+    assert.ok(files.includes(entry), `files lists ${entry}`);
+  }
+});
+
+test('platform_packages_hold_no_readme_license_or_docs', () => {
+  const f = fixture();
+  run(f, { repoRoot: REPO_ROOT });
+  for (const [, pkg] of EXPECTED) {
+    assert.deepEqual(fs.readdirSync(path.join(f.outDir, pkg.split('/')[1])).sort(), ['bin', 'package.json']);
+  }
+});
+
+for (const missing of SHIPPED) {
+  test(`a_missing_${missing.replace(/\W/g, '_')}_fails_the_build_before_writing`, () => {
+    const f = fixture();
+    const repoRoot = repoFixture();
+    fs.rmSync(path.join(repoRoot, missing));
+    assert.throws(() => run(f, { repoRoot }), (e) => e.message.includes(path.join(repoRoot, missing)));
+    assert.equal(fs.existsSync(f.outDir), false, 'nothing is written');
+  });
+}
+
+test('relative_links_to_shipped_files_are_kept', () => {
+  const f = fixture();
+  const repoRoot = repoFixture({
+    'docs/install.md': '[a](reference.md#x) [b](../README.md#quick-start) [c](install.es.md)\n',
+  });
+  run(f, { repoRoot });
+  assert.equal(
+    fs.readFileSync(path.join(f.outDir, 'minuta', 'docs', 'install.md'), 'utf8'),
+    '[a](reference.md#x) [b](../README.md#quick-start) [c](install.es.md)\n',
+  );
+});
+
+test('relative_links_to_unshipped_paths_become_github_urls_pinned_to_the_release_tag', () => {
+  const f = fixture();
+  const repoRoot = repoFixture({
+    'docs/templates.md': 'see [briefs](template-briefs) and [plans](plans.md#top), [adr](../docs/adr.md) [ext](https://example.com/x) [anchor](#a)\n',
+    'README.md': '[conv](docs/plans.md)\n',
+  });
+  run(f, { repoRoot, version: 'v1.2.3' });
+  const dir = path.join(f.outDir, 'minuta');
+  const base = 'https://github.com/JCIOriente/minuta';
+  assert.equal(
+    fs.readFileSync(path.join(dir, 'docs', 'templates.md'), 'utf8'),
+    `see [briefs](${base}/tree/v1.2.3/docs/template-briefs) and [plans](${base}/blob/v1.2.3/docs/plans.md#top), ` +
+      `[adr](${base}/blob/v1.2.3/docs/adr.md) [ext](https://example.com/x) [anchor](#a)\n`,
+  );
+  assert.equal(fs.readFileSync(path.join(dir, 'README.md'), 'utf8'), `[conv](${base}/blob/v1.2.3/docs/plans.md)\n`);
+  assert.equal(
+    fs.readFileSync(path.join(repoRoot, 'docs', 'templates.md'), 'utf8').includes('](template-briefs)'),
+    true,
+    'the source doc is unchanged',
+  );
+});
+
+test('a_link_to_a_path_missing_from_the_repository_fails_the_build', () => {
+  const f = fixture();
+  const repoRoot = repoFixture({ 'docs/install.md': '[x](nowhere.md)\n' });
+  assert.throws(() => run(f, { repoRoot }), (e) => e.message.includes('nowhere.md') && e.message.includes('docs/install.md'));
+  assert.equal(fs.existsSync(f.outDir), false);
+});
+
+test('a_link_that_escapes_the_repository_fails_the_build', () => {
+  const f = fixture();
+  const repoRoot = repoFixture({ 'README.md': '[x](../outside.md)\n' });
+  assert.throws(() => run(f, { repoRoot }), (e) => e.message.includes('../outside.md'));
+});
+
+test('every_relative_link_in_the_built_package_resolves_inside_it', () => {
+  const f = fixture();
+  run(f, { repoRoot: REPO_ROOT });
+  const dir = path.join(f.outDir, 'minuta');
+  const files = markdownFiles(dir);
+  assert.equal(files.length, 8);
+  let checked = 0;
+  for (const file of files) {
+    for (const target of relativeLinks(fs.readFileSync(file, 'utf8'))) {
+      const resolved = path.resolve(path.dirname(file), decodeURI(target.split('#')[0]));
+      assert.ok(resolved.startsWith(dir + path.sep), `${file}: ${target} leaves the package`);
+      assert.ok(fs.existsSync(resolved), `${file}: ${target} does not resolve`);
+      checked += 1;
+    }
+  }
+  assert.ok(checked > 10, 'the scan saw the doc links');
+});
+
+test('in_the_built_package_the_template_briefs_link_points_to_the_tag', () => {
+  const f = fixture();
+  run(f, { repoRoot: REPO_ROOT });
+  for (const name of ['templates.md', 'templates.es.md']) {
+    const text = fs.readFileSync(path.join(f.outDir, 'minuta', 'docs', name), 'utf8');
+    assert.ok(text.includes('(https://github.com/JCIOriente/minuta/tree/v1.2.3/docs/template-briefs)'), name);
+  }
 });
