@@ -8,6 +8,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+#[cfg(test)]
+mod tests;
+
 /// Where whisper model files are downloaded from.
 pub const WHISPER_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 
