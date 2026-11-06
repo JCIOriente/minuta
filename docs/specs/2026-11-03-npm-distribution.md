@@ -82,7 +82,7 @@ Invariants: every package version equals the `Cargo.toml` version; the main pack
 ## Interfaces
 - **Launcher** (`bin/minuta.js`): resolves the package from the table, runs `child_process.spawn(binary, process.argv.slice(2), { stdio: 'inherit' })`, forwards SIGINT, SIGTERM and SIGHUP to the child, and exits with the child's code (or re-raises the signal that ended it).
 - **Release workflow** (`.github/workflows/release.yml`), on push of tags `v*`:
-  1. `verify`: tag without the leading `v` equals the `Cargo.toml` version.
+  1. `verify`: tag without the leading `v` equals the `Cargo.toml` version, the tagged commit is on `main`, and `CHANGELOG.md` has a non-empty `## <X.Y.Z>` section (so a missing section stops the run before anything is published).
   2. `build` (matrix of four targets): `cargo build --release --locked --target <t>`, upload the binary as a workflow artifact.
   3. `publish` (environment `publish-packages`, one reviewer approval per release): `build-packages.mjs`, then `npm publish --access public --provenance` for the four platform packages, and last the main package, so the main package never points at a missing version. Then, only after all five were published or skipped as already published, `cargo publish --locked` with `CARGO_REGISTRY_TOKEN` (a secret of the environment, present only in that step), unless `scripts/crate-published.sh` finds the version on crates.io. crates.io cannot unpublish, so the crate goes after npm, where a failure is still recoverable with a deprecation.
   4. `release` (no environment, `contents: write`, needs `publish`): `gh release create v<X.Y.Z> --verify-tag` with the notes from the `## <X.Y.Z>` section of `CHANGELOG.md` (`scripts/release-notes.sh`, which fails when the section is missing or empty), unless the release already exists. It is a separate job so that only it holds `contents: write` and the job holding the registry token does not; without an environment it adds no second approval.
@@ -141,3 +141,4 @@ One static binary per architecture works on Ubuntu, Debian, Alpine and WSL2 imag
 ## Implementation status
 Updated by the PRs that implement this spec.
 - [x] Plan and issues (#242-#246)
+- [x] crates.io publish and GitHub release in `release.yml` (#345)

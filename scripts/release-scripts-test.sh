@@ -125,7 +125,9 @@ export FAKE_STATUS=200 FAKE_BODY='{"version":{"crate":"minuta","num":"0.9.0","ya
 expect crate-published.sh 0 published "" -- minuta 0.9.0
 want=$'--silent\n--show-error\n--location\n--max-time\n30\n--user-agent\nminuta-release (https://github.com/JCIOriente/minuta)\n--output'
 if [ "$(sed -n '1,8p' "$case_dir/args")" != "$want" ] \
-  || [ "$(tail -n 1 "$case_dir/args")" != "https://crates.io/api/v1/crates/minuta/0.9.0" ]; then
+  || [ "$(sed -n '10,11p' "$case_dir/args")" != $'--write-out\n%{http_code}' ] \
+  || [ "$(tail -n 1 "$case_dir/args")" != "https://crates.io/api/v1/crates/minuta/0.9.0" ] \
+  || [ "$(wc -l < "$case_dir/args" | tr -d ' ')" != 12 ]; then
   failures=$((failures + 1)); echo "FAIL $case_name: unexpected curl arguments"; cat "$case_dir/args"
 fi
 cases=$((cases + 1))
