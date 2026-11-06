@@ -1,4 +1,6 @@
+use std::ffi::OsStr;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 
 use tempfile::TempDir;
@@ -52,6 +54,20 @@ fn tmp_cleanup_removes_symlinks_without_following_them() {
     assert!(job.dir.join("link-not-tmp").is_symlink());
 }
 
+/// Whether `MINUTA_SKIP_PERMISSION_TESTS` asks to skip: only the exact value `1` does.
+fn skip_requested(value: Option<&OsStr>) -> bool {
+    value == Some(OsStr::new("1"))
+}
+
+#[test]
+fn skip_requested_only_for_the_exact_value_1() {
+    assert!(!skip_requested(None), "unset");
+    assert!(skip_requested(Some(OsStr::new("1"))), "1");
+    assert!(!skip_requested(Some(OsStr::new("0"))), "0");
+    assert!(!skip_requested(Some(OsStr::new(""))), "empty");
+    assert!(!skip_requested(Some(OsStr::new("true"))), "true");
+}
+
 #[cfg(unix)]
 #[test]
 fn tmp_cleanup_reports_an_unremovable_entry_by_path() {
@@ -64,10 +80,24 @@ fn tmp_cleanup_reports_an_unremovable_entry_by_path() {
     fs::set_permissions(&job.dir, fs::Permissions::from_mode(0o555)).unwrap();
     let result = job.clean_tmp();
     // Running as root: the permission bits do not stop the removal, so there is no error.
+    // No other way to make `remove_file` fail on a symlink, so fail loudly, or skip visibly
+    // when `MINUTA_SKIP_PERMISSION_TESTS=1`.
     let enforced = fs::File::create(job.dir.join("probe-writable")).is_err();
     fs::set_permissions(&job.dir, fs::Permissions::from_mode(0o755)).unwrap();
     if !enforced {
-        return;
+        if skip_requested(std::env::var_os("MINUTA_SKIP_PERMISSION_TESTS").as_deref()) {
+            // Straight to the process stderr: libtest captures `eprintln!` of a passing test.
+            let _ = writeln!(
+                std::io::stderr(),
+                "SKIPPED tmp_cleanup_reports_an_unremovable_entry_by_path: permission bits \
+                 are not enforced (running as root?) and MINUTA_SKIP_PERMISSION_TESTS=1"
+            );
+            return;
+        }
+        panic!(
+            "permission bits are not enforced (running as root?); \
+             set MINUTA_SKIP_PERMISSION_TESTS=1 (exactly 1) to skip this test"
+        );
     }
     let err = result.unwrap_err();
     assert!(matches!(err, Error::Io(_)), "{err:?}");

@@ -123,12 +123,11 @@ fn config_io_err(result: Result<Config>) -> (String, PathBuf, std::io::ErrorKind
     (message, path, source.0, source.1)
 }
 
-/// A config file with mode 000, so reading it fails with `PermissionDenied` (unless root).
-fn unreadable_config(dir: &tempfile::TempDir) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-    let path = write_config(dir, "out_dir = \"x\"\n");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
-    path
+/// A config path whose parent is a regular file, so reading it fails with `NotADirectory`.
+/// Permission bits would not do: they do not stop root.
+fn config_below_a_file(dir: &tempfile::TempDir) -> PathBuf {
+    let parent = write_config(dir, "out_dir = \"x\"\n");
+    parent.join("config.toml")
 }
 
 #[test]
@@ -152,17 +151,17 @@ fn unreadable_file_keeps_io_kind_for_directory() {
 #[test]
 fn unreadable_file_keeps_io_kind_for_explicit_file() {
     let dir = tempfile::tempdir().unwrap();
-    let file = unreadable_config(&dir);
+    let file = config_below_a_file(&dir);
     let env = env_with("MINUTA_CONFIG", file.to_str().unwrap());
     let (message, path, kind, source) =
         config_io_err(Config::resolve(Overrides::default(), &env, None));
-    assert_eq!(kind, std::io::ErrorKind::PermissionDenied);
-    assert_eq!(source, "Permission denied (os error 13)");
+    assert_eq!(kind, std::io::ErrorKind::NotADirectory);
+    assert_eq!(source, "Not a directory (os error 20)");
     assert_eq!(path, file);
     assert_eq!(
         message,
         format!(
-            "config error: {}: Permission denied (os error 13)",
+            "config error: {}: Not a directory (os error 20)",
             file.display()
         )
     );
@@ -171,19 +170,19 @@ fn unreadable_file_keeps_io_kind_for_explicit_file() {
 #[test]
 fn unreadable_file_keeps_io_kind_for_default_file() {
     let dir = tempfile::tempdir().unwrap();
-    let file = unreadable_config(&dir);
+    let file = config_below_a_file(&dir);
     let (message, path, kind, source) = config_io_err(Config::resolve(
         Overrides::default(),
         &no_env,
         Some(file.as_path()),
     ));
-    assert_eq!(kind, std::io::ErrorKind::PermissionDenied);
-    assert_eq!(source, "Permission denied (os error 13)");
+    assert_eq!(kind, std::io::ErrorKind::NotADirectory);
+    assert_eq!(source, "Not a directory (os error 20)");
     assert_eq!(path, file);
     assert_eq!(
         message,
         format!(
-            "config error: {}: Permission denied (os error 13)",
+            "config error: {}: Not a directory (os error 20)",
             file.display()
         )
     );
