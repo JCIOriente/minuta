@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fake whisper-cli for tests/media.rs and tests/tools.rs.
+# Fake whisper-cli for the step tests in src/steps/ and the tool tests in src/tools/.
 #   --version  prints a version line.
 #   otherwise  writes its arguments, one per line, to "<prefix>.args" and copies
 #              ../whisper/sample.json to "<prefix>.json" (prefix from -of). With -pp it

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fake ffmpeg for tests/media.rs and tests/tools.rs.
+# Fake ffmpeg for the step tests in src/steps/ and the tool tests in src/tools/.
 #   -version   prints a version line.
 #   otherwise  prints two stats updates on stderr the way ffmpeg does (each ends in a
 #              carriage return, not a newline) and writes its arguments, one per line, to

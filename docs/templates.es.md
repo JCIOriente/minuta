@@ -313,7 +313,7 @@ una nueva versión:
 2. Agrega una entrada a `templates/index.toml` con su `name`, `description` y
    `sha256`, y opcionalmente `platform`, `tags` e `input`.
 3. Obtén el `sha256` con `shasum -a 256 templates/NAME.md`. La prueba de consistencia
-   `tests/templates_catalog.rs` imprime este comando cuando un hash es incorrecto.
+   `src/template/catalog/tests/repo.rs` imprime este comando cuando un hash es incorrecto.
 4. Ejecuta `make ci`. La prueba falla si una entrada no tiene archivo, si un hash
    difiere, si un archivo no es una plantilla válida, si un nombre difiere del nombre
    de su archivo o si un archivo `templates/*.md` no tiene entrada.
