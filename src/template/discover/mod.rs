@@ -224,3 +224,6 @@ impl Catalog {
         )))
     }
 }
+
+#[cfg(test)]
+mod tests;

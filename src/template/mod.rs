@@ -5,6 +5,8 @@ pub mod discover;
 pub mod graph;
 pub mod pull;
 pub mod pull_cmd;
+#[cfg(test)]
+mod tests;
 
 use std::path::PathBuf;
 
