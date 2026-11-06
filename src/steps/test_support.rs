@@ -8,6 +8,8 @@ use crate::job::{Ctx, Step};
 use crate::steps::probe::{read_probe, Probe, SourceProbe};
 #[cfg(unix)]
 use crate::steps::transcribe::Transcribe;
+#[cfg(unix)]
+use crate::test_support::fixture;
 use crate::tools::{inspect, run, RunOpts, ToolInfo, ToolPaths};
 
 pub(super) struct Tools {
@@ -123,12 +125,9 @@ pub(super) fn tree(dir: &Path) -> Vec<String> {
 /// Committed fakes: `ffmpeg` writes its argv into its output file and prints two
 /// `\r`-terminated stats updates; `whisper-cli` writes its argv to `<prefix>.args`.
 #[cfg(unix)]
-const FIXTURE_TOOLS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tools");
-
-#[cfg(unix)]
 pub(super) fn fake_tool(name: &str) -> ToolInfo {
     ToolInfo {
-        path: Path::new(FIXTURE_TOOLS).join(name),
+        path: fixture("tools").join(name),
         version: format!("{name} 0.0-fake"),
     }
 }
@@ -156,15 +155,15 @@ pub(super) fn as_strings(items: &[&Path]) -> Vec<String> {
         .collect()
 }
 
-#[cfg(unix)]
-pub(super) const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/whisper");
-
 /// Writes a fake `whisper-cli` that records its argv to `args.txt` next to it and, honouring
 /// `-of <prefix>`, copies `fixture` (or nothing, if `None`) to `<prefix>.json`.
 #[cfg(unix)]
 fn fake_whisper(dir: &Path, fixture: Option<&str>, exit: i32) -> PathBuf {
     let copy = match fixture {
-        Some(f) => format!("cp '{FIXTURES}/{f}' \"$prefix.json\""),
+        Some(f) => format!(
+            "cp '{}' \"$prefix.json\"",
+            crate::test_support::fixture("whisper").join(f).display()
+        ),
         None => String::new(),
     };
     let body = format!(

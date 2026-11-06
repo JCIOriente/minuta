@@ -1,9 +1,9 @@
 use std::fs;
 
+use super::Outputs;
 use crate::job::Step;
-use crate::steps::outputs::Outputs;
-use crate::steps::test_support::{names_in, setup, step, FIXTURES};
-use crate::test_support::retry_busy;
+use crate::steps::test_support::{names_in, setup, step};
+use crate::test_support::{fixture, retry_busy};
 use crate::tools::RunOpts;
 use crate::transcript::{self, Segment, Transcript};
 
@@ -26,7 +26,7 @@ fn outputs_derive_from_transcript_json() {
     // A raw whisper file with different content must be ignored.
     fs::create_dir_all(s.ctx.dir.join(".minuta")).unwrap();
     fs::copy(
-        format!("{FIXTURES}/sample.json"),
+        fixture("whisper/sample.json"),
         s.ctx.dir.join(".minuta/whisper-raw.json"),
     )
     .unwrap();
@@ -73,7 +73,6 @@ fn outputs_fail_without_transcript_json() {
     assert!(!s.ctx.dir.join("captions.srt").exists());
 }
 
-#[cfg(unix)]
 #[test]
 fn outputs_do_not_follow_a_planted_tmp_symlink() {
     let s = setup(None, 0);

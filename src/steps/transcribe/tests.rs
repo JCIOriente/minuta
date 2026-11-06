@@ -1,13 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::Transcribe;
 use crate::error::Error;
 use crate::job::{Ctx, Step};
 use crate::steps::outputs::Outputs;
 use crate::steps::test_support::{
     as_strings, fake_tool, lines_of, names_in, setup, step, tool, Setup,
 };
-use crate::steps::transcribe::Transcribe;
 use crate::test_support::retry_busy;
 use crate::tools::RunOpts;
 use crate::transcript::Transcript;
@@ -177,10 +177,8 @@ fn missing_whisper_output_names_file() {
     assert_eq!(names_in(&s.ctx.dir.join("assets")), ["audio.wav"]);
 }
 
-#[cfg(unix)]
 #[test]
 fn whisper_argv_asks_for_progress_and_forwards_it() {
-    use crate::steps::transcribe::Transcribe;
     let tmp = tempfile::tempdir().unwrap();
     let model = tmp.path().join("ggml-tiny.bin");
     fs::write(&model, b"model").unwrap();
