@@ -47,6 +47,9 @@ code, specs and issues. When a term is ambiguous or keeps needing explanation, a
 | Size limit | 500 lines for each `.rs` file under `src/`, counted with the last line included. Enforced by `scripts/check-file-size.sh` in `make ci`. | clippy's `too_many_lines`, which counts lines per function |
 | Size allowlist | `scripts/file-size-allowlist.txt`: the over-limit files, each with the most lines it may have. | The `.pulled.toml` record of downloaded templates |
 | Ratchet | The size rule for allowlisted files: an entry may only shrink, and it is removed once the file is at or under the limit. | A retry, or a rate limit |
+| Unit test | A test that calls library functions, in `src/` next to the module it tests (`src/<module>/tests.rs` or `src/<module>/tests/`). See docs/specs/2026-11-05-test-layout.md. | A black-box test, which runs the binary |
+| Black-box test | A test that runs the `minuta` binary and checks its output and files, in the one crate `tests/cli/`. Uses no `minuta::` item. | An isolated test |
+| Isolated test | A top-level `tests/<name>.rs` crate that runs in a process of its own, because it changes process-global state (environment variables) or tests repo tooling. | A unit test, which shares one process with every other unit test |
 
 ## Relationships
 A job has one source and an ordered list of steps. Each step has at most one recorded
