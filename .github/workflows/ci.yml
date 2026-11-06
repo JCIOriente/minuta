@@ -53,14 +53,14 @@ jobs:
             echo "npm=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Node 18 is the `engines.node` floor of @jcioriente/minuta; 24 is current.
+  # Node 22 is the `engines.node` floor of @jcioriente/minuta; 24 is current.
   node:
     needs: changes
     if: needs.changes.outputs.npm == 'true'
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: ['18', '24']
+        node: ['22', '24']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

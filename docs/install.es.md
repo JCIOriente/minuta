@@ -8,7 +8,7 @@ Elige tu sistema y sigue sus pasos de arriba abajo. Luego
 
 | Necesitas | Para | ¿Obligatorio? |
 | --- | --- | --- |
-| Node.js 18 o más reciente, o Rust 1.88 o más reciente | Instalar minuta (con npm no hace falta Rust) | Siempre |
+| Node.js 22 o más reciente, o Rust 1.88 o más reciente | Instalar minuta (con npm no hace falta Rust) | Siempre |
 | `ffmpeg` y `ffprobe` | Leer, unir y convertir archivos multimedia | Siempre |
 | `whisper-cli` de whisper.cpp | Transcripción | Siempre |
 | Un modelo de whisper | Transcripción | Siempre |
@@ -23,7 +23,7 @@ abajo. Si un comando posterior dice `brew: command not found` o
 En todos los sistemas, `--locked` compila minuta con las versiones de dependencias
 con las que se probó.
 
-**Con Node.js 18 o más reciente puedes omitir Rust.** Instala ffmpeg y whisper.cpp
+**Con Node.js 22 o más reciente puedes omitir Rust.** Instala ffmpeg y whisper.cpp
 con los pasos de tu sistema, omite los pasos de Rust y de `cargo install`, y ejecuta
 esto en su lugar:
 
