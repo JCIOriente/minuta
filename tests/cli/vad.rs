@@ -28,7 +28,7 @@ fn vad_model_path_runs_whisper_with_vad() {
     let env = FakeEnv::new();
     let vad = env.path("vad.bin");
     fs::write(&vad, "vad").unwrap();
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.command(&["run", "clase-4.mp4"]);
         cmd.env("MINUTA_WHISPER_VAD_MODEL", &vad);
         cmd
@@ -80,7 +80,7 @@ fn without_vad_model_whisper_runs_without_vad() {
 #[test]
 fn vad_model_not_pulled_hints_pull() {
     let env = FakeEnv::new();
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.command(&["run", "clase-4.mp4"]);
         cmd.env("MINUTA_WHISPER_VAD_MODEL", "silero-v5.1.2");
         cmd
@@ -99,7 +99,7 @@ fn vad_model_not_pulled_hints_pull() {
 fn vad_model_missing_path_is_preflight_error() {
     let env = FakeEnv::new();
     let vad = env.path("no-such-vad.bin");
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.command(&["run", "clase-4.mp4"]);
         cmd.env("MINUTA_WHISPER_VAD_MODEL", &vad);
         cmd
@@ -119,7 +119,7 @@ fn vad_model_missing_path_is_preflight_error() {
 #[test]
 fn whisper_model_rejects_the_vad_catalog_name() {
     let env = FakeEnv::new();
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.command(&["run", "clase-4.mp4"]);
         cmd.env("MINUTA_WHISPER_MODEL", "silero-v5.1.2");
         cmd
@@ -136,7 +136,7 @@ fn whisper_model_rejects_the_vad_catalog_name() {
 #[test]
 fn vad_model_rejects_a_whisper_catalog_name() {
     let env = FakeEnv::new();
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.command(&["run", "clase-4.mp4"]);
         cmd.env("MINUTA_WHISPER_VAD_MODEL", "tiny");
         cmd
@@ -153,7 +153,7 @@ fn vad_model_rejects_a_whisper_catalog_name() {
 #[test]
 fn doctor_reports_missing_vad_model() {
     let env = FakeEnv::new();
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.command(&["doctor"]);
         cmd.env("MINUTA_WHISPER_VAD_MODEL", "silero-v5.1.2");
         cmd

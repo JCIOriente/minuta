@@ -43,7 +43,7 @@ fn doctor_reports_llm_without_affecting_exit_code() {
         stdout(&out)
     );
 
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.llm_command(&["doctor"], &fake);
         cmd.env("MINUTA_LLM", "ollama:missing:1b");
         cmd
@@ -56,7 +56,7 @@ fn doctor_reports_llm_without_affecting_exit_code() {
         stdout(&out)
     );
 
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.command(&["doctor"]);
         cmd.env("MINUTA_OLLAMA_URL", NO_OLLAMA);
         cmd
@@ -73,7 +73,7 @@ fn doctor_reports_llm_without_affecting_exit_code() {
 fn doctor_reports_codex() {
     let env = FakeEnv::new();
     let fake = ollama("unused");
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.llm_command(&["doctor"], &fake);
         cmd.env("MINUTA_LLM", "codex");
         cmd
@@ -85,7 +85,7 @@ fn doctor_reports_codex() {
         stdout(&out)
     );
 
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.llm_command(&["doctor"], &fake);
         cmd.env("MINUTA_LLM", "codex:gpt-x")
             .env("MINUTA_CODEX_BIN", "minuta-no-such-codex");

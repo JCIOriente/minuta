@@ -31,7 +31,7 @@ fn models_list_shows_catalog() {
 fn models_list_header_uses_env_models_dir() {
     let env = FakeEnv::new();
     let custom = env.path("custom-models");
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.command(&["models", "list"]);
         cmd.env("MINUTA_MODELS_DIR", &custom);
         cmd

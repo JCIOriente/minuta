@@ -217,7 +217,7 @@ exit 1"#,
 fn bare_binary_name_is_looked_up_on_path() {
     let env = FakeEnv::new();
     fs::rename(env.bin().join("ffmpeg"), env.bin().join("ffmpeg7")).unwrap();
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.command(&["run", "clase-4.mp4"]);
         cmd.env("MINUTA_FFMPEG_BIN", "ffmpeg7");
         cmd
