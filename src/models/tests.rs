@@ -16,6 +16,11 @@ mod resolve;
 
 const BODY: &[u8] = b"pretend these are model weights";
 
+/// [`pull_with_progress`] without progress reporting.
+fn pull(spec: &ModelSpec, dir: &Path) -> Result<Pulled> {
+    pull_with_progress(spec, dir, &mut |_| {})
+}
+
 fn sha(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()

@@ -312,10 +312,16 @@ mod tests {
 
     #[test]
     fn catalog_model_resolves_into_models_dir() {
-        let paths = tool_paths(&config(&[("MINUTA_WHISPER_MODEL", "base")])).unwrap();
+        let catalog_model = config(&[("MINUTA_WHISPER_MODEL", "base")]);
+        let paths = tool_paths(&catalog_model).unwrap();
         assert_eq!(
             paths.model,
-            Some(models::default_dir().unwrap().join("ggml-base.bin"))
+            Some(
+                catalog_model
+                    .models_dir_path()
+                    .unwrap()
+                    .join("ggml-base.bin")
+            )
         );
         let paths = tool_paths(&config(&[("MINUTA_WHISPER_MODEL", "/m/x.bin")])).unwrap();
         assert_eq!(paths.model, Some(PathBuf::from("/m/x.bin")));
@@ -375,11 +381,13 @@ mod tests {
 
     #[test]
     fn catalog_vad_model_resolves_into_models_dir() {
-        let path = vad_model_path(&config(&[("MINUTA_WHISPER_VAD_MODEL", "silero-v5.1.2")]));
+        let catalog_vad = config(&[("MINUTA_WHISPER_VAD_MODEL", "silero-v5.1.2")]);
+        let path = vad_model_path(&catalog_vad);
         assert_eq!(
             path.unwrap(),
             Some(
-                models::default_dir()
+                catalog_vad
+                    .models_dir_path()
                     .unwrap()
                     .join("vad")
                     .join("ggml-silero-v5.1.2.bin")

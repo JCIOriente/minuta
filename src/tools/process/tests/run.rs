@@ -15,7 +15,7 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     path
 }
 
-fn run_r(argv: &[OsString], opts: &RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<Output> {
+fn run_r(argv: &[OsString], opts: &RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<()> {
     retry_busy(|| run(argv, opts.clone(), on_line))
 }
 
@@ -42,11 +42,10 @@ fn streams_lines() {
     let dir = tempfile::tempdir().unwrap();
     let bin = script(dir.path(), "both", "echo out1\necho err1 >&2\necho out2").into_os_string();
     let mut lines = Vec::new();
-    let out = run_r(&[bin], &RunOpts::default(), &mut |l| {
+    run_r(&[bin], &RunOpts::default(), &mut |l| {
         lines.push(l.to_string())
     })
     .unwrap();
-    assert!(out.status.success());
     lines.sort();
     assert_eq!(lines, vec!["err1", "out1", "out2"]);
 }
@@ -131,11 +130,10 @@ fn invalid_utf8_line_does_not_stop_streaming() {
     )
     .into_os_string();
     let mut lines = Vec::new();
-    let out = run_r(&[bin], &RunOpts::default(), &mut |l| {
+    run_r(&[bin], &RunOpts::default(), &mut |l| {
         lines.push(l.to_string())
     })
     .unwrap();
-    assert!(out.status.success());
     // Only stdout order is fixed; stderr is read by a separate thread.
     let stdout: Vec<_> = lines.iter().filter(|l| *l != "after2").collect();
     assert_eq!(

@@ -11,13 +11,11 @@ pub mod chunk;
 pub mod claude;
 pub mod codex;
 pub mod endpoint;
-#[doc(hidden)] // Not cfg(test): integration tests in tests/ need it.
-pub mod fake;
+#[cfg(test)]
+pub(crate) mod fake;
 pub(crate) mod http;
 pub mod ollama;
 mod subprocess;
-
-pub const DEFAULT_LLM: &str = "ollama:gemma4:26b";
 
 pub trait Backend: Send + Sync {
     /// Canonical id, e.g. "ollama:gemma4:26b".
@@ -388,11 +386,6 @@ mod tests {
     fn endpoint_has_no_fixed_provider() {
         let id = "lmstudio:m".parse::<BackendId>().unwrap();
         assert_eq!(id.provider(), None);
-    }
-
-    #[test]
-    fn default_llm_parses() {
-        assert!(DEFAULT_LLM.parse::<BackendId>().is_ok());
     }
 
     #[test]

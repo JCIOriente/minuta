@@ -10,14 +10,6 @@ fn origin_github_url() {
 }
 
 #[test]
-fn origin_github_host() {
-    assert_eq!(
-        Origin::github("main").unwrap().host(),
-        "raw.githubusercontent.com"
-    );
-}
-
-#[test]
 fn origin_accepts_ref_forms() {
     for reference in [
         "main",
@@ -85,18 +77,22 @@ fn origin_new_rejects_plain_http_elsewhere_and_other_schemes() {
 #[test]
 fn origin_new_accepts_https_and_loopback_http() {
     assert_eq!(
-        Origin::new("https://example.com/t").unwrap().host(),
-        "example.com"
+        Origin::new("https://example.com/t")
+            .unwrap()
+            .url("index.toml"),
+        "https://example.com/t/index.toml"
     );
     assert_eq!(
         Origin::new("http://127.0.0.1:8080/templates")
             .unwrap()
-            .host(),
-        "127.0.0.1:8080"
+            .url("index.toml"),
+        "http://127.0.0.1:8080/templates/index.toml"
     );
     assert_eq!(
-        Origin::new("http://127.0.0.1/templates").unwrap().host(),
-        "127.0.0.1"
+        Origin::new("http://127.0.0.1/templates")
+            .unwrap()
+            .url("index.toml"),
+        "http://127.0.0.1/templates/index.toml"
     );
 }
 

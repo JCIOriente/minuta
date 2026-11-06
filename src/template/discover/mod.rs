@@ -44,7 +44,6 @@ impl Dirs {
 #[derive(Debug, Clone)]
 pub struct Invalid {
     pub path: PathBuf,
-    pub layer: Layer,
     pub error: String,
 }
 
@@ -108,7 +107,7 @@ fn load_layer(catalog: &mut Catalog, dir: &Path, layer: Layer, untrusted: bool) 
             Ok(_) => {}
             Err(e) => {
                 let error = io_err(&path, e).to_string();
-                record_invalid(catalog, path, layer, error);
+                record_invalid(catalog, path, error);
             }
         }
     }
@@ -116,11 +115,11 @@ fn load_layer(catalog: &mut Catalog, dir: &Path, layer: Layer, untrusted: bool) 
 }
 
 /// Record a broken file. It shadows any template of the same name from a lower layer.
-fn record_invalid(catalog: &mut Catalog, path: PathBuf, layer: Layer, error: String) {
+fn record_invalid(catalog: &mut Catalog, path: PathBuf, error: String) {
     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
         catalog.templates.remove(stem);
     }
-    catalog.invalid.push(Invalid { path, layer, error });
+    catalog.invalid.push(Invalid { path, error });
 }
 
 /// Read one file. Problems with the file itself go to `catalog.invalid`.
@@ -133,7 +132,7 @@ fn load_file(
 ) {
     let Some(stem) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
         let error = "file name is not valid UTF-8".to_string();
-        catalog.invalid.push(Invalid { path, layer, error });
+        catalog.invalid.push(Invalid { path, error });
         return;
     };
     let result = if dir_outside {
@@ -150,7 +149,7 @@ fn load_file(
         Ok(t) => {
             catalog.templates.insert(stem, t);
         }
-        Err(error) => record_invalid(catalog, path, layer, error),
+        Err(error) => record_invalid(catalog, path, error),
     }
 }
 

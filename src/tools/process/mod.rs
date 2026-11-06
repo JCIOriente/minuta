@@ -25,12 +25,6 @@ pub struct RunOpts {
     pub interrupt: Option<Arc<AtomicBool>>,
 }
 
-/// Result of a successful [`run`].
-#[derive(Debug, Clone, Copy)]
-pub struct Output {
-    pub status: ExitStatus,
-}
-
 /// One line of a tool's output.
 struct Piece {
     text: String,
@@ -263,7 +257,7 @@ fn wait_status_with(
 /// Run `argv[0]` with the remaining arguments (no shell), streaming each stdout and
 /// stderr line to `on_line`. A non-zero exit is `Error::Tool` carrying the last stderr
 /// lines.
-pub fn run(argv: &[OsString], opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<Output> {
+pub fn run(argv: &[OsString], opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<()> {
     let (program, args) = argv
         .split_first()
         .ok_or_else(|| Error::Usage("empty command".into()))?;
@@ -289,7 +283,7 @@ pub fn run(argv: &[OsString], opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> R
     }
     let status = wait_status(&mut child, &opts)?;
     if status.success() {
-        Ok(Output { status })
+        Ok(())
     } else {
         Err(Error::Tool {
             tool,

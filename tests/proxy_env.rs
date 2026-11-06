@@ -3,9 +3,9 @@
 
 use std::sync::{Arc, Once};
 
-use minuta::llm::{endpoint, ollama};
-use minuta::models::{self, ModelKind, ModelSpec, Pulled};
-use minuta::template::pull::{fetch_catalog, Origin};
+use minuta::testing::models::{self, ModelKind, ModelSpec, Pulled};
+use minuta::testing::{endpoint, ollama};
+use minuta::testing::{fetch_catalog, Origin};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -69,7 +69,10 @@ fn model_download_ignores_proxy_variables() {
         sha256: &sha,
         size: body.len() as u64,
     };
-    assert_eq!(models::pull(&spec, dir.path()).unwrap(), Pulled::Downloaded);
+    assert_eq!(
+        models::pull_with_progress(&spec, dir.path(), &mut |_| {}).unwrap(),
+        Pulled::Downloaded
+    );
 }
 
 #[test]

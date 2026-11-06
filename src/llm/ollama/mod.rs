@@ -106,6 +106,7 @@ impl Ollama {
     }
 
     /// Read timeout for a chat request (default 10 minutes).
+    #[cfg(test)]
     pub fn with_timeout(mut self, timeout: Duration) -> Ollama {
         self.timeout = timeout;
         self

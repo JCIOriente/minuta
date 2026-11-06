@@ -8,10 +8,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use minuta::error::Error;
-use minuta::llm::call::{call, CallCache, Policy};
-use minuta::llm::claude::{check, Claude};
-use minuta::llm::Backend;
-use minuta::tools::{run_capture, RunOpts};
+use minuta::testing::claude::{check, Claude};
+use minuta::testing::Backend;
+use minuta::testing::{call, CallCache, Policy};
+use minuta::testing::{run_capture, RunOpts};
 
 const FAKE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/claude");
 

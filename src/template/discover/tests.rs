@@ -114,7 +114,6 @@ fn invalid_file_listed_not_fatal() {
         .collect();
     files.sort();
     assert_eq!(files, ["Bad Name.md", "broken.md"]);
-    assert!(c.invalid.iter().all(|i| i.layer == Layer::Project));
     let m = usage(c.get("broken"));
     assert!(m.contains("nope"), "{m}");
 }
