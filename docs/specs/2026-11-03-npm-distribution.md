@@ -94,6 +94,11 @@ Invariants: every package version equals the `Cargo.toml` version; the main pack
 - Binary not executable: the build script sets mode 0755, and npm preserves it from the tarball; a launcher test checks the packed file mode.
 - Static Linux binaries (musl) run on glibc and musl distributions alike. minuta uses rustls (`Cargo.toml`: `ureq` with `rustls`), so no system OpenSSL is needed. Verified on 2026-11-03 (see Open questions, item 2). The TLS crypto is `ring` (`Cargo.lock`; no `aws-lc`, no `openssl-sys`), which needs a C compiler for the target, so the CI build job installs a musl C toolchain.
 - The launcher adds one Node start (tens of ms) to each run; accepted.
+- Rolling back a bad release. A published version cannot be replaced or reused, so the fix is always a new patch release:
+  - `npm deprecate '@jcioriente/minuta@<bad>' "<reason; use <fixed>>"` (maintainer only) keeps the version installable but warns anyone who installs it. It is reversible and the first thing to do. Deprecate the platform package versions too if the binary is the problem.
+  - `npm unpublish` is the last resort: it normally works only within 72 hours of publishing (npm allows a later unpublish only for packages with almost no downloads), and only if no other package depends on the version (every `@jcioriente/minuta` version depends on its four platform packages, so unpublish the main package first, then the platform ones). A version number that was unpublished can never be published again, so the fix still ships under a higher patch number.
+  - crates.io cannot delete a version either: `cargo yank --version <bad> minuta` only stops new projects from resolving to it; existing `Cargo.lock` files keep working, and `cargo yank --undo` reverses it.
+  - Order: deprecate (or yank) first, cut the fixed patch release through the normal tag, then update the deprecation message to name the fixed version.
 - Partial publish (a platform package published, the next fails): re-running the workflow must be safe. `npm publish` of an existing version fails, so the publish step skips a package whose exact version is already on the registry (`npm view <pkg>@<v> version`).
 
 ## Data & migrations
