@@ -19,11 +19,11 @@ use crate::llm::http::request_url;
 mod tests;
 
 /// Largest `index.toml` accepted.
-pub const CATALOG_CAP: u64 = 1024 * 1024;
+pub(crate) const CATALOG_CAP: u64 = 1024 * 1024;
 /// Largest template file accepted.
-pub const FILE_CAP: u64 = 256 * 1024;
+pub(crate) const FILE_CAP: u64 = 256 * 1024;
 /// Largest local file (a template, a backup source or the manifest) that is read.
-pub const LOCAL_CAP: u64 = 1024 * 1024;
+pub(crate) const LOCAL_CAP: u64 = 1024 * 1024;
 
 const GITHUB: &str = "https://raw.githubusercontent.com/JCIOriente/minuta";
 const MANIFEST_FILE: &str = ".pulled.toml";
@@ -58,7 +58,7 @@ impl Origin {
     }
 
     /// The repository's `templates/` folder at `reference` (a branch, tag or commit).
-    pub fn github(reference: &str) -> Result<Origin> {
+    pub(crate) fn github(reference: &str) -> Result<Origin> {
         if !valid_ref(reference) {
             return Err(Error::Usage(format!(
                 "invalid ref {reference:?} (use letters, digits, '.', '_', '-' and '/')"
@@ -67,7 +67,7 @@ impl Origin {
         Origin::new(&format!("{GITHUB}/{reference}/templates"))
     }
 
-    pub fn url(&self, file: &str) -> String {
+    pub(crate) fn url(&self, file: &str) -> String {
         format!("{}/{file}", self.base)
     }
 }
@@ -183,7 +183,7 @@ pub fn fetch_catalog(origin: &Origin) -> Result<Catalog> {
     Catalog::parse(&text)
 }
 
-pub fn fetch_file(origin: &Origin, entry: &Entry) -> Result<Vec<u8>> {
+pub(crate) fn fetch_file(origin: &Origin, entry: &Entry) -> Result<Vec<u8>> {
     check_name(&entry.name)?;
     get(&origin.url(&format!("{}.md", entry.name)), FILE_CAP)
 }
@@ -202,7 +202,7 @@ fn check_name(name: &str) -> Result<()> {
 /// Reads `<dest>/.pulled.toml`. A missing file (or folder) is an empty manifest. A file that
 /// cannot be trusted is an empty manifest plus a warning (see `Manifest::parse`). A file that
 /// cannot be read, or a symlink, is an error.
-pub fn read_manifest(dest: &Path) -> Result<(Manifest, Option<String>)> {
+pub(crate) fn read_manifest(dest: &Path) -> Result<(Manifest, Option<String>)> {
     let path = dest.join(MANIFEST_FILE);
     match fs::symlink_metadata(&path) {
         Ok(meta) if meta.file_type().is_symlink() => return Err(symlink_error(&path)),
@@ -218,7 +218,7 @@ pub fn read_manifest(dest: &Path) -> Result<(Manifest, Option<String>)> {
 
 /// One selected template and what is already in the destination folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Item<'a> {
+pub(crate) struct Item<'a> {
     pub entry: &'a Entry,
     pub path: PathBuf,
     pub state: State,
@@ -228,7 +228,7 @@ pub struct Item<'a> {
 /// nothing. The folder may be missing (everything is then new); a symlink or a file where
 /// the folder should be is an error, and so is a symlink or a folder where a template
 /// should be.
-pub fn plan<'a>(
+pub(crate) fn plan<'a>(
     dest: &Path,
     selection: &[&'a Entry],
     manifest: &Manifest,
@@ -272,7 +272,7 @@ fn local_hash(path: &Path) -> Result<Option<String>> {
 
 /// What happened to one template.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Outcome {
+pub(crate) enum Outcome {
     /// Written for the first time.
     Created,
     /// Replaced by a newer version of a file minuta had written and nobody had edited.
@@ -286,7 +286,7 @@ pub enum Outcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Done {
+pub(crate) struct Done {
     pub name: String,
     pub path: PathBuf,
     pub outcome: Outcome,
@@ -294,7 +294,7 @@ pub struct Done {
 
 /// What `apply` does with a template in `state`: the one place that decides which files are
 /// written, so the prompt can promise exactly that.
-pub fn outcome_for(state: State, force: bool) -> Outcome {
+pub(crate) fn outcome_for(state: State, force: bool) -> Outcome {
     match (state, force) {
         (State::New, _) => Outcome::Created,
         (State::UpdateAvailable, _) => Outcome::Updated,
@@ -310,7 +310,7 @@ pub fn outcome_for(state: State, force: bool) -> Outcome {
 /// failure before the writes leaves the folder untouched. Each write is a temp file plus a
 /// rename, so no half file appears. `manifest` gets an entry for every file written, and
 /// `.pulled.toml` is rewritten after the files, only when something was written.
-pub fn apply(
+pub(crate) fn apply(
     dest: &Path,
     items: &[Item<'_>],
     force: bool,

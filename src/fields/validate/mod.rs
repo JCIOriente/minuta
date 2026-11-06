@@ -6,7 +6,7 @@ use super::{Field, FieldSpec, FieldsSpec, Kind, Value, Values, Violation};
 
 /// `answer` is already cleaned by `call::clean`. All violations in one pass, in field order.
 /// Filled fields are not part of the answer: a missing key is fine, a present one is ignored.
-pub fn parse_answer(answer: &str, spec: &FieldsSpec) -> Result<Values, Vec<Violation>> {
+pub(crate) fn parse_answer(answer: &str, spec: &FieldsSpec) -> Result<Values, Vec<Violation>> {
     let object = parse_object(answer).map_err(|message| {
         vec![Violation(format!(
             "the answer is not a JSON object ({message})"

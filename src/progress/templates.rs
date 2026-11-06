@@ -10,14 +10,14 @@ use super::Mode;
 /// Shows the download of the template files of one `templates pull`. On an interactive
 /// terminal a count bar (`done/total`, current template) is drawn on stderr; in plain mode
 /// and in `--quiet` nothing is drawn. Only the files that will be downloaded are counted.
-pub struct TemplatesReport {
+pub(crate) struct TemplatesReport {
     mode: Mode,
     total: u64,
     bar: Option<ProgressBar>,
 }
 
 impl TemplatesReport {
-    pub fn new(mode: Mode, total: usize) -> TemplatesReport {
+    pub(crate) fn new(mode: Mode, total: usize) -> TemplatesReport {
         TemplatesReport {
             mode,
             total: total as u64,
@@ -27,7 +27,7 @@ impl TemplatesReport {
 
     /// A fetch of template `name` starts. The first call creates the bar on an interactive
     /// terminal, when there is something to fetch.
-    pub fn fetching(&mut self, name: &str) {
+    pub(crate) fn fetching(&mut self, name: &str) {
         if self.mode != Mode::Live || self.total == 0 {
             return;
         }
@@ -46,7 +46,7 @@ impl TemplatesReport {
     }
 
     /// The fetch started last is done.
-    pub fn fetched(&mut self) {
+    pub(crate) fn fetched(&mut self) {
         if let Some(bar) = &self.bar {
             bar.inc(1);
         }
@@ -63,7 +63,7 @@ impl TemplatesReport {
     }
 
     /// Removes the bar, so the lines that follow (results or an error) print cleanly.
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         if let Some(bar) = self.bar.take() {
             bar.finish_and_clear();
         }

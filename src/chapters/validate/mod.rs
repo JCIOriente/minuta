@@ -20,7 +20,7 @@ use snap::snap;
 /// `answer` is already cleaned by `call::clean`. `end` = last segment end, floored. Snaps, then
 /// checks the rules; all violations in one pass, in the spec's order. With no segments there is
 /// nothing to snap to: the starts stay as parsed (the first one still becomes 0).
-pub fn parse_answer(
+pub(crate) fn parse_answer(
     answer: &str,
     segments: &[Segment],
     end: u64,

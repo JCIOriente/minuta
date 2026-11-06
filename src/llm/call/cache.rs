@@ -30,7 +30,7 @@ impl CallCache {
 
     /// The folder holding the cached entries.
     #[cfg(test)]
-    pub fn dir(&self) -> &Path {
+    pub(crate) fn dir(&self) -> &Path {
         &self.dir
     }
 
@@ -82,7 +82,7 @@ impl CallCache {
 
     /// Removes leftover `*.tmp` files in `llm-cache`; call only when no calls are in flight
     /// (at the start of a run). A missing cache dir is fine.
-    pub fn clean_tmp(&self) -> Result<()> {
+    pub(crate) fn clean_tmp(&self) -> Result<()> {
         for dir in self.dir.ancestors().take(2) {
             reject_symlinked_tier(dir)?;
         }

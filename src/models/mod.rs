@@ -11,10 +11,11 @@ use std::time::Duration;
 mod tests;
 
 /// Where whisper model files are downloaded from.
-pub const WHISPER_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
+pub(crate) const WHISPER_BASE_URL: &str =
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 
 /// Where the Silero VAD model files for `whisper-cli --vad-model` are downloaded from.
-pub const VAD_BASE_URL: &str = "https://huggingface.co/ggml-org/whisper-vad/resolve/main";
+pub(crate) const VAD_BASE_URL: &str = "https://huggingface.co/ggml-org/whisper-vad/resolve/main";
 
 /// What a catalog entry is for: `whisper.model` or `whisper.vad_model`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +37,7 @@ pub struct ModelSpec<'a> {
 
 impl ModelSpec<'_> {
     /// Where [`pull_with_progress`] downloads the file from.
-    pub fn url(&self) -> String {
+    pub(crate) fn url(&self) -> String {
         format!("{}/{}", self.base_url.trim_end_matches('/'), self.file)
     }
 }
@@ -45,7 +46,7 @@ impl ModelSpec<'_> {
 // e.g. https://huggingface.co/ggerganov/whisper.cpp/raw/main/ggml-small.bin or
 // https://huggingface.co/ggml-org/whisper-vad/raw/main/ggml-silero-v5.1.2.bin
 // (`oid sha256:...` and `size`).
-pub const CATALOG: &[ModelSpec<'static>] = &[
+pub(crate) const CATALOG: &[ModelSpec<'static>] = &[
     ModelSpec {
         name: "tiny",
         file: "ggml-tiny.bin",
@@ -98,7 +99,7 @@ pub const CATALOG: &[ModelSpec<'static>] = &[
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelInfo {
+pub(crate) struct ModelInfo {
     pub name: String,
     pub installed: bool,
     /// Size on disk when installed, otherwise the download size.
@@ -127,7 +128,7 @@ fn path_in(spec: &ModelSpec, dir: &Path) -> PathBuf {
 
 /// A catalog name resolves into `dir`, even when a file of that name exists in the working
 /// directory; any other existing file is used as is.
-pub fn resolve(name_or_path: &str, dir: &Path) -> Result<PathBuf> {
+pub(crate) fn resolve(name_or_path: &str, dir: &Path) -> Result<PathBuf> {
     if let Some(m) = CATALOG.iter().find(|m| m.name == name_or_path) {
         return Ok(path_in(m, dir));
     }
@@ -147,7 +148,7 @@ pub fn resolve(name_or_path: &str, dir: &Path) -> Result<PathBuf> {
 
 /// Every catalog entry and whether it is in `dir`. A missing file, or a path that is not a
 /// file, is "not installed"; any other metadata error is returned, naming the path.
-pub fn list(dir: &Path) -> Result<Vec<ModelInfo>> {
+pub(crate) fn list(dir: &Path) -> Result<Vec<ModelInfo>> {
     CATALOG
         .iter()
         .map(|m| {

@@ -12,7 +12,7 @@ use crate::tools::{run, RunOpts, ToolInfo};
 
 /// The first video stream of a source.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VideoStream {
+pub(crate) struct VideoStream {
     pub codec: String,
     pub width: u32,
     pub height: u32,
@@ -22,7 +22,7 @@ pub struct VideoStream {
 
 /// The first audio stream of a source.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AudioStream {
+pub(crate) struct AudioStream {
     pub codec: String,
     pub sample_rate: u32,
     pub channels: u32,
@@ -30,7 +30,7 @@ pub struct AudioStream {
 
 /// What ffprobe found in one source.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SourceProbe {
+pub(crate) struct SourceProbe {
     pub path: PathBuf,
     /// Seconds.
     pub duration: f64,
@@ -40,7 +40,7 @@ pub struct SourceProbe {
 }
 
 /// Reads `probe.json` from a job folder: one entry per source, in join order.
-pub fn read_probe(dir: &Path) -> Result<Vec<SourceProbe>> {
+pub(crate) fn read_probe(dir: &Path) -> Result<Vec<SourceProbe>> {
     let file = layout::probe_file(dir);
     let text = fs::read_to_string(&file)?;
     serde_json::from_str(&text).map_err(|e| Error::Parse(format!("{}: {e}", file.display())))
@@ -49,12 +49,12 @@ pub fn read_probe(dir: &Path) -> Result<Vec<SourceProbe>> {
 /// Probes every source with ffprobe and writes `probe.json`. A source without an audio
 /// stream is an `Error::Job`.
 #[derive(Debug, Clone)]
-pub struct Probe {
+pub(crate) struct Probe {
     ffprobe: ToolInfo,
 }
 
 impl Probe {
-    pub fn new(ffprobe: ToolInfo) -> Self {
+    pub(crate) fn new(ffprobe: ToolInfo) -> Self {
         Probe { ffprobe }
     }
 
@@ -86,7 +86,12 @@ impl Probe {
     /// Probes every source and writes `probe.json`, passing every ffprobe line to `on_line`
     /// and stopping with `Error::Interrupted` when `opts.interrupt` is set. The runner uses
     /// this; [`Step::run`] is the same without progress or interrupt.
-    pub fn run_with(&self, ctx: &Ctx, opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<()> {
+    pub(crate) fn run_with(
+        &self,
+        ctx: &Ctx,
+        opts: RunOpts,
+        on_line: &mut dyn FnMut(&str),
+    ) -> Result<()> {
         let probes = ctx
             .sources
             .iter()

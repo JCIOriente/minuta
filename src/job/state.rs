@@ -14,12 +14,12 @@ use crate::error::{Error, Result};
 
 /// The only `job.json` version this build reads and writes. Other versions are rejected,
 /// never migrated (ADR-0003).
-pub const VERSION: u32 = 1;
+pub(crate) const VERSION: u32 = 1;
 
 /// A pipeline step. The order of the variants is the pipeline order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum StepName {
+pub(crate) enum StepName {
     Probe,
     Join,
     Audio,
@@ -29,7 +29,7 @@ pub enum StepName {
 
 impl StepName {
     /// Every step, in pipeline order.
-    pub const ALL: [StepName; 5] = [
+    pub(crate) const ALL: [StepName; 5] = [
         StepName::Probe,
         StepName::Join,
         StepName::Audio,
@@ -37,7 +37,7 @@ impl StepName {
         StepName::Outputs,
     ];
 
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             StepName::Probe => "probe",
             StepName::Join => "join",
@@ -72,7 +72,7 @@ impl FromStr for StepName {
 /// Whether a step's recorded result can be reused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Status {
+pub(crate) enum Status {
     /// Finished; every artifact in `artifacts` existed when this was written.
     Done,
     /// Must run again; `reason` says why.
@@ -84,7 +84,7 @@ pub enum Status {
 /// run. [`JobState::load`] rejects any other combination. (The fields stay public and
 /// independent rather than an enum because the runner and staleness checks read them directly.)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StepState {
+pub(crate) struct StepState {
     pub status: Status,
     pub fingerprint: Option<String>,
     pub seconds: Option<f64>,
@@ -125,7 +125,7 @@ impl StepState {
 /// One source file as last seen: `mtime` is nanoseconds since the Unix epoch and `hash` is
 /// the SHA-256 of its content.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Source {
+pub(crate) struct Source {
     pub path: PathBuf,
     pub size: u64,
     pub mtime: u64,
@@ -135,7 +135,7 @@ pub struct Source {
 /// The contents of `job.json`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct JobState {
+pub(crate) struct JobState {
     pub version: u32,
     pub name: String,
     pub sources: Vec<Source>,
@@ -146,7 +146,7 @@ pub struct JobState {
 }
 
 impl JobState {
-    pub fn new(name: &str) -> Self {
+    pub(crate) fn new(name: &str) -> Self {
         JobState {
             version: VERSION,
             name: name.to_owned(),
@@ -159,7 +159,7 @@ impl JobState {
     /// Reads `job.json`, rejecting any version other than [`VERSION`], unknown top-level fields
     /// and step or template states no `Job` writes (see [`StepState`]), including artifact
     /// paths that are absolute or climb out of the job folder.
-    pub fn load(path: &Path) -> Result<Self> {
+    pub(crate) fn load(path: &Path) -> Result<Self> {
         let invalid = |e: serde_json::Error| Error::Job(format!("invalid {}: {e}", path.display()));
         let value: Value = serde_json::from_slice(&fs::read(path)?).map_err(invalid)?;
         let version = value.get("version").cloned().unwrap_or(Value::Null);
@@ -188,7 +188,7 @@ impl JobState {
     }
 
     /// Writes `job.json` atomically.
-    pub fn save(&self, path: &Path) -> Result<()> {
+    pub(crate) fn save(&self, path: &Path) -> Result<()> {
         let json = serde_json::to_vec_pretty(self)
             .map_err(|e| Error::Job(format!("cannot serialize {}: {e}", path.display())))?;
         write_atomic(path, |tmp| Ok(fs::write(tmp, json)?))

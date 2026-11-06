@@ -1,10 +1,10 @@
 //! Template files, frontmatter and variables.
 
-pub mod catalog;
-pub mod discover;
-pub mod graph;
-pub mod pull;
-pub mod pull_cmd;
+pub(crate) mod catalog;
+pub(crate) mod discover;
+pub(crate) mod graph;
+pub(crate) mod pull;
+pub(crate) mod pull_cmd;
 #[cfg(test)]
 mod tests;
 
@@ -20,7 +20,7 @@ use crate::llm::BackendId;
 
 /// Which layer a template came from; a later layer replaces an earlier one by name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Layer {
+pub(crate) enum Layer {
     BuiltIn,
     User,
     Project,
@@ -28,21 +28,21 @@ pub enum Layer {
 
 /// What a template reads: the transcript or the output of another template.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Input {
+pub(crate) enum Input {
     Transcript,
     Template(String),
 }
 
 /// What a template produces: free Markdown, a set of structured fields or chapters.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Output {
+pub(crate) enum Output {
     Markdown,
     Fields(FieldsSpec),
     Chapters(ChaptersSpec),
 }
 
 #[derive(Debug, Clone)]
-pub struct Template {
+pub(crate) struct Template {
     pub name: String,
     pub layer: Layer,
     /// `None` for built-in templates.
@@ -59,7 +59,7 @@ pub struct Template {
 
 /// Values for the template variables.
 #[derive(Debug, Clone)]
-pub struct Vars {
+pub(crate) struct Vars {
     pub output_lang: String,
     pub output_lang_code: String,
     pub speech_lang: String,
@@ -67,7 +67,7 @@ pub struct Vars {
     pub duration: String,
 }
 
-pub const VARIABLES: [&str; 5] = [
+pub(crate) const VARIABLES: [&str; 5] = [
     "output_lang",
     "output_lang_code",
     "speech_lang",
@@ -323,7 +323,12 @@ fn chapters_spec(fm: &Frontmatter) -> std::result::Result<ChaptersSpec, String> 
 
 impl Template {
     /// Parse a template file. Every problem is a usage error naming the template.
-    pub fn parse(name: &str, layer: Layer, path: Option<PathBuf>, text: &str) -> Result<Template> {
+    pub(crate) fn parse(
+        name: &str,
+        layer: Layer,
+        path: Option<PathBuf>,
+        text: &str,
+    ) -> Result<Template> {
         let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         let fail = |msg: String| Error::Usage(format!("template {name}: {msg}"));
         let place = path
@@ -439,7 +444,7 @@ impl Template {
     }
 
     /// Substitute the variables in the body.
-    pub fn render(&self, vars: &Vars) -> String {
+    pub(crate) fn render(&self, vars: &Vars) -> String {
         expand(&self.body, |v| match v {
             "output_lang" => vars.output_lang.clone(),
             "output_lang_code" => vars.output_lang_code.clone(),

@@ -10,7 +10,7 @@ use crate::models::Pulled;
 use super::Mode;
 
 /// A model size as `141.1 MiB` or `2.9 GiB`.
-pub fn human_size(bytes: u64) -> String {
+pub(crate) fn human_size(bytes: u64) -> String {
     const MIB: f64 = 1024.0 * 1024.0;
     let mib = bytes as f64 / MIB;
     if mib < 1024.0 {
@@ -21,7 +21,7 @@ pub fn human_size(bytes: u64) -> String {
 }
 
 /// The plain start line of a model download.
-pub fn pull_start_line(name: &str, total: u64, dir: &Path) -> String {
+pub(crate) fn pull_start_line(name: &str, total: u64, dir: &Path) -> String {
     format!(
         "pulling {name} ({}) into {}",
         human_size(total),
@@ -30,7 +30,7 @@ pub fn pull_start_line(name: &str, total: u64, dir: &Path) -> String {
 }
 
 /// The plain finish line of a model download.
-pub fn pull_finish_line(name: &str, outcome: Pulled) -> String {
+pub(crate) fn pull_finish_line(name: &str, outcome: Pulled) -> String {
     match outcome {
         Pulled::AlreadyPresent => format!("{name} is already present"),
         Pulled::Downloaded => format!("{name} downloaded and verified"),
@@ -40,7 +40,7 @@ pub fn pull_finish_line(name: &str, outcome: Pulled) -> String {
 /// Shows one model download. On an interactive terminal a byte bar (percent, rate, ETA)
 /// appears once bytes arrive; otherwise one start line and one finish line. An already
 /// present model prints its finish line in both modes. `--quiet` shows nothing.
-pub struct PullReport {
+pub(crate) struct PullReport {
     mode: Mode,
     name: String,
     total: u64,
@@ -51,7 +51,7 @@ pub struct PullReport {
 }
 
 impl PullReport {
-    pub fn new(mode: Mode) -> PullReport {
+    pub(crate) fn new(mode: Mode) -> PullReport {
         PullReport {
             mode,
             name: String::new(),
@@ -71,7 +71,7 @@ impl PullReport {
     }
 
     /// Starts the download of `total` bytes into `dir`. Plain mode prints the start line now.
-    pub fn start(&mut self, name: &str, total: u64, dir: &Path) {
+    pub(crate) fn start(&mut self, name: &str, total: u64, dir: &Path) {
         self.name = name.to_string();
         self.total = total;
         if self.mode == Mode::Plain {
@@ -81,7 +81,7 @@ impl PullReport {
 
     /// The running byte count, from the download's callback. The first call creates the bar
     /// on an interactive terminal.
-    pub fn progress(&mut self, done: u64) {
+    pub(crate) fn progress(&mut self, done: u64) {
         if self.mode != Mode::Live {
             return;
         }
@@ -101,7 +101,7 @@ impl PullReport {
 
     /// The download is verified and in place. A bar that was drawn is cleared; otherwise
     /// (plain mode, or a model that was already present) the finish line prints.
-    pub fn finish(&mut self, name: &str, outcome: Pulled) {
+    pub(crate) fn finish(&mut self, name: &str, outcome: Pulled) {
         match self.bar.take() {
             Some(bar) => bar.finish_and_clear(),
             None => self.print(pull_finish_line(name, outcome)),
@@ -109,7 +109,7 @@ impl PullReport {
     }
 
     /// The download failed: clears the bar so the error prints on a clean line.
-    pub fn abandon(&mut self) {
+    pub(crate) fn abandon(&mut self) {
         if let Some(bar) = self.bar.take() {
             bar.finish_and_clear();
         }

@@ -12,7 +12,7 @@ mod file;
 mod tests;
 
 use endpoint::endpoint;
-pub use endpoint::Endpoint;
+pub(crate) use endpoint::Endpoint;
 use file::{read_file, FileConfig, Scalar};
 
 const DEFAULT_OUT_DIR: &str = "./minuta-out";
@@ -47,7 +47,7 @@ const ENV_NAMES: [&str; 19] = [
 
 /// Where a resolved value came from, highest precedence first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Source {
+pub(crate) enum Source {
     Flag,
     Env,
     File,
@@ -56,14 +56,14 @@ pub enum Source {
 
 /// A resolved value and the layer it was taken from.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Setting {
+pub(crate) struct Setting {
     pub value: String,
     pub source: Source,
 }
 
 /// Values given on the command line. `None` means the flag was not passed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Overrides {
+pub(crate) struct Overrides {
     pub out_dir: Option<String>,
     pub whisper_bin: Option<String>,
     pub whisper_model: Option<String>,
@@ -76,7 +76,7 @@ pub struct Overrides {
 
 /// The merged configuration, with the file it was read from (if resolved).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Config {
+pub(crate) struct Config {
     pub path: Option<PathBuf>,
     pub out_dir: Setting,
     pub whisper_bin: Setting,
@@ -106,18 +106,20 @@ pub struct Config {
 }
 
 /// Default config location: `~/.minuta/config.toml`.
-pub fn default_path() -> Option<PathBuf> {
+pub(crate) fn default_path() -> Option<PathBuf> {
     directories::BaseDirs::new().map(|dirs| default_path_in(dirs.home_dir()))
 }
 
 /// The default config file under `home`: `<home>/.minuta/config.toml`.
-pub fn default_path_in(home: &Path) -> PathBuf {
+pub(crate) fn default_path_in(home: &Path) -> PathBuf {
     home.join(".minuta/config.toml")
 }
 
 /// Read every `MINUTA_*` variable up front. A non-UTF-8 value is `Error::Config`
 /// naming the variable; an unset one is simply absent from the map.
-pub fn env_snapshot(read: &dyn Fn(&str) -> Option<OsString>) -> Result<HashMap<String, String>> {
+pub(crate) fn env_snapshot(
+    read: &dyn Fn(&str) -> Option<OsString>,
+) -> Result<HashMap<String, String>> {
     let mut vars = HashMap::new();
     for name in ENV_NAMES {
         if let Some(raw) = read(name) {
@@ -138,13 +140,16 @@ fn env_config_path(env: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
 }
 
 /// The config file path: `MINUTA_CONFIG` if set, else the default. Does not read the file.
-pub fn resolve_path(env: &dyn Fn(&str) -> Option<String>, file: Option<&Path>) -> Option<PathBuf> {
+pub(crate) fn resolve_path(
+    env: &dyn Fn(&str) -> Option<String>,
+    file: Option<&Path>,
+) -> Option<PathBuf> {
     env_config_path(env).or_else(|| file.map(Path::to_path_buf))
 }
 
 impl Config {
     /// Resolve the config using the real process environment and default path.
-    pub fn load(flags: Overrides) -> Result<Config> {
+    pub(crate) fn load(flags: Overrides) -> Result<Config> {
         let default = default_path();
         let vars = env_snapshot(&|k| std::env::var_os(k))?;
         Config::resolve(flags, &|k| vars.get(k).cloned(), default.as_deref())
@@ -157,7 +162,7 @@ impl Config {
     /// yields defaults. A malformed file is `Error::Config`; an unreadable one is
     /// `Error::ConfigIo`.
     /// Empty values count as unset.
-    pub fn resolve(
+    pub(crate) fn resolve(
         flags: Overrides,
         env: &dyn Fn(&str) -> Option<String>,
         file: Option<&Path>,
@@ -294,27 +299,27 @@ impl Config {
     }
 
     /// Retry attempts in total, including the first. Valid by `check_numbers`.
-    pub fn retries(&self) -> u32 {
+    pub(crate) fn retries(&self) -> u32 {
         parse_checked(&self.llm_retries)
     }
 
     /// Initial delay between attempts; doubles after each failed attempt.
-    pub fn backoff(&self) -> Duration {
+    pub(crate) fn backoff(&self) -> Duration {
         Duration::from_millis(parse_checked(&self.llm_backoff_ms))
     }
 
     /// Repair calls after a final answer breaks a limit; 0 disables repairs. Valid by `check_numbers`.
-    pub fn repairs(&self) -> u32 {
+    pub(crate) fn repairs(&self) -> u32 {
         parse_checked(&self.llm_repairs)
     }
 
     /// Context window requested from Ollama, in tokens.
-    pub fn num_ctx(&self) -> usize {
+    pub(crate) fn num_ctx(&self) -> usize {
         parse_checked(&self.ollama_num_ctx)
     }
 
     /// The endpoint called `name`. A missing one is a usage error showing what to add.
-    pub fn endpoint(&self, name: &str) -> Result<&Endpoint> {
+    pub(crate) fn endpoint(&self, name: &str) -> Result<&Endpoint> {
         self.endpoints.get(name).ok_or_else(|| {
             Error::Usage(format!(
                 "unknown endpoint {name:?}; add it to the config file (`minuta config path`):\n  \
@@ -325,18 +330,18 @@ impl Config {
     }
 
     /// Parallel LLM calls, or `None` to let the backend decide.
-    pub fn concurrency(&self) -> Option<usize> {
+    pub(crate) fn concurrency(&self) -> Option<usize> {
         self.llm_concurrency.as_ref().map(parse_checked)
     }
 
     /// The models directory with a leading `~` expanded against the home directory.
-    pub fn models_dir_path(&self) -> Result<PathBuf> {
+    pub(crate) fn models_dir_path(&self) -> Result<PathBuf> {
         let home = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf());
         expand_tilde(&self.models_dir.value, home.as_deref())
     }
 
     /// Every key with its resolved setting in documented order; `None` means unset.
-    pub fn entries(&self) -> Vec<(&'static str, Option<&Setting>)> {
+    pub(crate) fn entries(&self) -> Vec<(&'static str, Option<&Setting>)> {
         vec![
             ("out_dir", Some(&self.out_dir)),
             ("whisper.bin", Some(&self.whisper_bin)),
@@ -360,7 +365,7 @@ impl Config {
     }
 
     /// Every key of every endpoint by endpoint name; `None` means unset.
-    pub fn endpoint_entries(&self) -> Vec<(String, Option<&Setting>)> {
+    pub(crate) fn endpoint_entries(&self) -> Vec<(String, Option<&Setting>)> {
         let mut entries = Vec::new();
         for (name, endpoint) in &self.endpoints {
             for (key, setting) in [
@@ -378,7 +383,7 @@ impl Config {
 
 /// Expands a leading `~` or `~/` against `home`. Any other value is returned as written,
 /// including relative paths. A `~` with no home directory is `Error::Config` naming the key.
-pub fn expand_tilde(value: &str, home: Option<&Path>) -> Result<PathBuf> {
+pub(crate) fn expand_tilde(value: &str, home: Option<&Path>) -> Result<PathBuf> {
     let rest = if value == "~" {
         Some("")
     } else {

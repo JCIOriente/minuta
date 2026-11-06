@@ -6,15 +6,15 @@ use std::sync::atomic::AtomicBool;
 
 use crate::error::{Error, Result};
 
-pub mod call;
-pub mod chunk;
-pub mod claude;
-pub mod codex;
-pub mod endpoint;
+pub(crate) mod call;
+pub(crate) mod chunk;
+pub(crate) mod claude;
+pub(crate) mod codex;
+pub(crate) mod endpoint;
 #[cfg(test)]
 pub(crate) mod fake;
 pub(crate) mod http;
-pub mod ollama;
+pub(crate) mod ollama;
 mod subprocess;
 
 pub trait Backend: Send + Sync {
@@ -38,7 +38,7 @@ pub trait Backend: Send + Sync {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BackendId {
+pub(crate) enum BackendId {
     Ollama {
         model: String,
     },
@@ -59,10 +59,10 @@ const VALID_FORMS: &str =
     "valid forms: ollama:<model>, claude, claude:<model>, codex, codex:<model>, <endpoint>:<model>";
 
 /// Backend names an endpoint may not take: `ollama:m` must keep meaning the Ollama backend.
-pub const RESERVED_ENDPOINT_NAMES: [&str; 3] = ["ollama", "claude", "codex"];
+pub(crate) const RESERVED_ENDPOINT_NAMES: [&str; 3] = ["ollama", "claude", "codex"];
 
 /// Endpoint names come from the config and from untrusted template frontmatter.
-pub fn is_endpoint_name(name: &str) -> bool {
+pub(crate) fn is_endpoint_name(name: &str) -> bool {
     name.starts_with(|c: char| c.is_ascii_lowercase())
         && name
             .chars()
@@ -130,7 +130,7 @@ impl fmt::Display for BackendId {
 impl BackendId {
     /// True when transcripts leave this machine. An endpoint counts until its URL says
     /// otherwise, which only the config knows: see `Endpoint::is_local`.
-    pub fn sends_off_machine(&self) -> bool {
+    pub(crate) fn sends_off_machine(&self) -> bool {
         match self {
             BackendId::Ollama { .. } => false,
             BackendId::Claude { .. } | BackendId::Codex { .. } | BackendId::Endpoint { .. } => true,
@@ -138,7 +138,7 @@ impl BackendId {
     }
 
     /// The company that receives the transcript, for backends that send it off this machine.
-    pub fn provider(&self) -> Option<&'static str> {
+    pub(crate) fn provider(&self) -> Option<&'static str> {
         match self {
             BackendId::Ollama { .. } | BackendId::Endpoint { .. } => None,
             BackendId::Claude { .. } => Some("Anthropic"),

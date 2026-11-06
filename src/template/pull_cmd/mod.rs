@@ -21,7 +21,7 @@ use render::{file_name, md, numbered, prompt_note, result_text, table};
 
 /// Which templates to download.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Choice {
+pub(crate) enum Choice {
     Names(Vec<String>),
     All,
     Filter(String),
@@ -29,7 +29,7 @@ pub enum Choice {
     Ask,
 }
 
-pub struct Options<'a> {
+pub(crate) struct Options<'a> {
     pub choice: Choice,
     /// Print the catalog with each template's state and download nothing.
     pub list: bool,
@@ -46,7 +46,7 @@ pub struct Options<'a> {
     pub mode: Mode,
 }
 
-pub struct Terminal<'a> {
+pub(crate) struct Terminal<'a> {
     /// Whether a person can answer prompts (stdin and stderr are terminals).
     pub interactive: bool,
     pub input: &'a mut dyn BufRead,
@@ -54,7 +54,7 @@ pub struct Terminal<'a> {
     pub stderr: &'a mut dyn Write,
 }
 
-pub fn run(origin: &Origin, options: &Options<'_>, term: &mut Terminal<'_>) -> Result<()> {
+pub(crate) fn run(origin: &Origin, options: &Options<'_>, term: &mut Terminal<'_>) -> Result<()> {
     // Refuse before any request when nobody can answer.
     if !options.list {
         if options.choice == Choice::Ask && !term.interactive {
@@ -256,7 +256,7 @@ fn in_destination(dest: &Path, name: &str, term: &mut Terminal<'_>) -> Result<bo
 
 /// Reads an answer to the numbered list: numbers (1-based, separated by commas or spaces),
 /// `a` or `all`, or nothing. Returns 0-based indexes in the order given, without repeats.
-pub fn parse_choice(line: &str, count: usize) -> Result<Vec<usize>> {
+pub(crate) fn parse_choice(line: &str, count: usize) -> Result<Vec<usize>> {
     let tokens: Vec<&str> = line
         .split(|c: char| c == ',' || c.is_whitespace())
         .filter(|t| !t.is_empty())

@@ -13,17 +13,17 @@ use crate::transcript::{from_whisper_json, Transcript};
 
 /// Artifact written by this step, relative to the job folder. Prefer
 /// [`layout::transcript_json`]; this stays for callers that join it to the job folder.
-pub const TRANSCRIPT_FILE: &str = "assets/transcript.json";
+pub(crate) const TRANSCRIPT_FILE: &str = "assets/transcript.json";
 
 /// What a successful transcription reports besides its artifact.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TranscribeOutcome {
+pub(crate) struct TranscribeOutcome {
     /// Human-readable warnings, e.g. when no speech was found. The artifact is still written.
     pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Transcribe {
+pub(crate) struct Transcribe {
     whisper: ToolInfo,
     model: PathBuf,
     lang: String,
@@ -34,7 +34,7 @@ impl Transcribe {
     /// `lang` is a whisper language code or `auto`. `vad_model` enables voice activity
     /// detection (`--vad -vm <path>`; whisper-cli's `--vad` needs a model). The runner passes
     /// the resolved `whisper.vad_model`; `None` (no VAD model configured) runs without VAD.
-    pub fn new(
+    pub(crate) fn new(
         whisper: ToolInfo,
         model: PathBuf,
         lang: impl Into<String>,
@@ -52,7 +52,7 @@ impl Transcribe {
     /// `opts.interrupt`. Zero segments is not an error: the empty transcript is written and
     /// a warning is returned in the outcome. On any failure no `transcript.json` is written
     /// and whisper's raw file is removed.
-    pub fn run_with(
+    pub(crate) fn run_with(
         &self,
         ctx: &Ctx,
         opts: RunOpts,

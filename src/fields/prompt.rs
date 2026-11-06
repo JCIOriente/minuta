@@ -15,7 +15,7 @@ const KEYS_SENTENCE: &str =
 
 /// The fields block of the final and repair system prompts (no language instruction). Filled
 /// fields are left out.
-pub fn fields_block(spec: &FieldsSpec) -> String {
+pub(crate) fn fields_block(spec: &FieldsSpec) -> String {
     let mut lines = vec![BLOCK_INTRO.to_string()];
     lines.extend(spec.fields.iter().filter_map(field_line));
     let format_sentence = match spec.format {
@@ -65,7 +65,7 @@ fn limit_sentence(spec: &FieldSpec) -> Option<String> {
 }
 
 /// System prompt of a repair call; the language instruction is last.
-pub fn repair_system(spec: &FieldsSpec, output_lang: &str) -> String {
+pub(crate) fn repair_system(spec: &FieldsSpec, output_lang: &str) -> String {
     format!(
         "{REPAIR_INTRO}\n\n{}\n\n{}",
         fields_block(spec),
@@ -74,7 +74,7 @@ pub fn repair_system(spec: &FieldsSpec, output_lang: &str) -> String {
 }
 
 /// User message of a repair call: the previous answer and what is wrong with it.
-pub fn repair_user(previous: &str, violations: &[Violation]) -> String {
+pub(crate) fn repair_user(previous: &str, violations: &[Violation]) -> String {
     let problems: Vec<String> = violations.iter().map(|v| format!("- {v}")).collect();
     format!(
         "Previous answer:\n{previous}\n\nProblems:\n{}",
@@ -84,7 +84,7 @@ pub fn repair_user(previous: &str, violations: &[Violation]) -> String {
 
 /// JSON schema for structured output: the declared fields the model answers (filled fields
 /// are left out), no length constraints.
-pub fn schema(spec: &FieldsSpec) -> Json {
+pub(crate) fn schema(spec: &FieldsSpec) -> Json {
     let asked: Vec<(&str, Json)> = spec
         .fields
         .iter()

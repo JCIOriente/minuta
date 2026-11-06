@@ -1,41 +1,41 @@
 //! Chapters: the chapter type, stamps and the shared limits (ADR-0008, ADR-0009).
 
-pub mod prompt;
-pub mod render;
-pub mod validate;
+pub(crate) mod prompt;
+pub(crate) mod render;
+pub(crate) mod validate;
 
 /// Bumped when the chapters block, repair prompt, parsing, snapping, the rules or chapter-line
 /// rendering changes; part of the fingerprint of the chapters template and of every fields
 /// template that declares the `chapters` field. (The artifact's own `"version"` is separate, ADR-0009.)
-pub const CHAPTERS_VERSION: u32 = 1;
+pub(crate) const CHAPTERS_VERSION: u32 = 1;
 /// The template name.
-pub const NAME: &str = "chapters";
+pub(crate) const NAME: &str = "chapters";
 /// The file the chapters artifact is written to.
-pub const JSON_FILE: &str = "chapters.json";
+pub(crate) const JSON_FILE: &str = "chapters.json";
 /// The fewest chapters a transcript may be split into.
-pub const MIN_CHAPTERS: usize = 3;
+pub(crate) const MIN_CHAPTERS: usize = 3;
 /// The shortest chapter, in seconds.
-pub const MIN_SECONDS: u64 = 10;
+pub(crate) const MIN_SECONDS: u64 = 10;
 /// The shortest transcript that can be chaptered: `MIN_CHAPTERS * MIN_SECONDS`.
-pub const MIN_TRANSCRIPT_SECONDS: u64 = MIN_CHAPTERS as u64 * MIN_SECONDS;
+pub(crate) const MIN_TRANSCRIPT_SECONDS: u64 = MIN_CHAPTERS as u64 * MIN_SECONDS;
 
 /// One chapter: where it starts (whole seconds) and its title.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Chapter {
+pub(crate) struct Chapter {
     pub start: u64,
     pub title: String,
 }
 
 /// The limits a chapters template may set; `None` leaves a limit unset.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ChaptersSpec {
+pub(crate) struct ChaptersSpec {
     pub max: Option<usize>,
     pub max_chars: Option<usize>,
 }
 
 /// `h:mm:ss`, `hh:mm:ss`, `m:ss`, `mm:ss`: seconds 0-59; minutes 0-59 when hours are given, 0-99
 /// otherwise; hours 1-2 digits. `None` for anything else. The arithmetic is checked as a guard only.
-pub fn parse_stamp(s: &str) -> Option<u64> {
+pub(crate) fn parse_stamp(s: &str) -> Option<u64> {
     let groups: Vec<&str> = s.split(':').collect();
     let digits = |g: &str, min: usize, max: usize| {
         (min..=max).contains(&g.len()) && g.bytes().all(|b| b.is_ascii_digit())
@@ -53,7 +53,7 @@ pub fn parse_stamp(s: &str) -> Option<u64> {
 }
 
 /// `m:ss` below 3600, `h:mm:ss` from 3600.
-pub fn stamp(seconds: u64) -> String {
+pub(crate) fn stamp(seconds: u64) -> String {
     if seconds < 3600 {
         format!("{}:{:02}", seconds / 60, seconds % 60)
     } else {
@@ -67,7 +67,7 @@ pub fn stamp(seconds: u64) -> String {
 }
 
 /// `<stamp> <title>` per chapter joined with "\n", no trailing newline. What `max_chars` measures.
-pub fn lines(chapters: &[Chapter]) -> String {
+pub(crate) fn lines(chapters: &[Chapter]) -> String {
     chapters
         .iter()
         .map(|c| format!("{} {}", stamp(c.start), c.title))

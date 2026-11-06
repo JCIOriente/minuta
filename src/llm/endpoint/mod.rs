@@ -22,7 +22,7 @@ pub enum Problem {
 }
 
 impl Problem {
-    pub fn into_missing(self) -> Missing {
+    pub(crate) fn into_missing(self) -> Missing {
         match self {
             Problem::Unreachable(m) | Problem::ModelMissing(m) => m,
         }
@@ -30,7 +30,7 @@ impl Problem {
 }
 
 /// Reads the endpoint's key and checks the server offers `model`.
-pub fn connect(
+pub(crate) fn connect(
     name: &str,
     endpoint: &Endpoint,
     model: &str,
@@ -186,7 +186,7 @@ struct Failure {
 }
 
 #[derive(Clone)]
-pub struct OpenAiCompatible {
+pub(crate) struct OpenAiCompatible {
     id: String,
     name: String,
     model: String,
@@ -197,7 +197,7 @@ pub struct OpenAiCompatible {
 }
 
 impl OpenAiCompatible {
-    pub fn new(
+    pub(crate) fn new(
         name: &str,
         model: &str,
         url: &str,

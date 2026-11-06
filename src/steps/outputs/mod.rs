@@ -7,12 +7,12 @@ use crate::error::{Error, Result};
 use crate::job::{layout, write_atomic, Ctx, Step, StepName};
 use crate::transcript::{to_srt, to_txt, Transcript};
 
-pub const TXT_FILE: &str = "transcript.txt";
-pub const SRT_FILE: &str = "captions.srt";
+pub(crate) const TXT_FILE: &str = "transcript.txt";
+pub(crate) const SRT_FILE: &str = "captions.srt";
 
 /// Reads only `transcript.json`, never whisper's raw output.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct Outputs;
+pub(crate) struct Outputs;
 
 impl Step for Outputs {
     const NAME: StepName = StepName::Outputs;

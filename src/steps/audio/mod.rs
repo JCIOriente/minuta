@@ -10,19 +10,24 @@ use crate::tools::{run, RunOpts, ToolInfo};
 /// Extracts `assets/audio.wav` from the recording: the only source, or the joined file when
 /// there are several.
 #[derive(Debug, Clone)]
-pub struct Audio {
+pub(crate) struct Audio {
     ffmpeg: ToolInfo,
 }
 
 impl Audio {
-    pub fn new(ffmpeg: ToolInfo) -> Self {
+    pub(crate) fn new(ffmpeg: ToolInfo) -> Self {
         Audio { ffmpeg }
     }
 
     /// Extracts `audio.wav`, passing every ffmpeg line to `on_line` and stopping with
     /// `Error::Interrupted` when `opts.interrupt` is set. The runner uses this;
     /// [`Step::run`] is the same without progress or interrupt.
-    pub fn run_with(&self, ctx: &Ctx, opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<()> {
+    pub(crate) fn run_with(
+        &self,
+        ctx: &Ctx,
+        opts: RunOpts,
+        on_line: &mut dyn FnMut(&str),
+    ) -> Result<()> {
         let input = match (joined_path(ctx), ctx.sources.first()) {
             (Some(joined), _) => joined,
             (None, Some(only)) => only.clone(),

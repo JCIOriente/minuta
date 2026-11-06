@@ -14,7 +14,7 @@ use crate::error::Result;
 
 /// Hashes `parts` into a lowercase hex SHA-256 digest. Each part is length-prefixed, so
 /// `["ab", "c"]` and `["a", "bc"]` differ.
-pub fn fingerprint(parts: &[&[u8]]) -> String {
+pub(crate) fn fingerprint(parts: &[&[u8]]) -> String {
     let mut hasher = Sha256::new();
     for part in parts {
         hasher.update((part.len() as u64).to_le_bytes());
@@ -34,7 +34,7 @@ fn hex(bytes: &[u8]) -> String {
 /// The fingerprint of `step` in `ctx`: covers the step name, the content of every source,
 /// the step's parameters (which include its tool version) and the fingerprint of the
 /// previous step, if any.
-pub fn step_fingerprint<S: Step>(step: &S, ctx: &Ctx, previous: Option<&str>) -> String {
+pub(crate) fn step_fingerprint<S: Step>(step: &S, ctx: &Ctx, previous: Option<&str>) -> String {
     fingerprint(&[
         S::NAME.as_str().as_bytes(),
         ctx.source_digest.as_bytes(),
@@ -52,7 +52,7 @@ pub(super) fn source_digest(sources: &[Source]) -> String {
 /// Stats the source file at `path`. Its content is hashed only when the size or mtime differ
 /// from `previous`, the record of the same path from the last run. `mtime` is recorded as 0
 /// when it is before the Unix epoch.
-pub fn source_record(path: &Path, previous: Option<&Source>) -> Result<Source> {
+pub(crate) fn source_record(path: &Path, previous: Option<&Source>) -> Result<Source> {
     let meta = fs::metadata(path)?;
     let size = meta.len();
     // An mtime before the epoch cannot be recorded, so it never matches and the file is hashed.

@@ -14,13 +14,13 @@ use indicatif::{ProgressBar, ProgressStyle};
 use crate::job::StepName;
 use crate::llm::chunk::Event;
 
-pub use pull::{human_size, pull_finish_line, pull_start_line, PullReport};
+pub(crate) use pull::{human_size, PullReport};
 use render::{event_text, render_line, sanitize};
-pub use templates::TemplatesReport;
+pub(crate) use templates::TemplatesReport;
 
 /// How much progress to show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
+pub(crate) enum Mode {
     /// Warnings only.
     Quiet,
     /// One plain line per step.
@@ -32,7 +32,11 @@ pub enum Mode {
 impl Mode {
     /// `--quiet` wins; `NO_COLOR` (set and non-empty) or a stderr that is not a terminal
     /// turns off the spinner.
-    pub fn choose(quiet: bool, no_color: Option<OsString>, stderr_is_terminal: bool) -> Mode {
+    pub(crate) fn choose(
+        quiet: bool,
+        no_color: Option<OsString>,
+        stderr_is_terminal: bool,
+    ) -> Mode {
         if quiet {
             Mode::Quiet
         } else if no_color.is_some_and(|v| !v.is_empty()) || !stderr_is_terminal {
@@ -43,7 +47,7 @@ impl Mode {
     }
 
     /// [`Mode::choose`] for this process.
-    pub fn detect(quiet: bool) -> Mode {
+    pub(crate) fn detect(quiet: bool) -> Mode {
         Mode::choose(
             quiet,
             std::env::var_os("NO_COLOR"),
@@ -53,7 +57,7 @@ impl Mode {
 }
 
 /// Reports the steps and templates of one run. A label is a step or template name.
-pub struct Progress {
+pub(crate) struct Progress {
     mode: Mode,
     total: usize,
     spinner: Option<ProgressBar>,
@@ -65,7 +69,7 @@ pub struct Progress {
 }
 
 impl Progress {
-    pub fn new(mode: Mode) -> Progress {
+    pub(crate) fn new(mode: Mode) -> Progress {
         Progress {
             mode,
             total: StepName::ALL.len(),
@@ -78,12 +82,12 @@ impl Progress {
 
     /// The running step processes `seconds` of media, so ffmpeg stats lines can show a
     /// percent. [`Progress::start`] forgets it; `None` shows the raw stats line.
-    pub fn set_media_seconds(&mut self, seconds: Option<f64>) {
+    pub(crate) fn set_media_seconds(&mut self, seconds: Option<f64>) {
         self.media_seconds = seconds;
     }
 
     /// The number of steps plus templates in the run (the pipeline steps by default).
-    pub fn set_total(&mut self, total: usize) {
+    pub(crate) fn set_total(&mut self, total: usize) {
         self.total = total;
     }
 
@@ -96,18 +100,18 @@ impl Progress {
     }
 
     /// An informational message, hidden by `--quiet`.
-    pub fn note(&mut self, text: &str) {
+    pub(crate) fn note(&mut self, text: &str) {
         self.print(&format!("note: {text}"));
     }
 
     /// A note that is shown even with `--quiet`, such as data leaving the machine.
-    pub fn notice(&mut self, text: &str) {
+    pub(crate) fn notice(&mut self, text: &str) {
         eprintln!("note: {text}");
     }
 
     /// A warning, shown even with `--quiet`. Control characters become `?`: a warning can
     /// carry a path or tool text.
-    pub fn warn(&mut self, text: &str) {
+    pub(crate) fn warn(&mut self, text: &str) {
         let line = format!("warning: {}", sanitize(text));
         eprintln!("{line}");
         #[cfg(test)]
@@ -115,12 +119,12 @@ impl Progress {
     }
 
     /// `label` (1-based `index`) is reused from an earlier run.
-    pub fn cached(&mut self, index: usize, label: &str) {
+    pub(crate) fn cached(&mut self, index: usize, label: &str) {
         self.print(&step_line(index, self.total, label, "cached"));
     }
 
     /// Step `label` starts running; the spinner shows the tool's latest output line.
-    pub fn start(&mut self, index: usize, label: &str) {
+    pub(crate) fn start(&mut self, index: usize, label: &str) {
         self.spin(
             index,
             label,
@@ -130,7 +134,7 @@ impl Progress {
 
     /// Template `label` starts running; the spinner shows its chunk progress and the
     /// elapsed time.
-    pub fn start_template(&mut self, index: usize, label: &str) {
+    pub(crate) fn start_template(&mut self, index: usize, label: &str) {
         self.spin(
             index,
             label,
@@ -152,14 +156,14 @@ impl Progress {
     }
 
     /// Progress of the running template.
-    pub fn event(&mut self, event: Event) {
+    pub(crate) fn event(&mut self, event: Event) {
         if let Some(spinner) = &self.spinner {
             spinner.set_message(event_text(event));
         }
     }
 
     /// A line of output from the running tool.
-    pub fn line(&mut self, line: &str) {
+    pub(crate) fn line(&mut self, line: &str) {
         if let (Some(spinner), Some(text)) = (&self.spinner, render_line(line, self.media_seconds))
         {
             #[cfg(test)]
@@ -169,7 +173,7 @@ impl Progress {
     }
 
     /// `label` finished after `seconds`; `detail` says what it did, when worth saying.
-    pub fn done(&mut self, index: usize, label: &str, detail: Option<&str>, seconds: f64) {
+    pub(crate) fn done(&mut self, index: usize, label: &str, detail: Option<&str>, seconds: f64) {
         self.clear();
         let time = format_duration(seconds);
         let text = match detail {
@@ -180,14 +184,14 @@ impl Progress {
     }
 
     /// `label` stopped early; the caller reports the error itself.
-    pub fn failed(&mut self, index: usize, label: &str, interrupted: bool) {
+    pub(crate) fn failed(&mut self, index: usize, label: &str, interrupted: bool) {
         self.clear();
         let what = if interrupted { "interrupted" } else { "failed" };
         self.print(&step_line(index, self.total, label, what));
     }
 
     /// The final line of a run.
-    pub fn summary(&mut self, ran: usize, cached: usize, seconds: f64) {
+    pub(crate) fn summary(&mut self, ran: usize, cached: usize, seconds: f64) {
         self.print(&format!(
             "finished in {} ({ran} run, {cached} cached)",
             format_duration(seconds)
@@ -213,13 +217,13 @@ fn step_line(index: usize, total: usize, label: &str, text: &str) -> String {
 }
 
 /// What a finished template did: `ollama:gemma4:26b  3 calls`.
-pub fn template_detail(backend: &str, calls: usize) -> String {
+pub(crate) fn template_detail(backend: &str, calls: usize) -> String {
     let plural = if calls == 1 { "" } else { "s" };
     format!("{backend}  {calls} call{plural}")
 }
 
 /// `0.3s`, `12.4s`, `2m31s`, `1h05m`.
-pub fn format_duration(seconds: f64) -> String {
+pub(crate) fn format_duration(seconds: f64) -> String {
     if seconds < 59.95 {
         return format!("{seconds:.1}s");
     }

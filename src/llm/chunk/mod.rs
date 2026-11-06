@@ -20,7 +20,7 @@ mod tests_text;
 use pack::{join_notes, part_units, split_inputs};
 
 /// Version of the prompt wrappers below. It is part of every template step's fingerprint.
-pub const PROMPT_VERSION: u32 = 1;
+pub(crate) const PROMPT_VERSION: u32 = 1;
 
 // Prompt wrapper wording (spec: "Prompt assembly, chunking and consolidation").
 // Changing any of these requires bumping PROMPT_VERSION.
@@ -40,7 +40,7 @@ const NOT_SHRINKING: &str = "notes do not shrink below the context budget";
 
 /// The transcript as LLM input: segments merged into blocks spanning at least 30 s (the last
 /// may be shorter), one `[hh:mm:ss] text` line per block, stamped with the block start.
-pub fn transcript_text(t: &Transcript) -> String {
+pub(crate) fn transcript_text(t: &Transcript) -> String {
     let mut lines = Vec::new();
     let mut block: Option<(f64, String)> = None;
     for s in &t.segments {
@@ -76,16 +76,16 @@ fn block_line((start, text): (f64, String)) -> Option<String> {
 }
 
 /// Characters / 3, rounded up, over Unicode scalar values.
-pub fn estimate_tokens(s: &str) -> usize {
+pub(crate) fn estimate_tokens(s: &str) -> usize {
     s.chars().count().div_ceil(3)
 }
 
 /// The sentence every system prompt ends with. `output_lang` is a language name ("Spanish").
-pub fn language_instruction(output_lang: &str) -> String {
+pub(crate) fn language_instruction(output_lang: &str) -> String {
     format!("{LANGUAGE_PREFIX}{output_lang}{LANGUAGE_SUFFIX}")
 }
 
-pub struct Request<'a> {
+pub(crate) struct Request<'a> {
     /// The rendered template body.
     pub body: &'a str,
     /// Output language name, as it appears in the language instruction.
@@ -97,7 +97,7 @@ pub struct Request<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Event {
+pub(crate) enum Event {
     Chunk {
         done: usize,
         total: usize,
@@ -117,7 +117,7 @@ pub enum Event {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Generated {
+pub(crate) struct Generated {
     pub text: String,
     pub calls: usize,
 }
@@ -132,7 +132,7 @@ type SystemFor<'f> = &'f (dyn Fn(usize, usize) -> String + Sync);
 /// context budget, otherwise concurrent map calls over chunks and a final consolidation call.
 /// `on_event` is only called on the calling thread. Template errors leave `name` empty for the
 /// caller to fill in.
-pub fn generate(
+pub(crate) fn generate(
     req: &Request,
     complete: Complete,
     on_event: &mut dyn FnMut(Event),
@@ -150,7 +150,7 @@ pub fn generate(
 /// final system prompt (single call or consolidation), and the final call is made by
 /// `finish(system, user, on_event)` instead of `complete`. Map calls are unchanged. Events
 /// `finish` emits reach `on_event`, after the last `Consolidating` when chunked.
-pub fn generate_with(
+pub(crate) fn generate_with(
     req: &Request,
     final_block: Option<&str>,
     complete: Complete,
