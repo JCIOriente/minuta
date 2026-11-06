@@ -172,12 +172,13 @@ impl Progress {
         }
     }
 
-    /// `label` finished after `seconds`; `detail` says what it did, when worth saying.
+    /// `label` finished after `seconds`; `detail` says what it did, when worth saying. The
+    /// detail can carry transcript or config text, so control characters become `?`.
     pub(crate) fn done(&mut self, index: usize, label: &str, detail: Option<&str>, seconds: f64) {
         self.clear();
         let time = format_duration(seconds);
         let text = match detail {
-            Some(detail) => format!("{detail}  {time}"),
+            Some(detail) => format!("{}  {time}", sanitize(detail)),
             None => time,
         };
         self.print(&step_line(index, self.total, label, &text));
@@ -282,6 +283,30 @@ mod tests {
             "[6/6] summary     ollama:gemma4:26b  1 call  48.2s"
         );
         assert_eq!(template_detail("claude", 3), "claude  3 calls");
+    }
+
+    #[test]
+    fn done_line_replaces_control_characters_in_the_detail() {
+        let mut progress = Progress::new(Mode::Plain);
+        progress.done(
+            1,
+            "transcribe",
+            Some("language=e\u{1b}[2Jn\u{9b}  2 segments"),
+            0.3,
+        );
+        progress.done(
+            2,
+            "summary",
+            Some(&template_detail("ollama:\u{1b}]0;x\u{7}", 2)),
+            0.3,
+        );
+        assert_eq!(
+            progress.shown,
+            [
+                "[1/5] transcribe  language=e?[2Jn?  2 segments  0.3s",
+                "[2/5] summary     ollama:?]0;x?  2 calls  0.3s",
+            ]
+        );
     }
 
     #[test]
