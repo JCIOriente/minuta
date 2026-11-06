@@ -38,8 +38,8 @@ printing only the job folder's path on stdout, and everything else on stderr, is
 | --- | --- |
 | The config file path and the keys in the [configuration table](reference.md#configuration), with the meaning of each | Stable |
 | The `[endpoints.<name>]` keys: `url`, `context_tokens`, `timeout_secs`, `api_key_env` | Stable |
-| Default values | Provisional |
-| The order that settings are resolved in (flag, environment, config file, default) | Stable |
+| Config default values | Provisional |
+| The order that settings are resolved in (flag, environment, config file, default; a template's `llm` and `lang` keys sit right after the flag, see the [reference](reference.md#configuration)) | Stable |
 
 A new key may appear in a minor version. Unknown keys are an error, so a config
 file that uses a new key does not load on an older minuta.
@@ -48,16 +48,18 @@ file that uses a new key does not load on an older minuta.
 
 | Surface | Class |
 | --- | --- |
-| Header keys (`description`, `input`, `output`, `fields`, `limits`, `format`, `llm`, `lang`), their values and defaults | Stable |
+| Header keys (`description`, `input`, `output`, `fields`, `limits`, `format`, `llm`, `lang`), their values and header defaults | Stable |
 | Variables (`{{job_name}}`, `{{duration}}`, `{{output_lang}}`, `{{output_lang_code}}`, `{{speech_lang}}`) | Stable |
 | Output kinds `markdown` and `fields`, and the field names `title`, `body`, `thumbnail_text`, `notes`, `tags`, `hashtags`, `chapters` | Stable |
+| Output kind `chapters`, reserved for the built-in `chapters` template | Stable |
 | The three places templates are loaded from and which wins | Stable |
 | The catalog `templates/index.toml`, its `version = 1` and its keys | Stable |
 | `.pulled.toml` | Provisional |
 | The text of built-in and curated templates, and the names and limits of curated ones | Not covered |
 
 New header keys, variables and fields may come in a minor version. The wording of
-a template changes whenever its output improves; pull it again to get the change.
+a template changes whenever its output improves; pull it again to get the change. An older minuta rejects a template with a header
+key it does not know.
 
 ## Files on disk
 

@@ -38,8 +38,8 @@ carpeta del trabajo salga por stdout, y todo lo demás por stderr, es Estable.
 | --- | --- |
 | La ruta del archivo de configuración y las claves de la [tabla de configuración](reference.es.md#configuración), con su significado | Estable |
 | Las claves de `[endpoints.<nombre>]`: `url`, `context_tokens`, `timeout_secs`, `api_key_env` | Estable |
-| Los valores predeterminados | Provisional |
-| El orden en que se resuelven los ajustes (opción, variable de entorno, archivo, valor predeterminado) | Estable |
+| Los valores predeterminados de la configuración | Provisional |
+| El orden en que se resuelven los ajustes (opción, variable de entorno, archivo, valor predeterminado; las claves `llm` y `lang` de una plantilla van justo después de la opción, ver la [referencia](reference.es.md#configuración)) | Estable |
 
 Una clave nueva puede aparecer en una versión menor. Las claves desconocidas son un
 error, así que un archivo con una clave nueva no carga en un minuta más antiguo.
@@ -48,9 +48,10 @@ error, así que un archivo con una clave nueva no carga en un minuta más antigu
 
 | Elemento | Clase |
 | --- | --- |
-| Las claves del encabezado (`description`, `input`, `output`, `fields`, `limits`, `format`, `llm`, `lang`), sus valores y sus predeterminados | Estable |
+| Las claves del encabezado (`description`, `input`, `output`, `fields`, `limits`, `format`, `llm`, `lang`), sus valores y los predeterminados del encabezado | Estable |
 | Las variables (`{{job_name}}`, `{{duration}}`, `{{output_lang}}`, `{{output_lang_code}}`, `{{speech_lang}}`) | Estable |
 | Los tipos de salida `markdown` y `fields`, y los campos `title`, `body`, `thumbnail_text`, `notes`, `tags`, `hashtags`, `chapters` | Estable |
+| El tipo de salida `chapters`, reservado para la plantilla integrada `chapters` | Estable |
 | Los tres lugares de donde se cargan las plantillas y cuál gana | Estable |
 | El catálogo `templates/index.toml`, su `version = 1` y sus claves | Estable |
 | `.pulled.toml` | Provisional |
@@ -58,7 +59,8 @@ error, así que un archivo con una clave nueva no carga en un minuta más antigu
 
 Pueden llegar claves de encabezado, variables y campos nuevos en una versión menor.
 El texto de una plantilla cambia cada vez que mejora su resultado; vuelve a
-descargarla para recibir el cambio.
+descargarla para recibir el cambio. Un minuta más antiguo rechaza una plantilla con
+una clave de encabezado que no conoce.
 
 ## Archivos en disco
 
