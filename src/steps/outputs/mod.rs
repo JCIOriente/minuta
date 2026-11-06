@@ -28,7 +28,7 @@ impl Step for Outputs {
     fn run(&self, ctx: &Ctx) -> Result<()> {
         let path = layout::transcript_json(&ctx.dir);
         let json = fs::read_to_string(&path)?;
-        let transcript: Transcript = serde_json::from_str(&json)
+        let transcript = Transcript::from_json(&json)
             .map_err(|e| Error::Parse(format!("{}: {e}", path.display())))?;
         for (name, text) in [
             (TXT_FILE, to_txt(&transcript)),

@@ -94,7 +94,7 @@ bookkeeping in a hidden `.minuta/` folder.
 | `transcript.txt` | Readable transcript with timestamps |
 | `captions.srt` | Subtitles |
 | `<template>.md` | The document from each template you asked for |
-| `assets/transcript.json` | Timestamped segments and the detected language |
+| `assets/transcript.json` | Timestamped segments and the detected language, as `{"version": 1, "language": ..., "segments": [{"start", "end", "text"}]}` |
 | `assets/<template>.json` | The structured result of a `fields` or `chapters` template |
 | `assets/audio.wav` | 16 kHz mono audio given to whisper |
 | `assets/joined.<ext>` | The joined recording. Only with several sources; with one, the original file is used as it is |
@@ -112,6 +112,11 @@ audio.wav  chapters.json  chapters.md  instagram.json  linkedin.json  transcript
 $ ls -A minuta-out/standup/.minuta
 job.json  llm-cache  probe.json
 ```
+
+`transcript.json` carries `"version": 1`, like the other JSON files in `assets/`. A
+file without `version`, written by 0.9.0, is read as version 1 and keeps its job's
+cache valid. A file with another version is refused with a message naming the
+version.
 
 A job folder belongs to the recordings that created it. If you run different files
 with a name that is already taken, minuta stops instead of overwriting. Choose

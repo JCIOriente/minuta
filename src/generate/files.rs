@@ -30,7 +30,7 @@ pub(super) fn exists(path: &Path) -> Result<bool> {
 pub(super) fn read_transcript(dir: &Path) -> Result<Transcript> {
     let path = layout::transcript_json(dir);
     let json = fs::read_to_string(&path).map_err(|e| io_error(&path, e))?;
-    serde_json::from_str(&json).map_err(|e| Error::Parse(format!("{TRANSCRIPT_FILE}: {e}")))
+    Transcript::from_json(&json).map_err(|e| Error::Parse(format!("{TRANSCRIPT_FILE}: {e}")))
 }
 
 /// Removes `written`, newest first, after `error` stopped the writes, so no partial set of

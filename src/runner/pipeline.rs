@@ -239,7 +239,11 @@ fn detail(step: StepName, ctx: &Ctx) -> std::result::Result<Option<String>, Stri
             Ok(Some(mode.to_string()))
         }
         StepName::Transcribe => {
-            let transcript: Transcript = read_json(&layout::transcript_json(&ctx.dir))?;
+            let path = layout::transcript_json(&ctx.dir);
+            let text = fs::read_to_string(&path)
+                .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+            let transcript = Transcript::from_json(&text)
+                .map_err(|e| format!("cannot parse {}: {e}", path.display()))?;
             Ok(Some(format!(
                 "language={}  {} segments",
                 transcript.language,

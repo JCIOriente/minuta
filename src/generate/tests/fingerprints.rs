@@ -91,8 +91,9 @@ fn fingerprint_matches_spec_composition() {
 
 #[test]
 fn markdown_fingerprint_pinned() {
-    // Recorded on main before fields templates existed: sub-project 2 job folders stay cached.
-    let (dir, _) = job();
+    // Recorded on main before fields templates existed: sub-project 2 job folders stay cached. The file is in the 0.9.0 format (no version): such jobs keep their fingerprint.
+    let (dir, t0) = job();
+    write_transcript_v0_9_0(dir.path(), &t0);
     let t = tpl("summary", TEXT);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
     assert_eq!(
@@ -106,7 +107,8 @@ fn markdown_fingerprint_pinned() {
 #[test]
 fn fields_fingerprint_pinned() {
     // Recorded on main before the chapters field existed: sub-project 3 job folders stay cached.
-    let (dir, _) = job();
+    let (dir, t0) = job();
+    write_transcript_v0_9_0(dir.path(), &t0);
     let t = tpl("social", FIELDS);
     let b = ScriptedBackend::new(ID, CONTEXT, vec![]);
     assert_eq!(
