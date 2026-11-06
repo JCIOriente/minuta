@@ -15,7 +15,7 @@ use crate::job::StepName;
 use crate::llm::chunk::Event;
 
 pub use pull::{human_size, pull_finish_line, pull_start_line, PullReport};
-use render::{event_text, render_line};
+use render::{event_text, render_line, sanitize};
 pub use templates::TemplatesReport;
 
 /// How much progress to show.
@@ -105,9 +105,13 @@ impl Progress {
         eprintln!("note: {text}");
     }
 
-    /// A warning, shown even with `--quiet`.
+    /// A warning, shown even with `--quiet`. Control characters become `?`: a warning can
+    /// carry a path or tool text.
     pub fn warn(&mut self, text: &str) {
-        eprintln!("warning: {text}");
+        let line = format!("warning: {}", sanitize(text));
+        eprintln!("{line}");
+        #[cfg(test)]
+        self.shown.push(line);
     }
 
     /// `label` (1-based `index`) is reused from an earlier run.
@@ -304,5 +308,19 @@ mod tests {
         progress.line(line);
         let message = progress.spinner.as_ref().map(ProgressBar::message);
         assert_eq!(message.as_deref(), Some(line));
+    }
+
+    #[test]
+    fn warn_replaces_control_characters() {
+        let mut progress = Progress::new(Mode::Plain);
+        progress.warn("a\u{1b}[2Jb\u{85}c");
+        assert_eq!(progress.shown, ["warning: a?[2Jb?c"]);
+    }
+
+    #[test]
+    fn warn_is_shown_in_quiet_mode() {
+        let mut progress = Progress::new(Mode::Quiet);
+        progress.warn("disk almost full");
+        assert_eq!(progress.shown, ["warning: disk almost full"]);
     }
 }

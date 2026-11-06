@@ -1,7 +1,7 @@
 //! The five steps of a run in order, with progress, staleness and interrupts.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -10,9 +10,10 @@ use crate::error::{Error, Result};
 use crate::job::{layout, step_fingerprint, Ctx, Job, Reason, Step, StepName};
 use crate::progress::Progress;
 use crate::steps::probe::read_probe;
-use crate::steps::{plan_join, Audio, Join, Mode, Outputs, Probe, Transcribe};
+use crate::steps::{plan_join, Audio, Join, Mode, Outputs, Probe, SourceProbe, Transcribe};
 use crate::tools::RunOpts;
 use crate::transcript::Transcript;
+use serde::de::DeserializeOwned;
 
 /// The progress-aware entry point of a step; returns warnings to show.
 trait Execute {
@@ -188,9 +189,13 @@ impl Pipeline<'_> {
             };
             let seconds = started.elapsed().as_secs_f64();
             job.mark_done(*name, fingerprint, seconds, &step.artifacts(self.ctx))?;
-            let detail = detail(*name, self.ctx);
+            // The step is done either way; a detail that can't be read is only a warning.
+            let (detail, unreadable) = match detail(*name, self.ctx) {
+                Ok(detail) => (detail, None),
+                Err(e) => (None, Some(format!("{}: {e}", name.as_str()))),
+            };
             progress.done(index, name.as_str(), detail.as_deref(), seconds);
-            for warning in &warnings {
+            for warning in unreadable.iter().chain(&warnings) {
                 progress.warn(warning);
             }
             ran += 1;
@@ -221,27 +226,35 @@ pub(super) fn interrupted_by(err: &Error, interrupt: &AtomicBool) -> bool {
 }
 
 /// What a finished step did, when worth saying: how `join` joined, what `transcribe` found.
-fn detail(step: StepName, ctx: &Ctx) -> Option<String> {
+/// `Err` names the file that could not be read or parsed.
+fn detail(step: StepName, ctx: &Ctx) -> std::result::Result<Option<String>, String> {
     match step {
         StepName::Join => {
-            let mode = match plan_join(&read_probe(&ctx.dir).ok()?) {
+            let probes: Vec<SourceProbe> = read_json(&layout::probe_file(&ctx.dir))?;
+            let mode = match plan_join(&probes) {
                 None => "single source",
                 Some(Mode::StreamCopy) => "stream copy",
                 Some(Mode::Reencode) => "re-encode",
             };
-            Some(mode.to_string())
+            Ok(Some(mode.to_string()))
         }
         StepName::Transcribe => {
-            let json = fs::read_to_string(layout::transcript_json(&ctx.dir)).ok()?;
-            let transcript: Transcript = serde_json::from_str(&json).ok()?;
-            Some(format!(
+            let transcript: Transcript = read_json(&layout::transcript_json(&ctx.dir))?;
+            Ok(Some(format!(
                 "language={}  {} segments",
                 transcript.language,
                 transcript.segments.len()
-            ))
+            )))
         }
-        _ => None,
+        _ => Ok(None),
     }
+}
+
+/// Reads and parses the JSON file `file`; the error names it.
+fn read_json<T: DeserializeOwned>(file: &Path) -> std::result::Result<T, String> {
+    let text =
+        fs::read_to_string(file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
+    serde_json::from_str(&text).map_err(|e| format!("cannot parse {}: {e}", file.display()))
 }
 
 #[cfg(test)]

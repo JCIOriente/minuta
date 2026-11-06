@@ -5,6 +5,7 @@ use crate::runner::test_support::probed_job;
 use crate::tools;
 use std::cell::Cell;
 use std::io;
+use std::path::Path;
 
 #[test]
 fn probed_seconds_sums_the_sources() {
@@ -61,12 +62,14 @@ fn transcribe_reports_no_media_seconds() {
 }
 
 /// A step that records whether it ran, can set the interrupt flag while running, sends
-/// `lines` to `on_line` and reports `media` as its media seconds (`Err` fails with it).
+/// `lines` to `on_line`, reports `media` as its media seconds (`Err` fails with it) and
+/// returns `warnings` when it succeeds.
 struct FakeStep {
     ran: Cell<bool>,
     sets: Option<Arc<AtomicBool>>,
     lines: &'static [&'static str],
     media: std::result::Result<Option<f64>, &'static str>,
+    warnings: &'static [&'static str],
 }
 
 impl Default for FakeStep {
@@ -76,6 +79,7 @@ impl Default for FakeStep {
             sets: None,
             lines: &[],
             media: Ok(None),
+            warnings: &[],
         }
     }
 }
@@ -102,7 +106,8 @@ impl Execute for FakeStep {
         for line in self.lines {
             on_line(line);
         }
-        self.run(ctx).map(|()| Vec::new())
+        self.run(ctx)
+            .map(|()| self.warnings.iter().map(|w| w.to_string()).collect())
     }
 
     fn media_seconds(&self, _: &Ctx) -> Result<Option<f64>> {
@@ -122,12 +127,24 @@ fn run_one_shown(
     interrupt: &Arc<AtomicBool>,
     mode: ProgressMode,
 ) -> (Result<usize>, Job, Progress) {
+    run_as(StepName::Probe, step, interrupt, mode, |_| {})
+}
+
+/// [`run_one_shown`] with the step run as `name`, after `prepare` got the job folder.
+fn run_as(
+    name: StepName,
+    step: &FakeStep,
+    interrupt: &Arc<AtomicBool>,
+    mode: ProgressMode,
+    prepare: impl FnOnce(&Path),
+) -> (Result<usize>, Job, Progress) {
     let tmp = tempfile::tempdir().unwrap();
     let source = tmp.path().join("a.mp4");
     fs::write(&source, "media").unwrap();
     let mut job = Job::open(tmp.path(), "a", &[source], false).unwrap();
     let ctx = job.ctx();
-    let current = vec![(StepName::Probe, step.fingerprint(&ctx, None))];
+    prepare(&ctx.dir);
+    let current = vec![(name, step.fingerprint(&ctx, None))];
     let plan = plan_stale(&job, &current, None);
     let pipeline = Pipeline {
         ctx: &ctx,
@@ -236,4 +253,158 @@ fn signal_death_without_flag_is_reported_as_is() {
         stderr: String::new(),
     };
     assert!(!interrupted_by(&killed, &interrupt));
+}
+
+/// Runs a fake step as `name` in plain mode after `prepare`; returns the job folder, the
+/// done line without its time, and the lines shown after it. The run must succeed and mark
+/// the step done.
+fn run_detail(name: StepName, prepare: impl FnOnce(&Path)) -> (PathBuf, String, Vec<String>) {
+    run_step_detail(name, &FakeStep::default(), prepare)
+}
+
+/// [`run_detail`] with `step`.
+fn run_step_detail(
+    name: StepName,
+    step: &FakeStep,
+    prepare: impl FnOnce(&Path),
+) -> (PathBuf, String, Vec<String>) {
+    let interrupt = Arc::new(AtomicBool::new(false));
+    let (result, job, progress) = run_as(name, step, &interrupt, ProgressMode::Plain, prepare);
+    assert_eq!(result.unwrap(), 1);
+    assert!(job.state.steps.contains_key(&name));
+    let (done, rest) = progress.shown.split_first().expect("a done line");
+    let (line, time) = done.rsplit_once(' ').expect("a time");
+    assert!(time.ends_with('s'), "done line was {done:?}");
+    (job.dir, line.trim_end().to_string(), rest.to_vec())
+}
+
+#[test]
+fn transcribe_detail_shows_language_and_segments() {
+    let (_, line, rest) = run_detail(StepName::Transcribe, |dir| {
+        let transcript = r#"{"language":"en","segments":[
+            {"start":0.0,"end":1.0,"text":"a"},{"start":1.0,"end":2.0,"text":"b"}]}"#;
+        fs::create_dir_all(layout::transcript_json(dir).parent().unwrap()).unwrap();
+        fs::write(layout::transcript_json(dir), transcript).unwrap();
+    });
+    assert_eq!(line, "[1/5] transcribe  language=en  2 segments");
+    assert!(rest.is_empty(), "{rest:?}");
+}
+
+#[test]
+fn transcribe_detail_with_unreadable_transcript_warns() {
+    let (dir, line, rest) = run_detail(StepName::Transcribe, |_| {});
+    assert_eq!(line, "[1/5] transcribe");
+    let file = layout::transcript_json(&dir);
+    assert_eq!(
+        rest,
+        [format!(
+            "warning: transcribe: cannot read {}: No such file or directory (os error 2)",
+            file.display()
+        )]
+    );
+}
+
+#[test]
+fn transcribe_detail_with_malformed_transcript_warns() {
+    let (dir, line, rest) = run_detail(StepName::Transcribe, |dir| {
+        fs::create_dir_all(layout::transcript_json(dir).parent().unwrap()).unwrap();
+        fs::write(layout::transcript_json(dir), "{").unwrap();
+    });
+    assert_eq!(line, "[1/5] transcribe");
+    let file = layout::transcript_json(&dir);
+    assert_eq!(
+        rest,
+        [format!(
+            "warning: transcribe: cannot parse {}: EOF while parsing an object at line 1 column 1",
+            file.display()
+        )]
+    );
+}
+
+#[test]
+fn join_detail_shows_single_source() {
+    let (_, line, rest) = run_detail(StepName::Join, |dir| {
+        probed_job(dir, &[30.0]);
+    });
+    assert_eq!(line, "[1/5] join        single source");
+    assert!(rest.is_empty(), "{rest:?}");
+}
+
+#[test]
+fn join_detail_with_unreadable_probe_warns() {
+    let (dir, line, rest) = run_detail(StepName::Join, |_| {});
+    assert_eq!(line, "[1/5] join");
+    let file = layout::probe_file(&dir);
+    assert_eq!(
+        rest,
+        [format!(
+            "warning: join: cannot read {}: No such file or directory (os error 2)",
+            file.display()
+        )]
+    );
+}
+
+#[test]
+fn join_detail_shows_stream_copy() {
+    let (_, line, rest) = run_detail(StepName::Join, |dir| {
+        probed_job(dir, &[30.0, 30.0]);
+    });
+    assert_eq!(line, "[1/5] join        stream copy");
+    assert!(rest.is_empty(), "{rest:?}");
+}
+
+#[test]
+fn join_detail_shows_re_encode() {
+    let (_, line, rest) = run_detail(StepName::Join, |dir| {
+        probed_job(dir, &[30.0, 30.0]);
+        // The second source's audio differs, so the sources can't be stream copied.
+        let file = layout::probe_file(dir);
+        let probe = fs::read_to_string(&file).unwrap();
+        let (first, second) = probe.split_at(probe.rfind("48000").unwrap());
+        fs::write(
+            &file,
+            format!("{first}{}", second.replacen("48000", "44100", 1)),
+        )
+        .unwrap();
+    });
+    assert_eq!(line, "[1/5] join        re-encode");
+    assert!(rest.is_empty(), "{rest:?}");
+}
+
+#[test]
+fn join_detail_with_malformed_probe_warns() {
+    let (dir, line, rest) = run_detail(StepName::Join, |dir| {
+        fs::create_dir_all(layout::probe_file(dir).parent().unwrap()).unwrap();
+        fs::write(layout::probe_file(dir), "[").unwrap();
+    });
+    assert_eq!(line, "[1/5] join");
+    let file = layout::probe_file(&dir);
+    assert_eq!(
+        rest,
+        [format!(
+            "warning: join: cannot parse {}: EOF while parsing a list at line 1 column 1",
+            file.display()
+        )]
+    );
+}
+
+#[test]
+fn detail_warning_comes_before_the_step_warnings() {
+    let step = FakeStep {
+        warnings: &["no speech detected"],
+        ..FakeStep::default()
+    };
+    let (dir, line, rest) = run_step_detail(StepName::Transcribe, &step, |_| {});
+    assert_eq!(line, "[1/5] transcribe");
+    let file = layout::transcript_json(&dir);
+    assert_eq!(
+        rest,
+        [
+            format!(
+                "warning: transcribe: cannot read {}: No such file or directory (os error 2)",
+                file.display()
+            ),
+            "warning: no speech detected".to_string(),
+        ]
+    );
 }
