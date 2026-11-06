@@ -8,6 +8,8 @@ mod files;
 // The JSON-output path (`generate_json`, `repairs_exhausted`) is a second
 // `impl TemplateRun` block in json.rs.
 mod json;
+#[cfg(test)]
+mod tests;
 
 use std::fs;
 use std::io;
