@@ -1,5 +1,6 @@
-use crate::error::Error;
-use crate::transcript::{from_whisper_json, to_srt, to_txt, Segment, Transcript};
+//! Tests for whisper JSON parsing and the text, SRT and JSON transcript outputs.
+
+use super::*;
 
 const SAMPLE: &str = include_str!("../../tests/fixtures/whisper/sample.json");
 const EMPTY: &str = include_str!("../../tests/fixtures/whisper/empty.json");
