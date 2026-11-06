@@ -27,9 +27,7 @@ pub struct RunOpts {
 
 /// Result of a successful [`run`].
 #[derive(Debug, Clone, Copy)]
-pub struct Output {
-    pub status: ExitStatus,
-}
+pub struct Output;
 
 /// One line of a tool's output.
 struct Piece {
@@ -289,7 +287,7 @@ pub fn run(argv: &[OsString], opts: RunOpts, on_line: &mut dyn FnMut(&str)) -> R
     }
     let status = wait_status(&mut child, &opts)?;
     if status.success() {
-        Ok(Output { status })
+        Ok(Output)
     } else {
         Err(Error::Tool {
             tool,

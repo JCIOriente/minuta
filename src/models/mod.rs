@@ -1,6 +1,5 @@
 use crate::error::{Error, Result};
 use crate::llm::http::MAX_REDIRECTS;
-use directories::BaseDirs;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::fs::{self, File};
@@ -118,13 +117,15 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// `~/.minuta/models`: the folder for models that work with whisper.
+#[cfg(test)]
 pub fn default_dir() -> Result<PathBuf> {
-    let base = BaseDirs::new()
+    let base = directories::BaseDirs::new()
         .ok_or_else(|| Error::Config("cannot determine the home directory".into()))?;
     Ok(default_dir_for(base.home_dir()))
 }
 
 /// [`default_dir`] for the given home directory.
+#[cfg(test)]
 pub fn default_dir_for(home: &Path) -> PathBuf {
     home.join(".minuta").join("models")
 }
@@ -255,6 +256,7 @@ fn download(
 /// Downloads `spec` into `dir` unless a file with the pinned checksum is already there.
 /// The bytes come from [`ModelSpec::url`] and go to a temp file that is renamed into place
 /// only after the checksum matches.
+#[cfg(test)]
 pub fn pull(spec: &ModelSpec, dir: &Path) -> Result<Pulled> {
     pull_with_progress(spec, dir, &mut |_| {})
 }

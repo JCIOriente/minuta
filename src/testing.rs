@@ -25,5 +25,5 @@ pub mod ollama {
 }
 
 pub mod models {
-    pub use crate::models::{pull, ModelKind, ModelSpec, Pulled};
+    pub use crate::models::{pull_with_progress, ModelKind, ModelSpec, Pulled};
 }

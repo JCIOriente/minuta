@@ -69,7 +69,10 @@ fn model_download_ignores_proxy_variables() {
         sha256: &sha,
         size: body.len() as u64,
     };
-    assert_eq!(models::pull(&spec, dir.path()).unwrap(), Pulled::Downloaded);
+    assert_eq!(
+        models::pull_with_progress(&spec, dir.path(), &mut |_| {}).unwrap(),
+        Pulled::Downloaded
+    );
 }
 
 #[test]

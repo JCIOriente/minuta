@@ -17,8 +17,6 @@ pub(crate) mod http;
 pub mod ollama;
 mod subprocess;
 
-pub const DEFAULT_LLM: &str = "ollama:gemma4:26b";
-
 pub trait Backend: Send + Sync {
     /// Canonical id, e.g. "ollama:gemma4:26b".
     fn id(&self) -> &str;
@@ -388,11 +386,6 @@ mod tests {
     fn endpoint_has_no_fixed_provider() {
         let id = "lmstudio:m".parse::<BackendId>().unwrap();
         assert_eq!(id.provider(), None);
-    }
-
-    #[test]
-    fn default_llm_parses() {
-        assert!(DEFAULT_LLM.parse::<BackendId>().is_ok());
     }
 
     #[test]

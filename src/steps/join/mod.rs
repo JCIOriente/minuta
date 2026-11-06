@@ -141,6 +141,7 @@ pub struct Join {
 }
 
 impl Join {
+    #[cfg(test)]
     pub fn new(ffmpeg: ToolInfo, encoder: Encoder) -> Self {
         Join { ffmpeg, encoder }
     }

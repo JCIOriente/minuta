@@ -29,6 +29,7 @@ impl CallCache {
     }
 
     /// The folder holding the cached entries.
+    #[cfg(test)]
     pub fn dir(&self) -> &Path {
         &self.dir
     }

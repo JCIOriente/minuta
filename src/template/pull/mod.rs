@@ -67,7 +67,8 @@ impl Origin {
         Origin::new(&format!("{GITHUB}/{reference}/templates"))
     }
 
-    /// The host (and port, if any) files come from, for the confirmation prompt.
+    /// The host (and port, if any) files come from.
+    #[cfg(test)]
     pub fn host(&self) -> &str {
         let rest = self
             .base
