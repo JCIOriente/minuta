@@ -169,10 +169,9 @@ fn trailing_slash_in_base_url_is_ok() {
 #[test]
 fn download_failure_leaves_no_file() {
     let (base, _) = serve(BODY);
-    let closed = {
-        let l = TcpListener::bind("127.0.0.1:0").unwrap();
-        format!("http://{}", l.local_addr().unwrap())
-    };
+    // Port 9 (discard) is never served, unlike a bound-then-dropped port 0 that a parallel
+    // fake server can pick up.
+    let closed = "http://127.0.0.1:9".to_string();
     let good = sha(BODY);
     // "base" is not served by the test server, so it answers 404.
     for (name, url) in [("base", &base), ("tiny", &closed)] {
