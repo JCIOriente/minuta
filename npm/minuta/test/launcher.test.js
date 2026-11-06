@@ -109,7 +109,7 @@ test('package_json_declares_no_install_script_and_pins_the_platform_packages', (
   assert.equal(pj.name, '@jcioriente/minuta');
   assert.equal(pj.license, 'Apache-2.0');
   assert.deepEqual(pj.bin, { minuta: 'bin/minuta.js' });
-  assert.ok(pj.engines.node);
+  assert.deepEqual(pj.engines, { node: '>=22' });
   for (const s of ['preinstall', 'install', 'postinstall']) assert.equal(pj.scripts?.[s], undefined);
   assert.deepEqual(
     Object.keys(pj.optionalDependencies).sort(),
