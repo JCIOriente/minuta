@@ -2,7 +2,6 @@ use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
 use minuta::config::{Config, Overrides};
-use minuta::config_init::TEMPLATE;
 
 /// A temp folder with an empty `home/`; the binary sees only `HOME` (and `MINUTA_CONFIG`
 /// when a test sets it).
@@ -54,6 +53,15 @@ fn assert_ok(out: &Output) {
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(out));
 }
 
+/// The exact file `minuta config init` writes. `config_init::tests` pins `TEMPLATE` to it.
+fn template_fixture() -> String {
+    std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/config_init/config.toml"
+    ))
+    .unwrap()
+}
+
 fn defaults() -> Config {
     Config::resolve(Overrides::default(), &|_| None, None).unwrap()
 }
@@ -68,7 +76,7 @@ fn config_init_creates_file_and_parent() {
     assert_ok(&out);
     assert_eq!(stdout(&out), format!("created {}\n", path.display()));
     assert_eq!(stderr(&out), "");
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), TEMPLATE);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), template_fixture());
 
     // `config show` then reports only defaults and unset keys.
     let show = env.minuta(&["config", "show"]);
@@ -121,7 +129,7 @@ fn config_init_second_run_leaves_template() {
             path.display()
         )
     );
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), TEMPLATE);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), template_fixture());
 }
 
 #[test]
@@ -134,7 +142,7 @@ fn config_init_force_overwrites() {
     let out = env.minuta(&["config", "init", "--force"]);
     assert_ok(&out);
     assert_eq!(stdout(&out), format!("overwrote {}\n", path.display()));
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), TEMPLATE);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), template_fixture());
 }
 
 #[test]
@@ -144,7 +152,7 @@ fn config_init_force_creates_missing_file() {
     let out = env.minuta(&["config", "init", "--force"]);
     assert_ok(&out);
     assert_eq!(stdout(&out), format!("created {}\n", path.display()));
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), TEMPLATE);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), template_fixture());
 }
 
 #[test]
@@ -179,7 +187,10 @@ fn config_init_honours_minuta_config() {
     let out = cmd.output().unwrap();
     assert_ok(&out);
     assert_eq!(stdout(&out), format!("created {}\n", custom.display()));
-    assert_eq!(std::fs::read_to_string(&custom).unwrap(), TEMPLATE);
+    assert_eq!(
+        std::fs::read_to_string(&custom).unwrap(),
+        template_fixture()
+    );
     assert!(!env.default_config().try_exists().unwrap());
     assert!(!env.home().join(".minuta").try_exists().unwrap());
 }

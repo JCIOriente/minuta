@@ -1,0 +1,55 @@
+# minuta configuration, written by `minuta config init`.
+# Every key is commented out and shows its default. Remove the leading "# " to set one.
+# MINUTA_* environment variables and command-line flags override this file.
+
+# Folder where job folders are created.
+# out_dir = "./minuta-out"
+
+[whisper]
+# bin = "whisper-cli"
+# Model name or path. Unset by default.
+# model = "small"
+# Speech language, or "auto" to detect it.
+# lang = "auto"
+# Voice activity detection model, a name or path. Unset by default: no VAD.
+# vad_model = "silero-v5.1.2"
+# models_dir = "~/.minuta/models"
+
+# [ffmpeg]
+# bin = "ffmpeg"
+
+# [ffprobe]
+# bin = "ffprobe"
+
+# [llm]
+# default = "ollama:gemma4:26b"
+# Language of generated documents. Unset by default: the speech language is used.
+# output_lang = "en"
+# Parallel LLM calls. Unset by default: the backend decides.
+# concurrency = 2
+# retries = 3
+# backoff_ms = 2000
+# repairs = 2
+
+# [ollama]
+# url = "http://127.0.0.1:11434"
+# num_ctx = 16384
+
+# [claude]
+# bin = "claude"
+
+# [codex]
+# bin = "codex"
+
+# Any OpenAI-compatible server, such as LM Studio or Colibri. Name it here, then use
+# `--llm lmstudio:<model>`. Repeat the table for each server.
+#
+# [endpoints.lmstudio]
+#   Base URL, including /v1. Required.
+#   url = "http://127.0.0.1:1234/v1"
+#   Prompt and reply budget per call. Must fit the context the server gives the model.
+#   context_tokens = 16384
+#   Seconds to wait for one reply. Raise it for slow models.
+#   timeout_secs = 600
+#   The name of the environment variable holding the API key, never the key itself.
+#   api_key_env = "MY_SERVER_KEY"

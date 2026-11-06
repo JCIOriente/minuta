@@ -174,3 +174,13 @@ fn endpoint_example_parses_once_uncommented() {
         "MY_SERVER_KEY"
     );
 }
+
+/// The library half of the binary tests in `tests/config_init.rs`, which compare the file
+/// `config init` writes with the same fixture.
+#[test]
+fn template_matches_the_committed_fixture() {
+    assert_eq!(
+        TEMPLATE,
+        include_str!("../../tests/fixtures/config_init/config.toml")
+    );
+}
