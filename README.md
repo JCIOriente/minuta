@@ -126,6 +126,7 @@ are downloaded with `minuta templates pull`.
 | [How-to guides](https://github.com/JCIOriente/minuta/blob/main/docs/guides/README.md) | Step by step: your own templates, an LLM and a whisper model, fixing `minuta doctor`, and a recording to meeting minutes |
 | [Templates](https://github.com/JCIOriente/minuta/blob/main/docs/templates.md) | Built-in templates, downloading more, writing your own, choosing a backend |
 | [Reference](https://github.com/JCIOriente/minuta/blob/main/docs/reference.md) | Commands, the job folder, caching, configuration and troubleshooting |
+| [Stability](https://github.com/JCIOriente/minuta/blob/main/docs/stability.md) | What 1.0 promises will not break, what may change, and how deprecations work |
 
 Run `minuta help <command>` for the full usage of any command.
 

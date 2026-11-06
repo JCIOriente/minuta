@@ -18,7 +18,8 @@
 | `minuta config show` | Print every setting, its value and where it came from |
 | `minuta config init [--force]` | Write a commented template of every setting to the config file path; an existing file is left alone unless `--force` is given |
 
-Run `minuta help <command>` for the full usage of any command.
+Run `minuta help <command>` for the full usage of any command. What is safe to
+rely on across versions is in [Stability](stability.md).
 
 ### Options for `run` and `transcribe`
 
