@@ -3,15 +3,11 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
-use std::time::Duration;
 
-#[cfg(unix)]
-use crate::error::{Error, Result};
 use crate::job::{Ctx, Step};
 use crate::steps::probe::{read_probe, Probe, SourceProbe};
 #[cfg(unix)]
-use crate::steps::transcribe::{Transcribe, TranscribeOutcome};
+use crate::steps::transcribe::Transcribe;
 use crate::tools::{inspect, run, RunOpts, ToolInfo, ToolPaths};
 
 pub(super) struct Tools {
@@ -246,24 +242,4 @@ pub(super) fn names_in(dir: &Path) -> Vec<String> {
 #[cfg(unix)]
 pub(super) fn step(s: &Setup, lang: &str) -> Transcribe {
     Transcribe::new(tool(s.bin.clone(), "1.9.5"), s.model.clone(), lang, None)
-}
-
-/// Retries while the freshly written script is still held open by a fork in another test
-/// thread (ETXTBSY on Linux).
-#[cfg(unix)]
-pub(super) fn run_step(
-    t: &Transcribe,
-    ctx: &Ctx,
-    on_line: &mut dyn FnMut(&str),
-) -> Result<TranscribeOutcome> {
-    let mut attempts = 0;
-    loop {
-        let res = t.run_with(ctx, RunOpts::default(), on_line);
-        let busy = matches!(&res, Err(Error::Io(e)) if e.to_string().contains("Text file busy"));
-        attempts += 1;
-        if !busy || attempts >= 20 {
-            return res;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
 }

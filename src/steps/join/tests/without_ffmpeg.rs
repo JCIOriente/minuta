@@ -11,6 +11,7 @@ use crate::steps::probe::SourceProbe;
 use crate::steps::test_support::ctx;
 #[cfg(unix)]
 use crate::steps::test_support::{as_strings, fake_tool, lines_of, FAKE_STATS};
+use crate::test_support::fixture;
 use crate::tools::{RunOpts, ToolInfo};
 
 #[test]
@@ -82,31 +83,13 @@ fn join_params_change_with_inputs() {
     assert_ne!(base.params(&one), base.params(&fewer));
 }
 
-/// Retry while a freshly written script is still held open by a fork in another test
-/// thread (ETXTBSY on Linux).
-fn retry<T>(mut f: impl FnMut() -> crate::error::Result<T>) -> crate::error::Result<T> {
-    let mut attempts = 0;
-    loop {
-        let res = f();
-        attempts += 1;
-        let busy = matches!(&res, Err(Error::Io(e)) if e.to_string().contains("Text file busy"));
-        if !busy || attempts >= 20 {
-            return res;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-}
-
 #[cfg(unix)]
 #[test]
 fn interrupt_stops_join_and_leaves_no_output() {
-    use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
-    let fake = tmp.path().join("ffmpeg");
-    fs::write(&fake, "#!/bin/sh\nexec sleep 30\n").unwrap();
-    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    // A committed fake that only sleeps, so no test thread writes an executable.
     let tool = ToolInfo {
-        path: fake,
+        path: fixture("bin/hang"),
         version: "fake".into(),
     };
     let probe = |name: &str| SourceProbe {
@@ -139,13 +122,11 @@ fn interrupt_stops_join_and_leaves_no_output() {
     };
 
     let started = Instant::now();
-    let res = retry(|| {
-        let opts = RunOpts {
-            interrupt: Some(Arc::clone(&flag)),
-            ..RunOpts::default()
-        };
-        Join::new(tool.clone(), Encoder::X264).run_with(&ctx, opts, &mut |_| {})
-    });
+    let opts = RunOpts {
+        interrupt: Some(Arc::clone(&flag)),
+        ..RunOpts::default()
+    };
+    let res = Join::new(tool, Encoder::X264).run_with(&ctx, opts, &mut |_| {});
     setter.join().unwrap();
 
     assert!(matches!(res, Err(Error::Interrupted)), "{res:?}");

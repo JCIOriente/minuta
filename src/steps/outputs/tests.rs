@@ -2,7 +2,9 @@ use std::fs;
 
 use crate::job::Step;
 use crate::steps::outputs::Outputs;
-use crate::steps::test_support::{names_in, run_step, setup, step, FIXTURES};
+use crate::steps::test_support::{names_in, setup, step, FIXTURES};
+use crate::test_support::retry_busy;
+use crate::tools::RunOpts;
 use crate::transcript::{self, Segment, Transcript};
 
 #[test]
@@ -50,7 +52,7 @@ fn outputs_derive_from_transcript_json() {
 #[test]
 fn transcript_txt_and_srt_stay_at_root() {
     let s = setup(Some("sample.json"), 0);
-    run_step(&step(&s, "auto"), &s.ctx, &mut |_| {}).unwrap();
+    retry_busy(|| step(&s, "auto").run_with(&s.ctx, RunOpts::default(), &mut |_| {})).unwrap();
     Outputs.run(&s.ctx).unwrap();
 
     assert_eq!(

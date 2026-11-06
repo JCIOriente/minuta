@@ -5,9 +5,10 @@ use crate::error::Error;
 use crate::job::{Ctx, Step};
 use crate::steps::outputs::Outputs;
 use crate::steps::test_support::{
-    as_strings, fake_tool, lines_of, names_in, run_step, setup, step, tool, Setup,
+    as_strings, fake_tool, lines_of, names_in, setup, step, tool, Setup,
 };
 use crate::steps::transcribe::Transcribe;
+use crate::test_support::retry_busy;
 use crate::tools::RunOpts;
 use crate::transcript::Transcript;
 
@@ -35,7 +36,12 @@ fn whisper_args_include_vad_and_json() {
         Some(vad.clone()),
     );
     let mut lines = Vec::new();
-    run_step(&t, &s.ctx, &mut |l| lines.push(l.to_string())).unwrap();
+    retry_busy(|| {
+        t.run_with(&s.ctx, RunOpts::default(), &mut |l| {
+            lines.push(l.to_string())
+        })
+    })
+    .unwrap();
 
     let args = args_of(&s);
     assert!(args.contains(&"--vad".to_string()));
@@ -65,7 +71,7 @@ fn whisper_args_include_vad_and_json() {
 #[test]
 fn no_vad_model_omits_vad() {
     let s = setup(Some("sample.json"), 0);
-    run_step(&step(&s, "es"), &s.ctx, &mut |_| {}).unwrap();
+    retry_busy(|| step(&s, "es").run_with(&s.ctx, RunOpts::default(), &mut |_| {})).unwrap();
     let args = args_of(&s);
     assert!(!args.contains(&"--vad".to_string()));
     assert_eq!(pair(&args, "-l"), "es");
@@ -116,7 +122,8 @@ fn model_change_changes_params() {
 #[test]
 fn empty_transcript_still_writes_outputs() {
     let s = setup(Some("empty.json"), 0);
-    let outcome = run_step(&step(&s, "auto"), &s.ctx, &mut |_| {}).unwrap();
+    let outcome =
+        retry_busy(|| step(&s, "auto").run_with(&s.ctx, RunOpts::default(), &mut |_| {})).unwrap();
     assert_eq!(outcome.warnings.len(), 1);
     assert!(outcome.warnings[0].contains("no speech"));
 
@@ -138,7 +145,8 @@ fn empty_transcript_still_writes_outputs() {
 #[test]
 fn whisper_failure_leaves_no_artifact() {
     let s = setup(None, 3);
-    let err = run_step(&step(&s, "auto"), &s.ctx, &mut |_| {}).unwrap_err();
+    let err = retry_busy(|| step(&s, "auto").run_with(&s.ctx, RunOpts::default(), &mut |_| {}))
+        .unwrap_err();
     assert!(matches!(err, Error::Tool { code: Some(3), .. }), "{err:?}");
     assert!(!s.ctx.dir.join("assets/transcript.json").exists());
     assert!(!s.ctx.dir.join("assets/transcript.json.tmp").exists());
@@ -146,7 +154,8 @@ fn whisper_failure_leaves_no_artifact() {
     // Also when whisper "succeeds" but wrote garbage.
     let s = setup(Some("sample.json"), 0);
     fs::write(&s.bin, "#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = -of ] && p=$2; shift; done\necho nope > \"$p.json\"\n").unwrap();
-    let err = run_step(&step(&s, "auto"), &s.ctx, &mut |_| {}).unwrap_err();
+    let err = retry_busy(|| step(&s, "auto").run_with(&s.ctx, RunOpts::default(), &mut |_| {}))
+        .unwrap_err();
     assert!(matches!(err, Error::Parse(_)), "{err:?}");
     assert!(!s.ctx.dir.join("assets/transcript.json").exists());
     assert_eq!(names_in(&s.ctx.dir.join("assets")), ["audio.wav"]);
@@ -157,7 +166,8 @@ fn whisper_failure_leaves_no_artifact() {
 fn missing_whisper_output_names_file() {
     // Exits 0 but writes no `<prefix>.json`.
     let s = setup(None, 0);
-    let err = run_step(&step(&s, "auto"), &s.ctx, &mut |_| {}).unwrap_err();
+    let err = retry_busy(|| step(&s, "auto").run_with(&s.ctx, RunOpts::default(), &mut |_| {}))
+        .unwrap_err();
 
     let expected = format!(
         "whisper exited without writing {}",
