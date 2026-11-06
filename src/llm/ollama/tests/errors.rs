@@ -1,16 +1,8 @@
 //! `complete` failures: status classification and error messages.
 
 use std::net::TcpListener;
-use std::sync::Arc;
-use std::time::Duration;
 
-use crate::llm::ollama::Ollama;
-use crate::llm::Backend;
-
-use crate::test_support::fake_http::{FakeHttp, Route};
-use crate::test_support::fake_ollama::{FakeOllama, Reply, Responder};
-
-use super::{info, llm_err, no_interrupt, show};
+use super::*;
 
 #[test]
 fn status_classification() {

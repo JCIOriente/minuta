@@ -2,13 +2,7 @@
 
 use std::net::TcpListener;
 
-use crate::llm::ollama::check;
-use serde_json::json;
-
-use crate::test_support::fake_http::{FakeHttp, Route};
-use crate::test_support::fake_ollama::FakeOllama;
-
-use super::{info, ok_chat, show, BAD_PORT};
+use super::*;
 
 #[test]
 fn check_unreachable_is_missing() {

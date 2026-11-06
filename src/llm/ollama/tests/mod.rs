@@ -1,13 +1,10 @@
 //! Tests for the Ollama backend, one file per topic. Helpers shared by several topics live here.
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use crate::error::Error;
-use crate::llm::ollama::OllamaInfo;
-use serde_json::{json, Value};
-
-use crate::test_support::fake_ollama::{Reply, Responder};
+use super::*;
+use crate::test_support::fake_http::{FakeHttp, Route};
+use crate::test_support::fake_ollama::{FakeOllama, Reply, Responder};
 
 mod chat;
 mod check;

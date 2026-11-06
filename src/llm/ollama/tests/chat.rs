@@ -1,19 +1,10 @@
 //! `complete`: the request sent, context size, transport and interrupts.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use crate::error::Error;
-use crate::llm::ollama::Ollama;
-use crate::llm::Backend;
-use serde_json::{json, Value};
-
-use crate::test_support::fake_http::{FakeHttp, Route};
-use crate::test_support::fake_ollama::{FakeOllama, Reply, Responder};
-
-use super::{info, llm_err, no_interrupt, ok_chat, show, BAD_PORT};
+use super::*;
 
 #[test]
 fn chat_request_shape() {

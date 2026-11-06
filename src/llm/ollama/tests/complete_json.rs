@@ -1,18 +1,9 @@
 //! `complete_json`: structured output.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::thread;
-use std::time::Duration;
 
-use crate::error::Error;
-use crate::llm::ollama::Ollama;
-use crate::llm::Backend;
-use serde_json::{json, Value};
-
-use crate::test_support::fake_ollama::{FakeOllama, Reply, Responder};
-
-use super::{info, llm_err, no_interrupt, ok_chat, show};
+use super::*;
 
 fn schema() -> Value {
     json!({"type": "object", "properties": {"title": {"type": "string"}}, "required": ["title"]})
