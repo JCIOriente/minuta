@@ -44,4 +44,4 @@
 ## Old job folder shows stale files and reruns everything after upgrade
 - Symptom: after upgrading, a run in an existing job folder redoes transcription and LLM calls, and the folder holds `job.json`, `transcript.json`, `audio.wav` and others at the root next to `assets/` and `.minuta/`.
 - Cause: the job folder layout changed (ADR-0013). State moved to `.minuta/job.json` and nothing is migrated, so the old folder looks new. The old files are never read again.
-- Avoid: delete the old files (or the whole job folder) once. In tests and code, build every job path with `minuta::job::layout` instead of `job.join("transcript.json")`; a literal path at the root compiles and then fails or reads a stale file.
+- Avoid: delete the old files (or the whole job folder) once. In `src/` and in unit tests, build every job path with `job::layout`. Black-box tests in `tests/cli/` spell the documented layout out on purpose through one helper per path in `tests/cli/common.rs` (`state_file`, `template_json`, ...), so a layout change fails them.
