@@ -48,5 +48,9 @@ fn llm_err(e: Error) -> (String, bool) {
     }
 }
 
+/// A port nothing listens on (discard). Never bind port 0 and drop the listener to find one:
+/// a parallel fake server can be handed that port.
+const CLOSED: &str = "http://127.0.0.1:9";
+
 /// ureq 3 swaps a port it cannot parse for the scheme's default, so a request would go out.
 const BAD_PORT: &str = "http://127.0.0.1:99999";

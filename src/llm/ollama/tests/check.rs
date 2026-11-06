@@ -1,18 +1,10 @@
 //! `check`: reachability, model lookup, `/api/tags` and `/api/show` parsing.
 
-use std::net::TcpListener;
-
 use super::*;
 
 #[test]
 fn check_unreachable_is_missing() {
-    let port = TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let url = format!("http://127.0.0.1:{port}");
-    let missing = check(&url, "gemma4:26b").unwrap_err();
+    let missing = check(CLOSED, "gemma4:26b").unwrap_err();
     assert_eq!(missing.name, "ollama");
     assert!(
         missing.hint.starts_with("start Ollama (`ollama serve`)"),

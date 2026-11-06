@@ -1,7 +1,5 @@
 //! `complete` failures: status classification and error messages.
 
-use std::net::TcpListener;
-
 use super::*;
 
 #[test]
@@ -43,17 +41,7 @@ fn error_body_message_is_surfaced() {
 
 #[test]
 fn connection_refused_is_transient() {
-    let port = TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let o = Ollama::new(
-        &format!("http://127.0.0.1:{port}"),
-        "m",
-        1024,
-        &info(None, false),
-    );
+    let o = Ollama::new(CLOSED, "m", 1024, &info(None, false));
     let (_, transient) = llm_err(o.complete("s", "u", &no_interrupt()).unwrap_err());
     assert!(transient);
 }
