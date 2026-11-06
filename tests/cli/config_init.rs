@@ -1,8 +1,11 @@
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
+use crate::common::{output, stderr, stdout};
+
 /// A temp folder with an empty `home/`; the binary sees only `HOME` (and `MINUTA_CONFIG`
-/// when a test sets it).
+/// when a test sets it). Unlike `common::Env`, it sets no `MINUTA_CONFIG`, so `config init`
+/// writes to its default path under `HOME`.
 struct Env {
     tmp: tempfile::TempDir,
 }
@@ -35,16 +38,8 @@ impl Env {
     }
 
     fn minuta(&self, args: &[&str]) -> Output {
-        self.command(args).output().unwrap()
+        output(&mut self.command(args))
     }
-}
-
-fn stdout(out: &Output) -> String {
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
-
-fn stderr(out: &Output) -> String {
-    String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
 fn assert_ok(out: &Output) {
@@ -179,7 +174,7 @@ fn config_init_honours_minuta_config() {
     let custom = env.tmp.path().join("elsewhere/nested/minuta.toml");
     let mut cmd = env.command(&["config", "init"]);
     cmd.env("MINUTA_CONFIG", &custom);
-    let out = cmd.output().unwrap();
+    let out = output(&mut cmd);
     assert_ok(&out);
     assert_eq!(stdout(&out), format!("created {}\n", custom.display()));
     assert_eq!(
@@ -199,7 +194,7 @@ fn config_init_io_error_names_path() {
     let target = blocker.join("config.toml");
     let mut cmd = env.command(&["config", "init"]);
     cmd.env("MINUTA_CONFIG", &target);
-    let out = cmd.output().unwrap();
+    let out = output(&mut cmd);
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(stdout(&out), "");
     let source = std::fs::create_dir_all(&blocker).unwrap_err();

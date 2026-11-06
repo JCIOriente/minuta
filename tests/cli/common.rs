@@ -4,6 +4,8 @@ use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+#[path = "../../src/test_support/fake_http.rs"]
+pub mod fake_http;
 #[path = "../../src/test_support/fake_ollama.rs"]
 pub mod fake_ollama;
 
