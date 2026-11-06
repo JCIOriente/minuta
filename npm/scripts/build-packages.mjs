@@ -18,6 +18,14 @@ const MAIN_NAME = '@jcioriente/minuta';
 const REPOSITORY = { type: 'git', url: 'git+https://github.com/JCIOriente/minuta.git' };
 const HOMEPAGE = 'https://github.com/JCIOriente/minuta';
 
+// User-facing files of the repository that the main package ships, relative to the repository root.
+const SHIPPED_FILES = [
+  'README.md',
+  'README.es.md',
+  'LICENSE',
+  ...['install', 'reference', 'templates'].flatMap((n) => [`docs/${n}.md`, `docs/${n}.es.md`]),
+];
+
 const USAGE =
   'usage: build-packages.mjs --version <X.Y.Z> --out <dir> [--cargo-toml <file>] [--main-src <dir>] ' +
   '--binary <rust-target>=<path> (once per target)';
@@ -48,9 +56,40 @@ function readMainSource(mainSrc) {
   }
 }
 
+// Reads the shipped files. In Markdown files a relative link to a path that is not shipped becomes an
+// absolute GitHub URL pinned to the release tag, so it still works from the npm page. Returns
+// [{ rel, text }] with `rel` relative to the repository root, in posix form.
+function readShipped(repoRoot, version) {
+  const shipped = new Set(SHIPPED_FILES);
+  return SHIPPED_FILES.map((rel) => {
+    const file = path.join(repoRoot, rel);
+    if (!fs.statSync(file, { throwIfNoEntry: false })?.isFile()) {
+      throw new Error(`file to ship is missing: ${file}`);
+    }
+    let text = fs.readFileSync(file, 'utf8');
+    if (rel.endsWith('.md')) {
+      text = text.replace(/\]\(([^)\s]+)\)/g, (whole, target) => {
+        if (/^([a-z][a-z0-9+.-]*:|#|\/)/i.test(target)) return whole;
+        const [pathPart, ...fragment] = target.split('#');
+        const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(rel), decodeURI(pathPart)));
+        if (resolved === '..' || resolved.startsWith('../')) {
+          throw new Error(`link ${target} in ${rel} leaves the repository`);
+        }
+        if (shipped.has(resolved)) return whole;
+        const stat = fs.statSync(path.join(repoRoot, resolved), { throwIfNoEntry: false });
+        if (!stat) throw new Error(`link ${target} in ${rel} points to a path that does not exist`);
+        const kind = stat.isDirectory() ? 'tree' : 'blob';
+        const hash = fragment.length > 0 ? `#${fragment.join('#')}` : '';
+        return `](${HOMEPAGE}/${kind}/v${version}/${resolved}${hash})`;
+      });
+    }
+    return { rel, text, file };
+  });
+}
+
 // Everything that can be wrong is found here, before the first file is written.
 // Returns the parsed main package.json.
-function checkInputs({ version, cargoToml, binaries, outDir, mainSrc }) {
+function checkInputs({ version, cargoToml, binaries, outDir, mainSrc, repoRoot }) {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`version ${version} is not X.Y.Z`);
   const crate = cargoVersion(cargoToml);
   if (crate !== version) throw new Error(`version ${version} does not match Cargo.toml version ${crate}`);
@@ -70,13 +109,13 @@ function checkInputs({ version, cargoToml, binaries, outDir, mainSrc }) {
   if (fs.existsSync(outDir) && fs.readdirSync(outDir).length > 0) {
     throw new Error(`output directory is not empty: ${outDir}`);
   }
-  return main;
+  return { main, shipped: readShipped(repoRoot, version) };
 }
 
 // `version` may carry the tag's leading "v". Returns [{ name, dir }] in publish order.
-export function buildPackages({ version, cargoToml, binaries, outDir, mainSrc }) {
+export function buildPackages({ version, cargoToml, binaries, outDir, mainSrc, repoRoot = path.join(here, '..', '..') }) {
   version = version.replace(/^v/, '');
-  const main = checkInputs({ version, cargoToml, binaries, outDir, mainSrc });
+  const { main, shipped } = checkInputs({ version, cargoToml, binaries, outDir, mainSrc, repoRoot });
 
   const published = [];
   for (const { platform, arch, pkg, rustTarget } of TARGETS) {
@@ -106,6 +145,11 @@ export function buildPackages({ version, cargoToml, binaries, outDir, mainSrc })
     fs.cpSync(path.join(mainSrc, sub), path.join(mainDir, sub), { recursive: true });
   }
   fs.chmodSync(path.join(mainDir, 'bin', 'minuta.js'), 0o755);
+  for (const { rel, text, file } of shipped) {
+    const dest = path.join(mainDir, rel);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, text, { mode: fs.statSync(file).mode & 0o666 });
+  }
   main.version = version;
   // Exact versions, no range: a launcher must never run a binary of another version.
   main.optionalDependencies = Object.fromEntries(
