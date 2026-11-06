@@ -15,7 +15,7 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     path
 }
 
-fn run_r(argv: &[OsString], opts: &RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<Output> {
+fn run_r(argv: &[OsString], opts: &RunOpts, on_line: &mut dyn FnMut(&str)) -> Result<()> {
     retry_busy(|| run(argv, opts.clone(), on_line))
 }
 
