@@ -78,7 +78,7 @@ fn fields_run_then_cached() {
     assert!(out.status.success(), "{}", stderr(&out));
     let job = env.job_dir("a");
     assert_eq!(
-        read_json(minuta::job::layout::template_json(&job, "youtube")),
+        read_json(template_json(&job, "youtube")),
         valid_youtube_json()
     );
     assert_eq!(
@@ -143,7 +143,7 @@ fn fields_repair_request() {
     assert!(message(youtube[1], 0).starts_with("You correct a JSON object."));
     let job = env.job_dir("a");
     assert_eq!(
-        read_json(minuta::job::layout::template_json(&job, "youtube")),
+        read_json(template_json(&job, "youtube")),
         valid_youtube_json()
     );
     assert_eq!(
@@ -182,7 +182,7 @@ fn notes_over_limit_gets_a_repair_call() {
         "Text\n\nShort\n"
     );
     assert_eq!(
-        read_json(minuta::job::layout::template_json(&job, "post"))["fields"]["notes"],
+        read_json(template_json(&job, "post"))["fields"]["notes"],
         "Short"
     );
 }
@@ -212,7 +212,7 @@ fn notes_follow_filled_chapters_and_hashtags() {
         "A class.\n\n0:00 Introducción\n0:32 La propiedad\n1:47 Movimientos y copias\n3:25 Préstamos\n4:40 Ejercicios\n\n#rust\n\nPinned comment: Which part was hardest?\n"
     );
     assert_eq!(
-        read_json(minuta::job::layout::template_json(&job, "post")),
+        read_json(template_json(&job, "post")),
         serde_json::json!({
             "version": 1,
             "template": "post",
@@ -249,7 +249,7 @@ fn fields_repairs_exhausted() {
         "{err}"
     );
     let job = env.job_dir("a");
-    assert!(!minuta::job::layout::template_json(&job, "youtube").exists());
+    assert!(!template_json(&job, "youtube").exists());
     assert!(!job.join("youtube.md").exists());
     assert_eq!(
         fake.chat_count(),
@@ -293,7 +293,7 @@ fn fields_invalid_json_repaired() {
     assert!(message(youtube[1], 1).contains("Sure! Here is your copy."));
     let job = env.job_dir("a");
     assert_eq!(
-        read_json(minuta::job::layout::template_json(&job, "youtube")),
+        read_json(template_json(&job, "youtube")),
         valid_youtube_json()
     );
     assert_eq!(
@@ -318,12 +318,11 @@ fn fields_chunked_format_only_final() {
         (true, true) => Reply::chat(r#"{"title": "Short"}"#),
     }));
     let mut cmd = env.llm_command(&["run", "a.mp4", "-t", "headline"], &fake.url());
-    let out = cmd
-        .env("FAKE_WHISPER_FIXTURE", &fixture)
-        .env("MINUTA_OLLAMA_NUM_CTX", "600")
-        .env("MINUTA_LLM_CONCURRENCY", "1")
-        .output()
-        .unwrap();
+    let out = output(
+        cmd.env("FAKE_WHISPER_FIXTURE", &fixture)
+            .env("MINUTA_OLLAMA_NUM_CTX", "600")
+            .env("MINUTA_LLM_CONCURRENCY", "1"),
+    );
     assert!(out.status.success(), "{}", stderr(&out));
     let sent = chats(&fake);
     let by_role = |is_role: &dyn Fn(&str) -> bool| -> Vec<&Request> {
@@ -351,10 +350,7 @@ fn fields_chunked_format_only_final() {
     assert_eq!(consolidations[0].body["format"], schema);
     assert_eq!(repairs[0].body["format"], schema);
     assert_eq!(
-        read_json(minuta::job::layout::template_json(
-            &env.job_dir("a"),
-            "headline"
-        ))["fields"]["title"],
+        read_json(template_json(&env.job_dir("a"), "headline"))["fields"]["title"],
         "Short"
     );
 }
@@ -371,14 +367,10 @@ fn fields_on_claude() {
     let argv = env.path("claude.argv");
     let fake = ollama_with(Arc::new(|_| Reply::chat("unused")));
     let mut cmd = env.llm_command(&["run", "a.mp4", "-t", "post"], &fake.url());
-    let out = cmd
-        .env("FAKE_CLAUDE_ARGV", &argv)
-        .env(
-            "FAKE_CLAUDE_REPLY",
-            r#"{"title": "From claude", "tags": ["a", "b"]}"#,
-        )
-        .output()
-        .unwrap();
+    let out = output(cmd.env("FAKE_CLAUDE_ARGV", &argv).env(
+        "FAKE_CLAUDE_REPLY",
+        r#"{"title": "From claude", "tags": ["a", "b"]}"#,
+    ));
     assert!(out.status.success(), "{}", stderr(&out));
     let args = fs::read_to_string(&argv).unwrap();
     let (_, after_flag) = args
@@ -389,7 +381,7 @@ fn fields_on_claude() {
     assert!(after_flag.contains("\"tags\" (array of strings)"), "{args}");
     let job = env.job_dir("a");
     assert_eq!(
-        read_json(minuta::job::layout::template_json(&job, "post"))["fields"],
+        read_json(template_json(&job, "post"))["fields"],
         serde_json::json!({"title": "From claude", "tags": ["a", "b"]})
     );
     assert_eq!(
@@ -424,10 +416,10 @@ fn fields_chained_reads_md() {
     let job = env.job_dir("a");
     // youtube ran only because post reads it: its files are in `assets/`.
     assert!(!job.join("youtube.md").exists());
-    let youtube_md = fs::read_to_string(minuta::job::layout::implicit_md(&job, "youtube")).unwrap();
+    let youtube_md = fs::read_to_string(implicit_md(&job, "youtube")).unwrap();
     assert_eq!(youtube_md, VALID_YOUTUBE_MD);
     assert_eq!(
-        read_json(minuta::job::layout::template_json(&job, "youtube")),
+        read_json(template_json(&job, "youtube")),
         valid_youtube_json()
     );
     let sent = chats(&fake);
@@ -492,10 +484,7 @@ fn fields_limit_edit_reruns() {
     cached.sort();
     assert_eq!(cached, ["other", "summary"], "{}", stderr(&out));
     assert_eq!(
-        read_json(minuta::job::layout::template_json(
-            &env.job_dir("a"),
-            "youtube"
-        ))["fields"]["title"],
+        read_json(template_json(&env.job_dir("a"), "youtube"))["fields"]["title"],
         "Title 90"
     );
 }

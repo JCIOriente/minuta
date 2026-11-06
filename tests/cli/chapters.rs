@@ -82,11 +82,11 @@ fn count(roles: &[&str], role: &str) -> usize {
 
 /// Like `run_class`, with a context so small that the transcript is split into chunks.
 fn run_chunked(env: &Env, args: &[&str], fake: &FakeOllama) -> Output {
-    class_command(env, args, &fake.url())
-        .env("MINUTA_OLLAMA_NUM_CTX", "1200")
-        .env("MINUTA_LLM_CONCURRENCY", "1")
-        .output()
-        .unwrap()
+    output(
+        class_command(env, args, &fake.url())
+            .env("MINUTA_OLLAMA_NUM_CTX", "1200")
+            .env("MINUTA_LLM_CONCURRENCY", "1"),
+    )
 }
 
 /// A chapters answer whose first chapter lasts 4 s (`SHORT_FIRST`).
@@ -154,7 +154,7 @@ fn chapters_run_writes_artifacts_then_cached() {
     let job = env.job_dir("a");
     let state = &job_json(&job)["templates"]["chapters"];
     let outcome = (
-        read(&minuta::job::layout::template_json(&job, "chapters")),
+        read(&template_json(&job, "chapters")),
         read(&job.join("chapters.md")),
         state["status"].clone(),
         state["artifacts"].clone(),
@@ -226,10 +226,7 @@ fn chapters_start_off_segment_is_snapped() {
     let out = run_class(&env, &ARGS_CHAPTERS, &fake);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
-        read(&minuta::job::layout::template_json(
-            &env.job_dir("a"),
-            "chapters"
-        )),
+        read(&template_json(&env.job_dir("a"), "chapters")),
         VALID_CHAPTERS_JSON
     );
 }
@@ -328,11 +325,10 @@ fn chapters_short_transcript_fails_before_any_call() {
     let fake = scripted(|_| valid_chapters(), "unused");
     // No FAKE_WHISPER_FIXTURE: the fake whisper emits the 7.25 s `sample.json`.
     let mut cmd = env.command(&ARGS_CHAPTERS);
-    let out = cmd
-        .env("MINUTA_OLLAMA_URL", fake.url())
-        .env("MINUTA_LLM_BACKOFF_MS", "0")
-        .output()
-        .unwrap();
+    let out = output(
+        cmd.env("MINUTA_OLLAMA_URL", fake.url())
+            .env("MINUTA_LLM_BACKOFF_MS", "0"),
+    );
     assert_eq!(
         (out.status.code(), last_line(&out), fake.chat_count()),
         (
@@ -374,11 +370,10 @@ fn chapters_on_claude_gets_block_and_accepts_reply() {
         &["run", "a.mp4", "-t", "chapters", "--llm", "claude"],
         &fake.url(),
     );
-    let out = cmd
-        .env("FAKE_CLAUDE_ARGV", &argv)
-        .env("FAKE_CLAUDE_REPLY", valid_chapters())
-        .output()
-        .unwrap();
+    let out = output(
+        cmd.env("FAKE_CLAUDE_ARGV", &argv)
+            .env("FAKE_CLAUDE_REPLY", valid_chapters()),
+    );
     assert!(out.status.success(), "{}", stderr(&out));
     let args = read(&argv);
     let system = args
@@ -586,10 +581,7 @@ fn homes(job: &Path, name: &str) -> (Vec<String>, Vec<String>) {
         files.sort();
         files
     };
-    (
-        listing(job.to_path_buf()),
-        listing(job.join(minuta::job::layout::ASSETS_DIR)),
-    )
+    (listing(job.to_path_buf()), listing(assets_dir(job)))
 }
 
 #[test]
@@ -602,7 +594,7 @@ fn requested_template_writes_md_at_root_and_json_in_assets() {
     let job = env.job_dir("a");
     let outcome = (
         homes(&job, "chapters"),
-        read(&minuta::job::layout::template_json(&job, "chapters")),
+        read(&template_json(&job, "chapters")),
         read(&job.join("chapters.md")),
         job_json(&job)["templates"]["chapters"]["artifacts"].clone(),
     );
@@ -632,8 +624,8 @@ fn youtube_run_leaves_no_chapters_at_root() {
     let job = env.job_dir("a");
     let outcome = (
         homes(&job, "chapters"),
-        read(&minuta::job::layout::template_json(&job, "chapters")),
-        read(&minuta::job::layout::implicit_md(&job, "chapters")),
+        read(&template_json(&job, "chapters")),
+        read(&implicit_md(&job, "chapters")),
         homes(&job, "youtube"),
         read(&job.join("youtube.md")),
         job_json(&job)["templates"]["chapters"]["artifacts"].clone(),
@@ -730,7 +722,7 @@ fn requesting_an_implicit_template_moves_its_outputs() {
     let job = env.job_dir("a");
     let outcome = (
         homes(&job, "chapters"),
-        read(&minuta::job::layout::template_json(&job, "chapters")),
+        read(&template_json(&job, "chapters")),
         read(&job.join("chapters.md")),
     );
     assert_eq!(

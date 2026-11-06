@@ -1,26 +1,13 @@
-#![cfg(unix)]
-
 //! Opt-in: `run -t summary` and `run -t youtube` (which also runs `chapters`, whose files go to `assets/`) against the real
 //! local Ollama. Set `MINUTA_E2E_LLM=1`; the model is `ollama:gemma4:26b` unless
 //! `MINUTA_E2E_LLM_MODEL` names another. The transcript comes from the fake whisper, so no
 //! whisper model is needed; ffmpeg and a running Ollama are.
 
 use std::fs;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
-const CLASS_FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/whisper/class.json"
-);
-
-fn have(tool: &str) -> bool {
-    Command::new(tool)
-        .arg("-version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
-}
+use crate::common::{have_ffmpeg, output, template_json, CLASS_FIXTURE, FAKE_WHISPER};
 
 /// Runs `minuta run clip.mp4 -t <template>` against the real Ollama and returns the job folder,
 /// with the temp dir that holds it (it is deleted on drop). `fixture` is the whisper JSON the
@@ -31,7 +18,7 @@ fn run_real(template: &str, fixture: Option<&str>) -> Option<(tempfile::TempDir,
         eprintln!("skipping: set MINUTA_E2E_LLM=1 to run `-t {template}` against the real Ollama");
         return None;
     }
-    assert!(have("ffmpeg") && have("ffprobe"), "ffmpeg/ffprobe needed");
+    assert!(have_ffmpeg(), "ffmpeg/ffprobe needed");
 
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("home");
@@ -61,19 +48,13 @@ fn run_real(template: &str, fixture: Option<&str>) -> Option<(tempfile::TempDir,
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_CACHE_HOME", home.join(".cache"))
         .env("MINUTA_CONFIG", tmp.path().join("config.toml"))
-        .env(
-            "MINUTA_WHISPER_BIN",
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/bin/whisper-cli"
-            ),
-        )
+        .env("MINUTA_WHISPER_BIN", FAKE_WHISPER)
         .env("MINUTA_WHISPER_MODEL", tmp.path().join("ggml-test.bin"))
         .stdin(Stdio::null());
     if let Some(fixture) = fixture {
         cmd.env("FAKE_WHISPER_FIXTURE", fixture);
     }
-    let out = cmd.output().unwrap();
+    let out = output(&mut cmd);
     assert!(
         out.status.success(),
         "run failed: {}",
@@ -210,14 +191,13 @@ fn e2e_chapters_and_youtube_limits() {
     let Some((_tmp, job)) = run_real("youtube", Some(CLASS_FIXTURE)) else {
         return;
     };
+    let job = Path::new(&job);
     let chapters: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(format!("{job}/assets/chapters.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&fs::read_to_string(template_json(job, "chapters")).unwrap()).unwrap();
     assert_chapter_rules(&chapters);
 
     let artifact: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(format!("{job}/assets/youtube.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&fs::read_to_string(template_json(job, "youtube")).unwrap()).unwrap();
     assert_eq!(artifact["version"], 1);
     assert_eq!(artifact["template"], "youtube");
     let fields = &artifact["fields"];
@@ -243,7 +223,7 @@ fn e2e_chapters_and_youtube_limits() {
         .collect();
     assert!(!tags.is_empty() && tags.len() <= 15, "tags: {fields}");
     assert!(tags.join(", ").chars().count() <= 500, "tags: {fields}");
-    assert!(!fs::read_to_string(format!("{job}/youtube.md"))
+    assert!(!fs::read_to_string(job.join("youtube.md"))
         .unwrap()
         .trim()
         .is_empty());

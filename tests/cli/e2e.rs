@@ -1,10 +1,10 @@
-#![cfg(unix)]
-
 //! Opt-in: the real `whisper-cli` with a real model. Set `MINUTA_E2E=1`; give a model file
 //! with `MINUTA_E2E_MODEL`, or the test runs `minuta models pull tiny` into a temp cache.
 
 use std::fs;
 use std::process::{Command, Stdio};
+
+use crate::common::{have_ffmpeg, output};
 
 fn have(tool: &str, flag: &str) -> bool {
     Command::new(tool)
@@ -21,10 +21,7 @@ fn e2e_real_whisper_tiny() {
         eprintln!("skipping: set MINUTA_E2E=1 to run the real whisper-cli end to end");
         return;
     }
-    assert!(
-        have("ffmpeg", "-version") && have("ffprobe", "-version"),
-        "ffmpeg/ffprobe needed"
-    );
+    assert!(have_ffmpeg(), "ffmpeg/ffprobe needed");
     assert!(
         have("whisper-cli", "--version") || have("whisper-cli", "-h"),
         "whisper-cli needed"
@@ -52,7 +49,7 @@ fn e2e_real_whisper_tiny() {
     let model = match std::env::var("MINUTA_E2E_MODEL") {
         Ok(m) if !m.is_empty() => m,
         _ => {
-            let pull = minuta(&["models", "pull", "tiny"]).output().unwrap();
+            let pull = output(&mut minuta(&["models", "pull", "tiny"]));
             assert!(
                 pull.status.success(),
                 "models pull tiny failed: {}",
@@ -80,9 +77,7 @@ fn e2e_real_whisper_tiny() {
         .success();
     assert!(ok, "ffmpeg could not generate the clip");
 
-    let out = minuta(&["run", "tone.wav", "--model", &model])
-        .output()
-        .unwrap();
+    let out = output(&mut minuta(&["run", "tone.wav", "--model", &model]));
     assert!(
         out.status.success(),
         "{}",

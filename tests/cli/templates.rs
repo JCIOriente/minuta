@@ -158,11 +158,11 @@ fn templates_failed_chunk_resumes_with_unfinished_calls_only() {
         _ => Reply::chat("note"),
     }));
     let configure = |mut cmd: Command| {
-        cmd.env("FAKE_WHISPER_FIXTURE", &fixture)
-            .env("MINUTA_OLLAMA_NUM_CTX", "190")
-            .env("MINUTA_LLM_CONCURRENCY", "1")
-            .output()
-            .unwrap()
+        output(
+            cmd.env("FAKE_WHISPER_FIXTURE", &fixture)
+                .env("MINUTA_OLLAMA_NUM_CTX", "190")
+                .env("MINUTA_LLM_CONCURRENCY", "1"),
+        )
     };
     let args = ["run", "a.mp4", "-t", "notes"];
     let out = configure(env.llm_command(&args, &fake.url()));
@@ -196,10 +196,7 @@ fn templates_interrupt_during_chat_exits_130_without_output() {
     require_ffmpeg!();
     let env = env_with_clip();
     let fake = ollama_with(Arc::new(|_| Reply::Hang));
-    let mut child = env
-        .llm_command(&["run", "a.mp4", "-t", "summary"], &fake.url())
-        .spawn()
-        .unwrap();
+    let mut child = spawn(&mut env.llm_command(&["run", "a.mp4", "-t", "summary"], &fake.url()));
     wait_until("the chat request", || fake.chat_count() >= 1);
     signal("-INT", &child);
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -253,7 +250,7 @@ fn templates_prompt_is_in_the_transcript_language() {
     let env = env_with_clip();
     let fake = ollama("text");
     let mut cmd = env.llm_command(&["run", "a.mp4", "-t", "summary"], &fake.url());
-    let out = cmd.env("MINUTA_OLLAMA_NUM_CTX", "16384").output().unwrap();
+    let out = output(cmd.env("MINUTA_OLLAMA_NUM_CTX", "16384"));
     assert!(out.status.success(), "{}", stderr(&out));
     let sent = chats(&fake);
     assert!(message(&sent[0], 0).contains("in Spanish"));
@@ -300,10 +297,7 @@ fn templates_preflight_reports_ollama_and_whisper_together() {
     require_ffmpeg!();
     let env = env_with_clip();
     let mut cmd = env.llm_command(&["run", "a.mp4", "-t", "summary"], NO_OLLAMA);
-    let out = cmd
-        .env("MINUTA_WHISPER_BIN", env.path("no-whisper"))
-        .output()
-        .unwrap();
+    let out = output(cmd.env("MINUTA_WHISPER_BIN", env.path("no-whisper")));
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     let err = stderr(&out);
     assert!(err.contains("  whisper-cli: "), "{err}");
@@ -320,10 +314,7 @@ fn templates_not_requested_contacts_no_backend() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(fake.requests().is_empty());
 
-    let out = env
-        .llm_command(&["run", "a.mp4"], NO_OLLAMA)
-        .output()
-        .unwrap();
+    let out = output(&mut env.llm_command(&["run", "a.mp4"], NO_OLLAMA));
     assert!(out.status.success(), "{}", stderr(&out));
 }
 
@@ -335,11 +326,10 @@ fn templates_claude_backend_gets_input_on_stdin_and_warns() {
     let stdin = env.path("claude.stdin");
     let fake = ollama("unused");
     let mut cmd = env.llm_command(&["run", "a.mp4", "-t", "acta"], &fake.url());
-    let out = cmd
-        .env("FAKE_CLAUDE_STDIN", &stdin)
-        .env("FAKE_CLAUDE_REPLY", "claude minutes")
-        .output()
-        .unwrap();
+    let out = output(
+        cmd.env("FAKE_CLAUDE_STDIN", &stdin)
+            .env("FAKE_CLAUDE_REPLY", "claude minutes"),
+    );
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(fs::read_to_string(&stdin)
         .unwrap()
