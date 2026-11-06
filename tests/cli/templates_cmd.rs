@@ -1,3 +1,5 @@
+//! `minuta templates list` and `templates show`, and control characters in their output.
+
 use std::fs;
 
 use assert_cmd::assert::OutputAssertExt;

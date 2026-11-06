@@ -1,3 +1,5 @@
+//! Runs with templates against the fake Ollama, the fake `claude` and the fake `codex`.
+
 use std::fs;
 use std::sync::Arc;
 

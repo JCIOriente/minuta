@@ -1,3 +1,5 @@
+//! The VAD model: how `run` passes it to whisper, catalog names, and the preflight errors.
+
 use std::fs;
 use std::path::Path;
 

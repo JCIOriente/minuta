@@ -1,3 +1,6 @@
+//! Checks that fail a run before its first step: missing tools, models and backends, and
+//! template resolution problems.
+
 use std::fs;
 use std::sync::Arc;
 

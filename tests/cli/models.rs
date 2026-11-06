@@ -1,3 +1,5 @@
+//! `minuta models list` and `minuta models pull` arguments.
+
 use std::fs;
 
 use assert_cmd::assert::OutputAssertExt;

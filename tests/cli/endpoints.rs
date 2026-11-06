@@ -1,3 +1,5 @@
+//! OpenAI-compatible endpoints: runs, API keys, `doctor` and `config show`.
+
 use std::fs;
 use std::sync::Arc;
 

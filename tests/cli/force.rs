@@ -1,3 +1,5 @@
+//! `--force` on pipeline steps and templates, and the steps it reruns.
+
 use assert_cmd::assert::OutputAssertExt;
 
 use crate::common::*;

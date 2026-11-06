@@ -1,3 +1,5 @@
+//! `minuta doctor`: tool versions, the exit code and the LLM line.
+
 use std::fs;
 use std::sync::Arc;
 

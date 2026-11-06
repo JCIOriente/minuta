@@ -1,3 +1,6 @@
+//! `run` and `transcribe` with the fake tools: usage errors, the job path on stdout, caching,
+//! quiet mode, tool failures and runs with different sources.
+
 use std::fs;
 
 use assert_cmd::assert::OutputAssertExt;

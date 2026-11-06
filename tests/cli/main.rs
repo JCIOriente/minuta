@@ -1,6 +1,8 @@
-//! Black-box tests: every test that runs the `minuta` binary. Most use real
-//! `ffmpeg`/`ffprobe` on generated clips and the fake `whisper-cli` in `tests/fixtures/bin`,
-//! and skip when ffmpeg is not installed. `e2e` and `e2e_llm` are opt-in.
+//! Black-box tests: every test that runs the `minuta` binary. Some use real
+//! `ffmpeg`/`ffprobe` on generated clips and the fake `whisper-cli` in `tests/fixtures/bin`
+//! (`common::Env`), and skip when ffmpeg is not installed. The others put fake `ffmpeg`,
+//! `ffprobe` and `whisper-cli` scripts on `PATH` (`fake_tools::FakeEnv`). `e2e` and
+//! `e2e_llm` are opt-in.
 
 #[cfg(unix)]
 mod chapters;

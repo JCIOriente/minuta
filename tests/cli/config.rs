@@ -1,3 +1,5 @@
+//! `minuta config path` and `minuta config show`.
+
 use std::fs;
 
 use assert_cmd::assert::OutputAssertExt;

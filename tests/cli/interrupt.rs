@@ -1,3 +1,5 @@
+//! SIGINT during a tool or a template call: exit 130, the tool killed, no temp files left.
+
 use std::fs;
 use std::path::Path;
 use std::process::{Child, Output};

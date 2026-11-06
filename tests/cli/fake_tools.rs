@@ -1,4 +1,6 @@
-//! The `minuta` binary with fake `ffmpeg`, `ffprobe` and `whisper-cli` scripts on `PATH`.
+//! `FakeEnv`: the `minuta` binary with fake `ffmpeg`, `ffprobe` and `whisper-cli` scripts on
+//! `PATH`, for the tests that need no real ffmpeg. The scripts are written under
+//! `common::spawn_lock`.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
