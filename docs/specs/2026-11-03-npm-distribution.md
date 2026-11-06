@@ -10,7 +10,7 @@
 - The package ships the compiled Rust binary, not WASM: minuta spawns `ffmpeg` and `whisper-cli` and signals process groups, which WASM cannot do (`Command::new` in `src/tools.rs:322` and `:367`, `process_group(0)` at `:182`, `libc::kill(-group, SIGKILL)` at `:217`; `libc` in `Cargo.toml`).
 - One small package per platform holds the binary (`darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`); the main package is a JS launcher that depends on all of them as optional dependencies, so npm installs only the one that fits.
 - Windows users run it in WSL2, where npm sees Linux and installs the Linux binary. Native Windows is out of scope.
-- A tag `vX.Y.Z` triggers a workflow that builds the four binaries and publishes the five packages.
+- A tag `vX.Y.Z` triggers a workflow that builds the four binaries, publishes the five packages, publishes the crate to crates.io and creates the GitHub release (#345).
 
 ## Change in a nutshell
 ```console
@@ -43,14 +43,14 @@ Installing minuta today needs Rust 1.88 or newer and `cargo install` (README.md:
 - Bundling ffmpeg, whisper.cpp, models or an LLM backend. `minuta doctor` keeps covering them.
 - Homebrew, a curl installer, or binaries attached to the GitHub release.
 - A JavaScript API: the package exposes only the `minuta` command.
-- Replacing `cargo install`; crates.io publishing stays as it is.
+- Replacing `cargo install`; the crate stays on crates.io, now published by the same workflow (#345).
 
 ## Users & permissions
 | Role | Can | Cannot |
 |---|---|---|
 | User | install and run through npm | n/a |
 | Maintainer (owner of the `jcioriente` npm org) | create the first release, rotate the publish credential | n/a |
-| CI release workflow | publish the five packages when a `v*` tag is pushed | publish from a pull request or a branch |
+| CI release workflow | publish the five packages and the crate, and create the GitHub release, when a `v*` tag on `main` is pushed | publish from a pull request or a branch |
 
 ## Tenancy & localization
 n/a for data. The docs that gain an npm install path exist in English and Spanish: `README.md`, `README.es.md`, `docs/install.md`, `docs/install.es.md`; both languages are updated together. Launcher messages are English, like minuta's own.
@@ -84,7 +84,9 @@ Invariants: every package version equals the `Cargo.toml` version; the main pack
 - **Release workflow** (`.github/workflows/release.yml`), on push of tags `v*`:
   1. `verify`: tag without the leading `v` equals the `Cargo.toml` version.
   2. `build` (matrix of four targets): `cargo build --release --locked --target <t>`, upload the binary as a workflow artifact.
-  3. `publish`: `build-packages.mjs`, then `npm publish --access public --provenance` for the four platform packages, and last the main package, so the main package never points at a missing version.
+  3. `publish` (environment `publish-packages`, one reviewer approval per release): `build-packages.mjs`, then `npm publish --access public --provenance` for the four platform packages, and last the main package, so the main package never points at a missing version. Then, only after all five were published or skipped as already published, `cargo publish --locked` with `CARGO_REGISTRY_TOKEN` (a secret of the environment, present only in that step), unless `scripts/crate-published.sh` finds the version on crates.io. crates.io cannot unpublish, so the crate goes after npm, where a failure is still recoverable with a deprecation.
+  4. `release` (no environment, `contents: write`, needs `publish`): `gh release create v<X.Y.Z> --verify-tag` with the notes from the `## <X.Y.Z>` section of `CHANGELOG.md` (`scripts/release-notes.sh`, which fails when the section is missing or empty), unless the release already exists. It is a separate job so that only it holds `contents: write` and the job holding the registry token does not; without an environment it adds no second approval.
+  A dry run (a branch, or a dispatch with `dry_run`, the default) runs `npm publish --dry-run` and `cargo publish --dry-run --locked`, publishes nothing and skips `release`. Real publishing needs a tag on `main` (`verify`).
 - **Docs**: an "npm" install path next to `cargo install` in the four docs above; Windows users are told to run it inside WSL2.
 
 ## Behavior & edge cases
@@ -99,7 +101,9 @@ Invariants: every package version equals the `Cargo.toml` version; the main pack
   - `npm unpublish` is the last resort: it normally works only within 72 hours of publishing (npm allows a later unpublish only for packages with almost no downloads), and only if no other package depends on the version (every `@jcioriente/minuta` version depends on its four platform packages, so unpublish the main package first, then the platform ones). A version number that was unpublished can never be published again, so the fix still ships under a higher patch number.
   - crates.io cannot delete a version either: `cargo yank --version <bad> minuta` only stops new projects from resolving to it; existing `Cargo.lock` files keep working, and `cargo yank --undo` reverses it.
   - Order: deprecate (or yank) first, cut the fixed patch release through the normal tag, then update the deprecation message to name the fixed version.
-- Partial publish (a platform package published, the next fails): re-running the workflow must be safe. `npm publish` of an existing version fails, so the publish step skips a package whose exact version is already on the registry (`npm view <pkg>@<v> version`).
+- Partial publish (a package, the crate or the release is done, a later step fails): re-running the workflow must be safe. `npm publish` of an existing version fails, so the publish step skips a package whose exact version is already on the registry (`npm view <pkg>@<v> version`); the crate is skipped when `GET https://crates.io/api/v1/crates/minuta/<v>` answers 200 (anything but 200 or 404 fails the run instead of guessing); the release is skipped when `gh release view v<v>` finds it. Rerun the failed run (or push nothing new): it completes what is missing.
+- Releasing: bump `Cargo.toml` and add the `## <X.Y.Z>` section to `CHANGELOG.md` in a PR, merge it, tag the merge commit `vX.Y.Z` and push the tag, then approve the `publish-packages` deployment. Nothing else is manual.
+- Before the first release that uses this flow the maintainer, once: creates the environment `publish-packages` (required reviewer; deployments limited to tag `v*` and branch `main`); adds the `CARGO_REGISTRY_TOKEN` secret (a scoped crates.io token allowed to publish `minuta`) to it; changes the environment name from `npm-publish` to `publish-packages` in the npm trusted publisher of each of the five packages, just before that release (a tag run on the old workflow would fail otherwise); then deletes the `npm-publish` environment.
 
 ## Data & migrations
 None. No runtime data format changes. The first release creates the five packages on the registry (a one-time action by the org owner, see Open questions).
@@ -129,9 +133,10 @@ The org is owned and the scope cannot be squatted. `npm view minuta` also return
 One static binary per architecture works on Ubuntu, Debian, Alpine and WSL2 images without tracking glibc versions.
 
 ## Open questions
-1. **Publish credential. Resolved (2026-11-03):** `NPM_TOKEN` (a short-lived granular token scoped to `@jcioriente`, set as a secret of the `npm-publish` environment, not a repository secret) for the first release only (0.9.0), then npm trusted publishing (OIDC) once the packages exist, since trusted publishing is configured per existing package. Done: the token and its secret are deleted, each of the five packages trusts `JCIOriente/minuta`, workflow `release.yml`, environment `npm-publish`, and `release.yml` publishes with no stored credential. The maintainer owns the npm side (publisher settings).
+1. **Publish credential. Resolved (2026-11-03):** `NPM_TOKEN` (a short-lived granular token scoped to `@jcioriente`, set as a secret of the `npm-publish` environment, not a repository secret) for the first release only (0.9.0), then npm trusted publishing (OIDC) once the packages exist, since trusted publishing is configured per existing package. Done: the token and its secret are deleted, each of the five packages trusts `JCIOriente/minuta`, workflow `release.yml`, environment `npm-publish`, and `release.yml` publishes with no stored credential. Since #345 the environment is `publish-packages` (see Behavior & edge cases for the maintainer steps). The maintainer owns the npm side (publisher settings).
 2. **musl feasibility. Resolved: it builds.** `cargo build --release --locked` on Alpine (`rust:alpine`, Rust 1.99.1, `--platform linux/arm64` and `linux/amd64`) built the full tree for `aarch64-unknown-linux-musl` (1m17s) and `x86_64-unknown-linux-musl` (1m52s), both statically linked, and each binary printed `minuta 0.8.0`. Not covered by that check: cross-compiling from a glibc runner (ubuntu-latest). The build task uses `musl-tools` for x86_64 and a cross C compiler for aarch64 (for `ring`), and fails the job if `file` does not report static linking. The glibc fallback is not needed.
-3. **Release trigger. Resolved (2026-11-03):** a pushed `v*` tag. Releases are made by hand today (tags `v0.6.0`..`v0.8.0`; no release workflow).
+3. **Release trigger. Resolved (2026-11-03):** a pushed `v*` tag. Releases were made by hand up to 0.8.0; 0.9.0 needed a hand-run `cargo publish` and a hand-made GitHub release, which #345 automates.
+4. **crates.io credential, order, environment, release. Resolved (2026-11-06, #345):** `CARGO_REGISTRY_TOKEN` from a secret of the environment (not trusted publishing); one environment `publish-packages` for npm and the crate (one approval); order npm, then crate, then GitHub release; the release is in scope.
 
 ## Implementation status
 Updated by the PRs that implement this spec.

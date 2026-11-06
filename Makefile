@@ -1,7 +1,7 @@
-.PHONY: ci fmt clippy file-size test worktrees-clean
+.PHONY: ci fmt clippy file-size release-scripts test worktrees-clean
 
 # Single entry point for local validation and CI.
-ci: fmt clippy file-size test
+ci: fmt clippy file-size release-scripts test
 
 fmt:
 	cargo fmt --all --check
@@ -14,6 +14,10 @@ clippy:
 file-size:
 	./scripts/check-file-size-test.sh
 	./scripts/check-file-size.sh
+
+# Tests for the release workflow's helper scripts (changelog notes, crates.io check).
+release-scripts:
+	./scripts/release-scripts-test.sh
 
 test:
 	cargo test --all-features

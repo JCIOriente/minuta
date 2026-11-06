@@ -1,9 +1,13 @@
 name: release
 
-# Publishes @jcioriente/minuta and its four platform packages to npm, with no stored token:
-# npm trusted publishing (OIDC) authenticates this workflow and its `npm-publish` environment.
-# Pushing a tag v<X.Y.Z> that matches Cargo.toml publishes for real.
-# workflow_dispatch builds everything and runs `npm publish --dry-run` (the default).
+# Publishes a release in one approved job, in this order: @jcioriente/minuta and its four
+# platform packages to npm (trusted publishing, OIDC, no stored token), then the minuta crate to
+# crates.io (CARGO_REGISTRY_TOKEN, a secret of the `publish-packages` environment), then the
+# GitHub release in a last job that needs no approval of its own.
+# Pushing a tag v<X.Y.Z> that matches Cargo.toml publishes for real; every step skips what is
+# already published, so a rerun after a partial failure completes the rest.
+# workflow_dispatch builds everything and runs `npm publish --dry-run` and
+# `cargo publish --dry-run --locked` (the default), and creates no release.
 # Nothing is published from a branch or a pull request.
 on:
   push:
@@ -11,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Build everything but only run npm publish --dry-run
+        description: Build everything but only run the npm and cargo publish dry runs
         type: boolean
         default: true
 
@@ -123,12 +127,14 @@ jobs:
           if-no-files-found: error
 
   # The four platform packages first and the main package last, so the main package never
-  # points at a version that is not on the registry yet.
+  # points at a version that is not on the registry yet. The crate follows only once every npm
+  # package is published (crates.io cannot unpublish, npm can deprecate).
   publish:
     needs: [verify, build]
     runs-on: ubuntu-latest
-    # The required-reviewer rule, and the environment named in the npm trusted publisher settings.
-    environment: npm-publish
+    # The required-reviewer rule, the CARGO_REGISTRY_TOKEN secret, and the environment named in the
+    # npm trusted publisher settings.
+    environment: publish-packages
     permissions:
       contents: read
       id-token: write # npm trusted publishing (OIDC) and --provenance
@@ -137,19 +143,21 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
+      # Outside the checkout: cargo publish refuses a working tree with untracked files.
       - uses: actions/download-artifact@v8
         with:
-          path: binaries
+          path: ${{ runner.temp }}/binaries
       - name: Build the packages
         env:
           VERSION: ${{ needs.verify.outputs.version }}
+          BINARIES: ${{ runner.temp }}/binaries
         run: |
           set -euo pipefail
           node npm/scripts/build-packages.mjs --version "$VERSION" --out "$RUNNER_TEMP/pkgs" \
-            --binary aarch64-apple-darwin=binaries/minuta-aarch64-apple-darwin/minuta \
-            --binary x86_64-apple-darwin=binaries/minuta-x86_64-apple-darwin/minuta \
-            --binary x86_64-unknown-linux-musl=binaries/minuta-x86_64-unknown-linux-musl/minuta \
-            --binary aarch64-unknown-linux-musl=binaries/minuta-aarch64-unknown-linux-musl/minuta \
+            --binary aarch64-apple-darwin="$BINARIES/minuta-aarch64-apple-darwin/minuta" \
+            --binary x86_64-apple-darwin="$BINARIES/minuta-x86_64-apple-darwin/minuta" \
+            --binary x86_64-unknown-linux-musl="$BINARIES/minuta-x86_64-unknown-linux-musl/minuta" \
+            --binary aarch64-unknown-linux-musl="$BINARIES/minuta-aarch64-unknown-linux-musl/minuta" \
             > "$RUNNER_TEMP/dirs.txt"
           cat "$RUNNER_TEMP/dirs.txt"
       - name: Publish
@@ -204,3 +212,65 @@ jobs:
               npm publish "$dir" --access public --provenance
             fi
           done
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check the crate
+        id: crate
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+          DRY_RUN: ${{ needs.verify.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = true ]; then
+            # A dry run needs no token. An already published version only warns here.
+            cargo publish --dry-run --locked
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Re-running after a partial release skips a crate version crates.io already has.
+          status=0
+          scripts/crate-published.sh minuta "$VERSION" || status=$?
+          case "$status" in
+            0) echo "minuta $VERSION is already on crates.io, skipping"
+               echo "publish=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::could not check whether minuta $VERSION is on crates.io"
+               exit 1 ;;
+          esac
+      # The token is in this step's environment only; cargo reads it and nothing prints it.
+      - name: Publish the crate
+        if: steps.crate.outputs.publish == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked
+
+  # A separate job so only this one holds contents: write and the publish job (with the registry
+  # token and id-token) does not. It has no environment, so it adds no second approval; it runs
+  # only after `publish` (approved, on a tag on main) succeeded, never on a dry run.
+  release:
+    needs: [verify, publish]
+    if: needs.verify.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create
+    steps:
+      - uses: actions/checkout@v7
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Re-running after a partial release skips a release that already exists.
+          err=$(mktemp)
+          if gh release view "v$VERSION" --json tagName --jq .tagName > /dev/null 2> "$err"; then
+            echo "release v$VERSION already exists, skipping"
+            exit 0
+          fi
+          if ! grep -q 'release not found' "$err"; then
+            cat "$err"
+            echo "::error::could not check whether release v$VERSION exists"
+            exit 1
+          fi
+          # Fails if the CHANGELOG.md section is missing or empty, before anything is created.
+          scripts/release-notes.sh "$VERSION" > "$RUNNER_TEMP/notes.md"
+          gh release create "v$VERSION" --verify-tag --title "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
