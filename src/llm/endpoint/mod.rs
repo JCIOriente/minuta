@@ -410,3 +410,6 @@ impl Backend for OpenAiCompatible {
         )
     }
 }
+
+#[cfg(test)]
+mod tests;
