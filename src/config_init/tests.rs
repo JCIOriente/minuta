@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
+use super::*;
 use crate::config::{Config, Overrides, Source};
-use crate::config_init::TEMPLATE;
 
 /// A key line of the template once uncommented: `<key> = <value>` or `[table]`.
 fn is_setting(line: &str) -> bool {
@@ -54,7 +54,7 @@ fn defaults() -> Config {
 }
 
 #[test]
-fn config_init_template_covers_every_key() {
+fn template_covers_every_key() {
     let keys = template_keys(TEMPLATE);
     let config = defaults();
     let entries = config.entries();
@@ -87,7 +87,7 @@ fn config_init_template_covers_every_key() {
 }
 
 #[test]
-fn config_init_template_parses_when_uncommented() {
+fn template_parses_when_uncommented() {
     let config = resolve_uncommented();
     let want: Vec<(&str, &str)> = vec![
         ("out_dir", "./minuta-out"),
@@ -125,7 +125,7 @@ fn resolve_uncommented() -> Config {
 }
 
 #[test]
-fn config_init_documents_codex_bin() {
+fn documents_codex_bin() {
     assert!(
         TEMPLATE.contains("# [codex]\n# bin = \"codex\"\n"),
         "{TEMPLATE}"
@@ -133,7 +133,7 @@ fn config_init_documents_codex_bin() {
 }
 
 #[test]
-fn config_init_documents_endpoints() {
+fn documents_endpoints() {
     assert!(TEMPLATE.ends_with(
         "# Any OpenAI-compatible server, such as LM Studio or Colibri. Name it here, then use\n\
          # `--llm lmstudio:<model>`. Repeat the table for each server.\n\
@@ -151,7 +151,7 @@ fn config_init_documents_endpoints() {
 }
 
 #[test]
-fn config_init_endpoint_example_parses_once_uncommented() {
+fn endpoint_example_parses_once_uncommented() {
     let example = TEMPLATE
         .split_once("# [endpoints.lmstudio]")
         .map(|(_, rest)| format!("[endpoints.lmstudio]{rest}"))

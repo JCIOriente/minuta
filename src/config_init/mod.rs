@@ -8,8 +8,8 @@ use crate::error::{Error, Result};
 
 /// The file `config init` writes. Every key from `Config::entries()` appears once, commented
 /// out, with its default (or an example for keys that are unset by default). `[whisper]` is
-/// the only live line, so the file parses as an empty config. `tests/config_init.rs` checks
-/// it against the key list.
+/// the only live line, so the file parses as an empty config. `src/config_init/tests.rs`
+/// checks it against the key list.
 pub const TEMPLATE: &str = r##"# minuta configuration, written by `minuta config init`.
 # Every key is commented out and shows its default. Remove the leading "# " to set one.
 # MINUTA_* environment variables and command-line flags override this file.
