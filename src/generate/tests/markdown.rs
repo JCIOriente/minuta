@@ -1,6 +1,6 @@
-use super::*;
+//! Executing Markdown templates: output, inputs, failures and the call cache.
 
-// ---- execute ----
+use super::*;
 
 #[test]
 fn execute_writes_markdown() {

@@ -1,6 +1,6 @@
-use super::*;
+//! Template fingerprints: artifacts, composition and what changes them.
 
-// ---- fingerprint ----
+use super::*;
 
 #[test]
 fn markdown_artifacts() {

@@ -1,6 +1,6 @@
-use super::*;
+//! Fields templates: answers, repairs and what is written.
 
-// ---- fields templates ----
+use super::*;
 
 const OVER: &str = r#"{"title": "Hola", "body": "Demasiado largo"}"#;
 const OVER_VIOLATION: &str =

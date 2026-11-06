@@ -1,6 +1,6 @@
-use super::*;
+//! Output language and backend precedence.
 
-// ---- output language precedence ----
+use super::*;
 
 #[test]
 fn output_lang_flag_wins() {

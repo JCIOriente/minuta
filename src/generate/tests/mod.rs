@@ -1,3 +1,5 @@
+//! Tests for the template step, one file per topic. Helpers shared by several topics live here.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -8,11 +10,10 @@ use crate::chapters::{ChaptersSpec, CHAPTERS_VERSION};
 use crate::error::Error;
 use crate::fields::prompt::{fields_block, repair_system, repair_user, schema};
 use crate::fields::{FieldsSpec, Violation, FIELDS_VERSION};
-use crate::generate::{backend_id, output_lang, TemplateRun};
 use crate::job::layout::{implicit_md, template_json};
 use crate::job::{fingerprint, Ctx};
 use crate::llm::call::Policy;
-use crate::llm::chunk::{language_instruction, transcript_text, Event, PROMPT_VERSION};
+use crate::llm::chunk::{language_instruction, transcript_text, Event, Generated, PROMPT_VERSION};
 use crate::llm::fake::ScriptedBackend;
 use crate::llm::{Backend, BackendId};
 use crate::steps::transcribe::TRANSCRIPT_FILE;
@@ -20,6 +21,8 @@ use crate::template::{Layer, Output, Template};
 use crate::transcript::{from_whisper_json, Segment, Transcript};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+
+use super::{backend_id, output_lang, TemplateRun};
 
 mod chapters;
 mod fields;
@@ -94,7 +97,7 @@ fn run<'a>(template: &'a Template, backend: &'a dyn Backend, lang: &str) -> Temp
     }
 }
 
-fn execute(r: &TemplateRun, dir: &Path) -> crate::error::Result<crate::llm::chunk::Generated> {
+fn execute(r: &TemplateRun, dir: &Path) -> crate::error::Result<Generated> {
     r.execute(
         &ctx(dir),
         "reunion",
@@ -117,13 +120,7 @@ fn fields_spec(t: &Template) -> &FieldsSpec {
     }
 }
 
-fn execute_events(
-    r: &TemplateRun,
-    dir: &Path,
-) -> (
-    crate::error::Result<crate::llm::chunk::Generated>,
-    Vec<Event>,
-) {
+fn execute_events(r: &TemplateRun, dir: &Path) -> (crate::error::Result<Generated>, Vec<Event>) {
     let mut events = Vec::new();
     let result = r.execute(
         &ctx(dir),

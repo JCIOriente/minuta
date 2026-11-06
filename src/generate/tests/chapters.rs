@@ -1,6 +1,6 @@
-use super::*;
+//! Chapters templates: answers, repairs, transcript length and fingerprint.
 
-// ---- chapters template ----
+use super::*;
 
 const CHAPTERS: &str = "---\noutput: chapters\nlimits:\n  chapters: { max: 20, max_chars: 1500 }\n---\nSplit {{job_name}} into chapters.\n";
 

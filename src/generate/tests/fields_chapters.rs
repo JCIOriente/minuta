@@ -1,6 +1,6 @@
-use super::*;
+//! Fields templates with a `chapters` field, filled from `chapters.json`.
 
-// ---- fields templates with the chapters field ----
+use super::*;
 
 fn write_chapters_json(dir: &Path, text: impl AsRef<[u8]>) {
     let path = template_json(dir, "chapters");

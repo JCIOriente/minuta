@@ -1,6 +1,6 @@
-use super::*;
+//! Where the outputs go: requested and implicit templates.
 
-// ---- where the outputs go: requested and implicit templates ----
+use super::*;
 
 const SOCIAL_JSON: &str = "{\n  \"version\": 1,\n  \"template\": \"social\",\n  \"output_lang\": \"es\",\n  \"fields\": {\n    \"title\": \"Hola\",\n    \"body\": \"Corto.\"\n  }\n}\n";
 
