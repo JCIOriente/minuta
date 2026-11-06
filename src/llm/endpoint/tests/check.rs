@@ -1,5 +1,4 @@
 use super::*;
-use crate::llm::endpoint::check;
 
 #[test]
 fn endpoint_check_drops_control_characters_from_a_bad_status_line() {

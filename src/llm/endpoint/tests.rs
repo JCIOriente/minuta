@@ -1,12 +1,6 @@
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::time::Duration;
 
-use crate::error::{Error, Missing};
-use crate::llm::endpoint::{OpenAiCompatible, Problem};
-use crate::llm::Backend;
-use serde_json::{json, Value};
-
+use super::*;
 use crate::test_support::fake_ollama::{FakeOllama, Reply, Request};
 
 mod check;
@@ -66,7 +60,7 @@ fn no_interrupt() -> AtomicBool {
     AtomicBool::new(false)
 }
 
-fn complete(fake: &FakeOllama) -> crate::error::Result<String> {
+fn complete(fake: &FakeOllama) -> Result<String> {
     client(fake).complete("SYS", "USER", &no_interrupt())
 }
 

@@ -1,5 +1,4 @@
 use super::*;
-use crate::llm::endpoint::check;
 
 const KEY: &str = "sk-or-REAL";
 

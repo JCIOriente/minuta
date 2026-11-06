@@ -4,7 +4,6 @@ use std::time::Instant;
 
 use super::*;
 use crate::config::{Config, Overrides};
-use crate::llm::endpoint::connect;
 
 fn schema() -> Value {
     json!({"type": "object", "properties": {"title": {"type": "string"}}, "required": ["title"]})
@@ -190,7 +189,7 @@ fn endpoint_bearer_absent_without_a_key() {
 }
 
 fn interrupted(
-    call: impl FnOnce(&OpenAiCompatible, &AtomicBool) -> crate::error::Result<String> + Send + 'static,
+    call: impl FnOnce(&OpenAiCompatible, &AtomicBool) -> Result<String> + Send + 'static,
 ) {
     let fake = server(|_| Reply::Hang);
     let c = client(&fake);
