@@ -158,7 +158,8 @@ mayor, pasa al paso 4.
    en el paso 7 revisarás el acta contra la grabación.
 
 4. Deja `small` como modelo predeterminado para no volver a usar `--model`.
-   Ejecuta `minuta config path` para ver dónde está el archivo de configuración y
+   Necesitas este paso para continuar con este ejemplo: el paso 5 no usa
+   `--model`. Ejecuta `minuta config path` para ver dónde está el archivo de configuración y
    ábrelo. En `[whisper]`, cambia la línea `model`:
 
    ```toml

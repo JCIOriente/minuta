@@ -157,8 +157,9 @@ with `--llm`, or save it as the default under `[llm]` in the config file.
 3. In another terminal, download one model. Pick one of these and download only
    that one:
 
-   - **minuta's default, `gemma4:26b`.** It is large (about 17 GB) and needs a
-     computer with plenty of memory. There is nothing to configure after the
+   - **minuta's default, `gemma4:26b`.** It is a large download (check
+     [ollama.com/library](https://ollama.com/library) for its current size) and
+     needs a computer with plenty of memory. There is nothing to configure after the
      download:
 
      ```sh

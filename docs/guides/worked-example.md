@@ -155,7 +155,8 @@ model, skip to step 4.
    Better, but "buck" and "locked on" are still wrong. No model is perfect, so
    you will check the minutes against the recording in step 7.
 
-4. Make `small` the default so you do not need `--model` again. Run
+4. Make `small` the default so you do not need `--model` again. You need this
+   step to continue with this example: step 5 does not pass `--model`. Run
    `minuta config path` to see where the config file is, and open it. Under
    `[whisper]`, change the `model` line:
 
@@ -214,7 +215,9 @@ minuta run weekly-sync.m4a -t meeting-minutes
 ```
 
 The transcript is already there, so minuta reuses it and only asks the language
-model to write the minutes. The last lines are:
+model to write the minutes. If the default model is not `small`, minuta
+transcribes again with the other model and overwrites your corrected
+transcript, so go back to step 3.4 first. The last lines are:
 
 ```console
 finished in 2.6s (1 run, 5 cached)

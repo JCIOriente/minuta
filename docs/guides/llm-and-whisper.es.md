@@ -158,8 +158,9 @@ configuración.
 
 3. En otra terminal, descarga un modelo. Elige uno de estos y descarga solo ese:
 
-   - **El modelo predeterminado de minuta, `gemma4:26b`.** Es grande (unos
-     17 GB) y necesita una computadora con bastante memoria. Después de
+   - **El modelo predeterminado de minuta, `gemma4:26b`.** Es una descarga grande
+     (consulta su tamaño actual en [ollama.com/library](https://ollama.com/library))
+     y necesita una computadora con bastante memoria. Después de
      descargarlo no hay nada que configurar:
 
      ```sh
