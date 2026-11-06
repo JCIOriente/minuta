@@ -4,9 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use minuta::error::Error;
-use minuta::template::catalog::{sha256_hex, Catalog};
-use minuta::template::{Layer, Template};
+use crate::error::Error;
+use crate::template::catalog::{sha256_hex, Catalog};
+use crate::template::{Layer, Template};
 use tempfile::TempDir;
 
 const VALID: &str = "---\ndescription: A valid template\n---\nbody\n";
@@ -358,7 +358,7 @@ fn catalog_templates_declare_transcript_input() {
         let t = Template::parse(&entry.name, Layer::Project, None, &text).unwrap();
         assert_ne!(
             t.input,
-            minuta::template::Input::Template("summary".into()),
+            crate::template::Input::Template("summary".into()),
             "{}",
             entry.name
         );
