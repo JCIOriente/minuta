@@ -73,8 +73,9 @@ key it does not know.
 | `.minuta/` and everything in it | Not covered |
 
 Programs that read the JSON files must ignore keys they do not know: a minor
-version may add keys. Changing or removing a key raises the file's `version` and
-only happens in a major version. A job folder made by an earlier version is not
+version may add keys. `assets/<template>.json`, `chapters.json` and `transcript.json` each carry a
+`version` (`transcript.json` gets it in 1.0.0). Changing or removing a key raises
+that `version` and only happens in a major version. A job folder made by an earlier version is not
 migrated: the next run in it starts over.
 
 ## What minuta prints
@@ -101,7 +102,7 @@ on it as a library.
 | macOS (Apple silicon and Intel) and Linux (x64 and arm64) | Stable |
 | Windows through WSL2 only | Provisional |
 | Node.js 22 or newer for the npm package | Provisional |
-| Minimum supported Rust version (1.88 today), for building from source | Provisional |
+| Minimum supported Rust version (1.88 today), for building from source; CI checks it on every change | Provisional |
 | ffmpeg, ffprobe, whisper.cpp, Ollama, Claude Code and Codex | Not covered |
 
 Dropping a Stable platform needs a major version. A new Node.js or Rust floor may
@@ -114,7 +115,8 @@ run; `minuta doctor` shows the versions in use.
 When something Stable is going to change or go away, a minor version first marks it
 deprecated: the changelog says so under `Deprecated`, and the docs say what to use
 instead. It keeps working for at least one more minor version. Removal happens in
-the next major version.
+the next major version. The exception is security fixes, which may remove or change
+a behavior without the deprecation period, with a changelog note.
 
 ## Where breaking changes are announced
 

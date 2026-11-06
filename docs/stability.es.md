@@ -74,8 +74,9 @@ una clave de encabezado que no conoce.
 | `.minuta/` y todo lo que contiene | No cubierto |
 
 Los programas que lean los archivos JSON deben ignorar las claves que no conozcan:
-una versión menor puede añadir claves. Cambiar o quitar una clave sube la
-`version` del archivo y solo ocurre en una versión mayor. Una carpeta de trabajo
+una versión menor puede añadir claves. `assets/<plantilla>.json`, `chapters.json` y `transcript.json` llevan cada uno una
+`version` (`transcript.json` la recibe en la 1.0.0). Cambiar o quitar una clave sube
+esa `version` y solo ocurre en una versión mayor. Una carpeta de trabajo
 creada por una versión anterior no se migra: la siguiente ejecución empieza de cero.
 
 ## Lo que minuta imprime
@@ -103,7 +104,7 @@ dependas de ella como biblioteca.
 | macOS (Apple silicon e Intel) y Linux (x64 y arm64) | Estable |
 | Windows solo mediante WSL2 | Provisional |
 | Node.js 22 o más reciente para el paquete de npm | Provisional |
-| Versión mínima de Rust (hoy 1.88), para compilar desde el código fuente | Provisional |
+| Versión mínima de Rust (hoy 1.88), para compilar desde el código fuente; la CI la comprueba en cada cambio | Provisional |
 | ffmpeg, ffprobe, whisper.cpp, Ollama, Claude Code y Codex | No cubierto |
 
 Dejar de dar soporte a una plataforma Estable requiere una versión mayor. Una nueva
@@ -117,7 +118,9 @@ resultado o romper una ejecución; `minuta doctor` muestra las versiones en uso.
 Cuando algo Estable va a cambiar o desaparecer, una versión menor lo marca antes
 como obsoleto: el registro de cambios lo dice en `Deprecated` y la documentación
 indica qué usar en su lugar. Sigue funcionando al menos una versión menor más. La
-eliminación ocurre en la siguiente versión mayor.
+eliminación ocurre en la siguiente versión mayor. La excepción son las correcciones
+de seguridad, que pueden quitar o cambiar un comportamiento sin ese período, con una
+nota en el registro de cambios.
 
 ## Dónde se anuncian los cambios incompatibles
 
