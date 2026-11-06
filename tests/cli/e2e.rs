@@ -4,15 +4,17 @@
 use std::fs;
 use std::process::{Command, Stdio};
 
-use crate::common::{have_ffmpeg, output};
+use crate::common::{have_ffmpeg, output, status, try_spawn};
 
 fn have(tool: &str, flag: &str) -> bool {
-    Command::new(tool)
-        .arg(flag)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+    try_spawn(
+        Command::new(tool)
+            .arg(flag)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    )
+    .and_then(|mut child| child.wait())
+    .is_ok_and(|s| s.success())
 }
 
 #[test]
@@ -60,21 +62,21 @@ fn e2e_real_whisper_tiny() {
     };
 
     let clip = tmp.path().join("tone.wav");
-    let ok = Command::new("ffmpeg")
-        .args([
-            "-nostdin",
-            "-v",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "sine=frequency=440:duration=2",
-        ])
-        .arg(&clip)
-        .status()
-        .unwrap()
-        .success();
+    let ok = status(
+        Command::new("ffmpeg")
+            .args([
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
+            ])
+            .arg(&clip),
+    )
+    .success();
     assert!(ok, "ffmpeg could not generate the clip");
 
     let out = output(&mut minuta(&["run", "tone.wav", "--model", &model]));

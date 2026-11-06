@@ -7,7 +7,7 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::common::{have_ffmpeg, output, template_json, CLASS_FIXTURE, FAKE_WHISPER};
+use crate::common::{have_ffmpeg, output, status, template_json, CLASS_FIXTURE, FAKE_WHISPER};
 
 /// Runs `minuta run clip.mp4 -t <template>` against the real Ollama and returns the job folder,
 /// with the temp dir that holds it (it is deleted on drop). `fixture` is the whisper JSON the
@@ -26,12 +26,12 @@ fn run_real(template: &str, fixture: Option<&str>) -> Option<(tempfile::TempDir,
     fs::write(tmp.path().join("config.toml"), "").unwrap();
     fs::write(tmp.path().join("ggml-test.bin"), "model").unwrap();
     let clip = tmp.path().join("clip.mp4");
-    let made = Command::new("ffmpeg")
-        .args(["-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i"])
-        .arg("sine=frequency=440:duration=1.5")
-        .arg(&clip)
-        .status()
-        .unwrap();
+    let made = status(
+        Command::new("ffmpeg")
+            .args(["-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg("sine=frequency=440:duration=1.5")
+            .arg(&clip),
+    );
     assert!(made.success(), "ffmpeg could not generate the clip");
 
     let model = match std::env::var("MINUTA_E2E_LLM_MODEL") {

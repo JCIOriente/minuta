@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -9,20 +9,31 @@ pub mod fake_ollama;
 
 use fake_ollama::{FakeOllama, Request};
 
-/// Held while writing an executable and while spawning a process. A fork in another test
-/// thread that inherits an executable still open for writing makes running it fail with
-/// ETXTBSY on Linux; serializing both rules that out.
+/// Held while writing an executable and while spawning any process, in every module of this
+/// crate. A fork in another test thread that inherits an executable still open for writing
+/// makes running it fail with ETXTBSY on Linux; serializing both rules that out.
 static SPAWN: Mutex<()> = Mutex::new(());
 
 pub fn spawn_lock() -> MutexGuard<'static, ()> {
     SPAWN.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Spawns `cmd` under `spawn_lock`. The lock is released once the child exists, so a long
-/// run does not block other tests.
-pub fn spawn(cmd: &mut Command) -> Child {
+/// Spawns `cmd` under `spawn_lock`, returning the error when it cannot start (a tool that
+/// is not installed). The lock is released once the child exists, so a long run does not
+/// block other tests.
+pub fn try_spawn(cmd: &mut Command) -> std::io::Result<Child> {
     let _guard = spawn_lock();
-    cmd.spawn().unwrap()
+    cmd.spawn()
+}
+
+/// Spawns `cmd` under `spawn_lock`.
+pub fn spawn(cmd: &mut Command) -> Child {
+    try_spawn(cmd).unwrap()
+}
+
+/// Runs `cmd` to completion like `Command::status`, but spawns it under `spawn_lock`.
+pub fn status(cmd: &mut Command) -> ExitStatus {
+    spawn(cmd).wait().unwrap()
 }
 
 /// Runs `cmd` to completion like `Command::output`, but spawns it under `spawn_lock`.
@@ -63,12 +74,14 @@ pub const FAKE_WHISPER: &str = concat!(
 
 pub fn have_ffmpeg() -> bool {
     ["ffmpeg", "ffprobe"].iter().all(|t| {
-        Command::new(t)
-            .arg("-version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+        try_spawn(
+            Command::new(t)
+                .arg("-version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
+        .and_then(|mut child| child.wait())
+        .is_ok_and(|s| s.success())
     })
 }
 
@@ -353,26 +366,18 @@ pub fn wait_for(path: &Path) {
 }
 
 pub fn signal(sig: &str, child: &Child) {
-    let ok = Command::new("kill")
-        .args([sig, &child.id().to_string()])
-        .status()
-        .unwrap()
-        .success();
+    let ok = status(Command::new("kill").args([sig, &child.id().to_string()])).success();
     assert!(ok);
 }
 
 /// Whether `pid` is a live process.
 pub fn pid_alive(pid: &str) -> bool {
-    Command::new("kill")
-        .args(["-0", pid])
-        .stderr(Stdio::null())
-        .status()
-        .unwrap()
-        .success()
+    status(Command::new("kill").args(["-0", pid]).stderr(Stdio::null())).success()
 }
 
 pub fn kill_pid(pid: &str) {
-    let _ = Command::new("kill").args(["-KILL", pid]).status();
+    // The process may already be gone; only the attempt matters.
+    let _ = try_spawn(Command::new("kill").args(["-KILL", pid])).and_then(|mut child| child.wait());
 }
 
 /// Starts `minuta args` with the fake whisper hanging; returns the run and whisper's pid.

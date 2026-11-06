@@ -5,11 +5,11 @@ use crate::common::*;
 const ALL: [&str; 5] = ["probe", "join", "audio", "transcribe", "outputs"];
 
 fn ffprobe_json(path: &std::path::Path) -> serde_json::Value {
-    let out = std::process::Command::new("ffprobe")
-        .args(["-v", "error", "-show_streams", "-of", "json"])
-        .arg(path)
-        .output()
-        .unwrap();
+    let out = output(
+        std::process::Command::new("ffprobe")
+            .args(["-v", "error", "-show_streams", "-of", "json"])
+            .arg(path),
+    );
     serde_json::from_slice(&out.stdout).unwrap()
 }
 

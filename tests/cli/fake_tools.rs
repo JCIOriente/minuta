@@ -5,9 +5,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::Arc;
-use std::sync::{Mutex, MutexGuard};
 
 use fake_ollama::{FakeOllama, Reply};
+
+use crate::common::spawn_lock;
 
 /// An address no test server ever binds (port 9, discard), so no real Ollama is reached.
 pub const NO_OLLAMA: &str = "http://127.0.0.1:9";
@@ -17,15 +18,8 @@ pub const FIXTURE: &str = concat!(
     "/tests/fixtures/whisper/sample.json"
 );
 
-/// Held while writing a script and while spawning a process. A fork in another test thread
-/// that inherits a script still open for writing makes running it fail with ETXTBSY on
-/// Linux; serializing both rules that out.
-static SPAWN: Mutex<()> = Mutex::new(());
-
-pub fn spawn_lock() -> MutexGuard<'static, ()> {
-    SPAWN.lock().unwrap_or_else(|e| e.into_inner())
-}
-
+/// Writes an executable `#!/bin/sh` script, under `common::spawn_lock` so no process forked
+/// meanwhile inherits it open for writing.
 pub fn script(dir: &Path, name: &str, body: &str) {
     let _guard = spawn_lock();
     let path = dir.join(name);
@@ -161,8 +155,7 @@ echo "[00:00:00.000 --> 00:00:03.500]   Buenos dias a todos."
     }
 
     pub fn spawn(&self, cmd: &mut Command) -> Child {
-        let _guard = spawn_lock();
-        cmd.spawn().unwrap()
+        crate::common::spawn(cmd)
     }
 
     pub fn run_cmd(&self, mut cmd: Command) -> Output {
