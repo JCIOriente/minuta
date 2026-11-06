@@ -174,3 +174,6 @@ impl Step for Transcribe {
             .map(|_| ())
     }
 }
+
+#[cfg(all(test, unix))]
+mod tests;

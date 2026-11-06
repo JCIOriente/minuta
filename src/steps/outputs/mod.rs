@@ -42,3 +42,6 @@ impl Step for Outputs {
         Ok(())
     }
 }
+
+#[cfg(all(test, unix))]
+mod tests;

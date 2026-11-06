@@ -76,3 +76,6 @@ impl Step for Audio {
         self.run_with(ctx, RunOpts::default(), &mut |_| {})
     }
 }
+
+#[cfg(test)]
+mod tests;
