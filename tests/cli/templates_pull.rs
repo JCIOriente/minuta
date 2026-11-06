@@ -5,7 +5,7 @@ use std::process::{Command, Output, Stdio};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
-#[path = "../src/test_support/fake_http.rs"]
+#[path = "../../src/test_support/fake_http.rs"]
 mod fake_http;
 
 use fake_http::{FakeHttp, Route};

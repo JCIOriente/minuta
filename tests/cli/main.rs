@@ -9,6 +9,7 @@ mod chapters;
 mod common;
 #[cfg(unix)]
 mod config;
+mod config_init;
 #[cfg(unix)]
 mod doctor;
 #[cfg(unix)]
@@ -41,6 +42,7 @@ mod run;
 mod templates;
 #[cfg(unix)]
 mod templates_cmd;
+mod templates_pull;
 #[cfg(unix)]
 mod vad;
 mod version;
