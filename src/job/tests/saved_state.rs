@@ -1,10 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::error::Error;
-use crate::job::{layout, Job, Reason, StepName};
-
-use super::{done_job, done_template_job, read_json, setup, stale_from};
+use super::*;
 
 #[test]
 fn job_json_has_version_1() {

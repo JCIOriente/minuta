@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::job::layout;
+use super::*;
 
 #[test]
 fn layout_paths_are_under_minuta_and_assets() {

@@ -1,8 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::job::{plan_stale, Job, Reason, StepName};
 use tempfile::TempDir;
+
+use super::*;
 
 mod atomic;
 mod fingerprints;

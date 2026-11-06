@@ -1,7 +1,6 @@
 use std::path::Path;
 
-use crate::error::Error;
-use crate::job::{derive_name, StepName};
+use super::*;
 
 #[test]
 fn derive_name_strips_extension() {

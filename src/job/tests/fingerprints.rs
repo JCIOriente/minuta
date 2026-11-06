@@ -2,12 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use crate::job::{
-    fingerprint, plan_stale, source_record, step_fingerprint, Ctx, Job, Reason, Source, Step,
-    StepName,
-};
-
-use super::setup;
+use super::*;
 
 #[test]
 fn fingerprint_is_stable_and_separates_parts() {

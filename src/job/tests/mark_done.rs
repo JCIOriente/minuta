@@ -1,10 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::error::Error;
-use crate::job::{layout, Job, Reason, Status, StepName};
-
-use super::{done_template_job, read_json, setup};
+use super::*;
 
 #[test]
 fn done_requires_all_artifacts() {

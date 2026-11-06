@@ -1,11 +1,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::error::Error;
-use crate::job::{layout, write_atomic_in, Job};
 use tempfile::TempDir;
 
-use super::setup;
+use super::*;
 
 #[test]
 fn tmp_cleaned_on_open() {

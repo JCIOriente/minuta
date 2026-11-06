@@ -1,7 +1,6 @@
 use std::fs;
 
-use crate::error::Error;
-use crate::job::write_atomic;
+use super::*;
 
 #[test]
 fn write_atomic_failure_leaves_nothing() {
