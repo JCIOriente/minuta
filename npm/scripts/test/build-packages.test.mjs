@@ -429,7 +429,7 @@ const SHIPPED = [
   'README.md',
   'README.es.md',
   'LICENSE',
-  ...['install', 'reference', 'templates'].flatMap((n) => [`docs/${n}.md`, `docs/${n}.es.md`]),
+  ...['install', 'reference', 'stability', 'templates'].flatMap((n) => [`docs/${n}.md`, `docs/${n}.es.md`]),
   ...['README', 'custom-templates', 'llm-and-whisper', 'fix-doctor', 'worked-example'].flatMap((n) => [
     `docs/guides/${n}.md`,
     `docs/guides/${n}.es.md`,
@@ -553,7 +553,7 @@ test('every_relative_link_in_the_built_package_resolves_inside_it', () => {
   run(f, { repoRoot: REPO_ROOT });
   const dir = path.join(f.outDir, 'minuta');
   const files = markdownFiles(dir);
-  assert.equal(files.length, 18);
+  assert.equal(files.length, 20);
   let checked = 0;
   for (const file of files) {
     for (const target of relativeLinks(fs.readFileSync(file, 'utf8'))) {

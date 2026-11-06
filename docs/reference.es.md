@@ -18,7 +18,8 @@
 | `minuta config show` | Imprime cada ajuste, su valor y de dónde viene |
 | `minuta config init [--force]` | Escribe un archivo comentado con todos los ajustes en la ruta del archivo de configuración; un archivo existente no se toca salvo que uses `--force` |
 
-Ejecuta `minuta help <command>` para ver el uso completo de cualquier comando.
+Ejecuta `minuta help <command>` para ver el uso completo de cualquier comando. Lo
+que es seguro usar entre versiones está en [Estabilidad](stability.es.md).
 
 ### Opciones de `run` y `transcribe`
 

@@ -126,6 +126,7 @@ se descargan con `minuta templates pull`.
 | [Guías prácticas](https://github.com/JCIOriente/minuta/blob/main/docs/guides/README.es.md) | Paso a paso: tus propias plantillas, un LLM y un modelo de whisper, resolver lo que reporta `minuta doctor` y de una grabación al acta de una reunión |
 | [Plantillas](https://github.com/JCIOriente/minuta/blob/main/docs/templates.es.md) | Plantillas integradas, cómo descargar más, cómo escribir las tuyas y cómo elegir un backend |
 | [Referencia](https://github.com/JCIOriente/minuta/blob/main/docs/reference.es.md) | Comandos, la carpeta del trabajo, caché, configuración y solución de problemas |
+| [Estabilidad](https://github.com/JCIOriente/minuta/blob/main/docs/stability.es.md) | Qué promete la 1.0 que no se rompe, qué puede cambiar y cómo funcionan las obsolescencias |
 
 Ejecuta `minuta help <command>` para ver el uso completo de cualquier comando.
 
