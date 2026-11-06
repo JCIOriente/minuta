@@ -1,3 +1,4 @@
 #!/bin/sh
-# A tool that never answers, for the version-probe timeout test in src/tools/locate.rs.
+# A tool that never answers, for the version-probe timeout test in
+# src/tools/locate/tests/mod.rs.
 exec sleep 30

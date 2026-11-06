@@ -1,5 +1,6 @@
 #!/bin/sh
-# Fake whisper-cli that fails late, for tests/tools.rs and manual end-to-end checks.
+# Fake whisper-cli that fails late, for src/tools/process/tests/run.rs and manual
+# end-to-end checks.
 #   --version  prints a version line.
 #   otherwise  prints two load messages, 50 progress lines in whisper-cli's real `-pp`
 #              format (tests/fixtures/whisper/pp.stderr), then an error, all on stderr,
