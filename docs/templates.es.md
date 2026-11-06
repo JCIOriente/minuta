@@ -21,6 +21,39 @@ la necesita escribe sus archivos en `assets/`, así que `chapters.md` aparece en
 raíz de la carpeta del trabajo solo cuando pides `-t chapters`. `summary` se ejecuta
 solo con `-t summary`.
 
+## Plantillas del catálogo
+
+Además de las plantillas integradas, el repositorio tiene un catálogo de plantillas
+curadas, casi todas kits de publicación para una plataforma. Descarga las que
+quieras con `minuta templates pull NAME` (consulta [Descargar
+plantillas](#descargar-plantillas)). No están en el binario hasta que las descargues.
+Todas leen la transcripción. `minuta templates pull --list` consulta el catálogo
+actualizado cada vez, así que siempre muestra la lista vigente; esta tabla puede ir
+por detrás entre versiones.
+
+| Nombre | Plataforma | Descripción | Escribe |
+| --- | --- | --- | --- |
+| `action-items` | meeting | Lista plana de tareas ordenada por responsable, con plazos, bloqueos y marcas de tiempo | `action-items.md` |
+| `blog-post` | web | Kit de publicación de blog con artículo, etiquetas, meta descripción, slug y texto alternativo de imagen | `blog-post.md` y `assets/blog-post.json` (campos: title, body, tags, notes) |
+| `instagram` | instagram | Kit de publicación de Instagram con texto, hashtags, texto de portada, texto alternativo y gancho en pantalla | `instagram.md` y `assets/instagram.json` (campos: body, hashtags, thumbnail_text, notes) |
+| `instagram-carousel` | instagram | Kit de carrusel de Instagram con texto de portada, texto de cada diapositiva, descripción y hashtags | `instagram-carousel.md` y `assets/instagram-carousel.json` (campos: thumbnail_text, notes, body, hashtags) |
+| `lesson` | education | Lección estructurada con objetivos de aprendizaje, conceptos clave y preguntas de práctica | `lesson.md` |
+| `linkedin` | linkedin | Kit de publicación de LinkedIn con publicación, hashtags del tema y primer comentario | `linkedin.md` y `assets/linkedin.json` (campos: body, hashtags, notes) |
+| `meeting-minutes` | meeting | Acta de reunión con decisiones y acciones primero, seguidas de un resumen breve de la discusión | `meeting-minutes.md` |
+| `newsletter` | email | Kit de boletín con asunto, cuerpo, texto de vista previa y asunto alternativo | `newsletter.md` y `assets/newsletter.json` (campos: title, body, notes) |
+| `podcast-notes` | audio | Kit de publicación de podcast con notas del episodio en texto plano, capítulos y opciones de título | `podcast-notes.md` y `assets/podcast-notes.json` (campos: title, body, chapters, tags, notes) |
+| `tiktok` | tiktok | Kit de publicación de TikTok con texto, hashtags, texto de portada y gancho en pantalla | `tiktok.md` y `assets/tiktok.json` (campos: body, hashtags, thumbnail_text, notes) |
+| `x-thread` | x | Hilo de X con un gancho que se entiende solo y publicaciones concisas basadas en la transcripción | `x-thread.md` |
+| `youtube` | youtube | Kit de publicación de YouTube con capítulos, opciones de miniatura y comentario fijado | `youtube.md` y `assets/youtube.json` (campos: title, body, chapters, hashtags, tags, thumbnail_text, notes) |
+| `youtube-shorts` | youtube | Kit de YouTube Shorts con un clip con marcas de tiempo y gancho en pantalla | `youtube-shorts.md` y `assets/youtube-shorts.json` (campos: title, body, hashtags, notes) |
+
+`youtube`, `linkedin` e `instagram` del catálogo son versiones más completas de las
+plantillas integradas con el mismo nombre. Una vez descargadas, las reemplazan (una
+plantilla descargada prevalece sobre una integrada, como se explica en [De dónde
+vienen las plantillas](#de-dónde-vienen-las-plantillas)). Las plantillas con campos
+también escriben sus campos como JSON en `assets/`; las demás solo escriben el
+archivo Markdown.
+
 ## De dónde vienen las plantillas
 
 minuta carga plantillas desde tres lugares. Una plantilla con el mismo nombre en un

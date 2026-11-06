@@ -21,6 +21,37 @@ chapters field from it. A template that runs only because another one needs it
 writes its files in `assets/`, so `chapters.md` shows up at the top only when you
 ask for `-t chapters`. `summary` runs only on `-t summary`.
 
+## Curated templates
+
+Besides the built-in templates, the repository has a catalog of curated ones, mostly
+publishing kits for a platform. Download the ones you want with
+`minuta templates pull NAME` (see [Downloading templates](#downloading-templates)).
+They are not in the binary until you pull them. All of them read the transcript.
+`minuta templates pull --list` fetches the catalog fresh each time, so it is always
+the current list; this table can lag behind it between releases.
+
+| Name | Platform | Description | Writes |
+| --- | --- | --- | --- |
+| `action-items` | meeting | Flat action checklist sorted by owner with stated deadlines, blockers and timestamps | `action-items.md` |
+| `blog-post` | web | Blog publishing kit with article, tags, meta description, slug and image alt text | `blog-post.md` and `assets/blog-post.json` (fields: title, body, tags, notes) |
+| `instagram` | instagram | Instagram publishing kit with caption, hashtags, cover text, alt text and on-screen hook | `instagram.md` and `assets/instagram.json` (fields: body, hashtags, thumbnail_text, notes) |
+| `instagram-carousel` | instagram | Instagram carousel kit with cover text, slide copy, caption and hashtags | `instagram-carousel.md` and `assets/instagram-carousel.json` (fields: thumbnail_text, notes, body, hashtags) |
+| `lesson` | education | Structured lesson with learning objectives, key concepts and practice questions | `lesson.md` |
+| `linkedin` | linkedin | LinkedIn publishing kit with post, topic hashtags and first comment | `linkedin.md` and `assets/linkedin.json` (fields: body, hashtags, notes) |
+| `meeting-minutes` | meeting | Meeting minutes with decisions and actions first, followed by brief discussion | `meeting-minutes.md` |
+| `newsletter` | email | Newsletter publishing kit with subject, body, preview text and alternative subject | `newsletter.md` and `assets/newsletter.json` (fields: title, body, notes) |
+| `podcast-notes` | audio | Podcast publishing kit with plain-text show notes, chapters and title options | `podcast-notes.md` and `assets/podcast-notes.json` (fields: title, body, chapters, tags, notes) |
+| `tiktok` | tiktok | TikTok publishing kit with caption, hashtags, cover text and on-screen hook | `tiktok.md` and `assets/tiktok.json` (fields: body, hashtags, thumbnail_text, notes) |
+| `x-thread` | x | X thread with a standalone hook and concise, grounded posts | `x-thread.md` |
+| `youtube` | youtube | YouTube publishing kit with chapters, thumbnail options and a pinned comment | `youtube.md` and `assets/youtube.json` (fields: title, body, chapters, hashtags, tags, thumbnail_text, notes) |
+| `youtube-shorts` | youtube | YouTube Shorts publishing kit with a timestamped clip and on-screen hook | `youtube-shorts.md` and `assets/youtube-shorts.json` (fields: title, body, hashtags, notes) |
+
+`youtube`, `linkedin` and `instagram` in the catalog are fuller versions of the
+built-in templates with the same names. Once pulled, they replace the built-ins
+(a project template wins over a built-in one, as described in [Where templates come
+from](#where-templates-come-from)). Templates with fields also write their fields as
+JSON in `assets/`; the others write only the Markdown file.
+
 ## Where templates come from
 
 minuta loads templates from three places. A template with the same name in a

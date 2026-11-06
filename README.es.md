@@ -114,7 +114,9 @@ cat "$(minuta run talk.mp4 -t linkedin -q)/linkedin.md"
 ```
 
 Las plantillas integradas son `summary`, `chapters`, `youtube`, `linkedin` e
-`instagram`.
+`instagram`. Las
+[plantillas del catálogo](https://github.com/JCIOriente/minuta/blob/main/docs/templates.es.md#plantillas-del-catálogo)
+se descargan con `minuta templates pull`.
 
 ## Documentación
 
