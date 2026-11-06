@@ -2,8 +2,10 @@
 
 ## 1.0.0
 
-From 1.0, minuta follows a versioning promise; what it covers is in
-[docs/stability.md](https://github.com/JCIOriente/minuta/blob/main/docs/stability.md).
+From 1.0.0, minuta follows semantic versioning: a change that breaks anything the
+[stability page](https://github.com/JCIOriente/minuta/blob/main/docs/stability.md) lists as
+Stable (commands, flags, exit codes, configuration, templates, the job folder and its JSON
+files) only ships in a major version. That page also lists what is Provisional or not covered.
 
 ### Added
 - Four how-to guides, each in English and Spanish, linked from the README: writing your own
@@ -14,6 +16,11 @@ From 1.0, minuta follows a versioning promise; what it covers is in
 - The README and LICENSE, the English and Spanish docs and the how-to guides now ship in the
   npm package, so the package page on npmjs.com is no longer empty.
 - A project logo and badges in the README.
+- `transcript.json` now carries `"version": 1`, like the other JSON files minuta writes. Files
+  from 0.9.0 without it still load, and existing job folders are reused without transcribing again.
+- A stability page that says what 1.0 promises, shipped in the npm package in English and
+  Spanish.
+- The minimum Rust version, 1.88, is now built and tested in CI.
 
 ### Changed
 - The install page shows `--llm claude:<model>` for Claude Code, like `codex:<model>` for Codex.
