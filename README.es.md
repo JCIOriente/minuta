@@ -31,7 +31,7 @@ minuta funciona en macOS, Linux y Windows (a través de WSL2).
 **[Sigue la guía de instalación](https://github.com/JCIOriente/minuta/blob/main/docs/install.es.md)**
 para tu sistema. Explica cómo instalar Rust, ffmpeg y whisper.cpp, y cómo configurar el servicio que generará los documentos (backend de LLM).
 
-Si ya tienes Node.js 18 o más reciente, instálalo con npm. No necesita Rust y
+Si ya tienes Node.js 22 o más reciente, instálalo con npm. No necesita Rust y
 funciona en macOS (Apple Silicon e Intel) y Linux (x64 y arm64); en Windows,
 ejecútalo dentro de WSL2:
 
