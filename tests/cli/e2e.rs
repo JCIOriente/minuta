@@ -1,5 +1,3 @@
-#![cfg(unix)]
-
 //! Opt-in: the real `whisper-cli` with a real model. Set `MINUTA_E2E=1`; give a model file
 //! with `MINUTA_E2E_MODEL`, or the test runs `minuta models pull tiny` into a temp cache.
 

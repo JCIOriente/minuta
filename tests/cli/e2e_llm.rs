@@ -1,5 +1,3 @@
-#![cfg(unix)]
-
 //! Opt-in: `run -t summary` and `run -t youtube` (which also runs `chapters`, whose files go to `assets/`) against the real
 //! local Ollama. Set `MINUTA_E2E_LLM=1`; the model is `ollama:gemma4:26b` unless
 //! `MINUTA_E2E_LLM_MODEL` names another. The transcript comes from the fake whisper, so no
