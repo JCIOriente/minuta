@@ -175,7 +175,7 @@ fn endpoint_example_parses_once_uncommented() {
     );
 }
 
-/// The library half of the binary tests in `tests/config_init.rs`, which compare the file
+/// The library half of the binary tests in `tests/cli/config_init.rs`, which compare the file
 /// `config init` writes with the same fixture.
 #[test]
 fn template_matches_the_committed_fixture() {
@@ -185,7 +185,7 @@ fn template_matches_the_committed_fixture() {
     );
 }
 
-/// The library half of `config_init_creates_file_and_parent` in `tests/config_init.rs`,
+/// The library half of `config_init_creates_file_and_parent` in `tests/cli/config_init.rs`,
 /// which compares `config show` after a fresh `config init` with the same fixture.
 #[test]
 fn defaults_match_the_committed_show_fixture() {

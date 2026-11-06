@@ -69,7 +69,7 @@ fn run_with_endpoint_sends_the_key_from_its_variable() {
         &fake,
     );
     cmd.env("BOX_KEY", "s3cret-key");
-    let out = env.run_cmd(cmd);
+    let out = output(&mut cmd);
     out.clone().assert().success();
     for request in fake.requests() {
         assert_eq!(
@@ -112,7 +112,7 @@ fn endpoint_malformed_key_is_refused_without_printing_it() {
             &fake,
         );
         cmd.env("BOX_KEY", key);
-        let out = env.run_cmd(cmd);
+        let out = output(&mut cmd);
         assert!(!out.status.success(), "{key:?}");
         let err = stderr(&out);
         assert!(
@@ -134,7 +134,7 @@ fn endpoint_key_empty_is_reported_with_hint() {
         &fake,
     );
     cmd.env("BOX_KEY", "");
-    let out = env.run_cmd(cmd);
+    let out = output(&mut cmd);
     assert!(!out.status.success());
     let err = stderr(&out);
     assert!(
@@ -155,7 +155,7 @@ fn endpoint_key_that_is_not_utf8_is_reported_with_hint() {
         &fake,
     );
     cmd.env("BOX_KEY", std::ffi::OsStr::from_bytes(b"\xff"));
-    let out = env.run_cmd(cmd);
+    let out = output(&mut cmd);
     assert!(!out.status.success());
     let err = stderr(&out);
     assert!(
@@ -220,7 +220,7 @@ fn unlisted_endpoint_model_fails_before_any_call() {
 fn doctor_llm_line(env: &FakeEnv, fake: &FakeOllama, id: &str) -> String {
     let mut cmd = env.llm_command(&["doctor"], fake);
     cmd.env("MINUTA_LLM", id);
-    let out = env.run_cmd(cmd);
+    let out = output(&mut cmd);
     stdout(&out)
         .lines()
         .find(|line| line.starts_with("llm "))
@@ -291,7 +291,7 @@ fn config_show_lists_endpoints() {
     .unwrap();
     let mut cmd = env.command(&["config", "show"]);
     cmd.env("BOX_KEY", "s3cret-key");
-    let out = env.run_cmd(cmd);
+    let out = output(&mut cmd);
     out.clone().assert().success();
     let shown = stdout(&out);
     assert!(

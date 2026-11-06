@@ -5,10 +5,8 @@ use std::process::{Command, Output, Stdio};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
-#[path = "../src/test_support/fake_http.rs"]
-mod fake_http;
-
-use fake_http::{FakeHttp, Route};
+use crate::common::fake_http::{FakeHttp, Route};
+use crate::common::output;
 
 // ---- fixtures ----
 
@@ -61,6 +59,9 @@ fn server() -> FakeHttp {
 
 // ---- the binary ----
 
+/// A temp folder with an empty `home/` and a `work/` folder to run in. Unlike `common::Env`,
+/// the binary sees only `HOME` (and `MINUTA_TEMPLATES_URL` when a test passes one): `templates
+/// pull` needs no tools, model or config.
 struct Env {
     tmp: TempDir,
 }
@@ -92,7 +93,7 @@ impl Env {
     }
 
     fn run(&self, args: &[&str], url: Option<&str>) -> Output {
-        self.command(args, url).output().unwrap()
+        output(&mut self.command(args, url))
     }
 }
 

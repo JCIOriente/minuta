@@ -36,7 +36,7 @@ fn preflight_lists_all_missing_at_once() {
     for tool in ["ffmpeg", "ffprobe", "whisper-cli"] {
         fs::remove_file(env.bin().join(tool)).unwrap();
     }
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.command(&["run", "clase-4.mp4"]);
         cmd.env_remove("MINUTA_WHISPER_MODEL");
         cmd
@@ -111,7 +111,7 @@ fn resolution_problems_exit_2_before_job_folder() {
 fn preflight_reports_backend_and_tools_together() {
     let env = FakeEnv::new();
     fs::remove_file(env.bin().join("whisper-cli")).unwrap();
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.command(&["run", "clase-4.mp4", "-t", "summary"]);
         cmd.env("MINUTA_OLLAMA_URL", NO_OLLAMA);
         cmd
@@ -135,7 +135,7 @@ fn preflight_reports_missing_ollama_model_and_claude() {
         serde_json::json!({}),
         Arc::new(|_| Reply::chat("unused")),
     );
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.llm_command(
             &["run", "clase-4.mp4", "-t", "summary", "-t", "acta"],
             &fake,
@@ -160,7 +160,7 @@ fn preflight_reports_missing_ollama_model_and_claude() {
 fn missing_codex_is_reported_with_hint() {
     let env = FakeEnv::new();
     let fake = ollama("unused");
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.llm_command(
             &["run", "clase-4.mp4", "-t", "summary", "--llm", "codex"],
             &fake,

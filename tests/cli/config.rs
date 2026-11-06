@@ -27,7 +27,7 @@ fn config_path_prints_path_even_when_malformed() {
 #[test]
 fn config_show_models_dir_from_env() {
     let env = FakeEnv::new();
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.command(&["config", "show"]);
         cmd.env("MINUTA_MODELS_DIR", "/data/models");
         cmd
@@ -44,7 +44,7 @@ fn config_show_models_dir_from_env() {
 fn config_show_lists_values_and_sources() {
     let env = FakeEnv::new();
     fs::write(env.path("config.toml"), "[whisper]\nlang = \"es\"\n").unwrap();
-    let out = env.run_cmd({
+    let out = output(&mut {
         let mut cmd = env.command(&["config", "show"]);
         cmd.env_remove("MINUTA_WHISPER_MODEL")
             .env("MINUTA_FFMPEG_BIN", "/opt/ffmpeg")

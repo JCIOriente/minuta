@@ -151,12 +151,8 @@ echo "[00:00:00.000 --> 00:00:03.500]   Buenos dias a todos."
         cmd
     }
 
-    pub fn run_cmd(&self, mut cmd: Command) -> Output {
-        output(&mut cmd)
-    }
-
     pub fn minuta(&self, args: &[&str]) -> Output {
-        self.run_cmd(self.command(args))
+        output(&mut self.command(args))
     }
 
     /// Writes `<dir>/<name>.md`, where `dir` is relative to the temp dir.
@@ -179,6 +175,6 @@ echo "[00:00:00.000 --> 00:00:03.500]   Buenos dias a todos."
     }
 
     pub fn minuta_llm(&self, args: &[&str], fake: &FakeOllama) -> Output {
-        self.run_cmd(self.llm_command(args, fake))
+        output(&mut self.llm_command(args, fake))
     }
 }
