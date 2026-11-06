@@ -202,3 +202,6 @@ impl Step for Probe {
         self.run_with(ctx, RunOpts::default(), &mut |_| {})
     }
 }
+
+#[cfg(test)]
+mod tests;

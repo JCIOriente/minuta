@@ -1,4 +1,5 @@
 #!/bin/sh
 # A tool that never answers, for the version-probe timeout test in
-# src/tools/locate/tests/mod.rs.
+# src/tools/locate/tests/mod.rs and the join interrupt test in
+# src/steps/join/tests/without_ffmpeg.rs.
 exec sleep 30
