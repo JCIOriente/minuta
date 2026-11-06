@@ -15,6 +15,9 @@ use crate::error::{Error, Result};
 use crate::job::write_atomic;
 use crate::llm::http::request_url;
 
+#[cfg(test)]
+mod tests;
+
 /// Largest `index.toml` accepted.
 pub const CATALOG_CAP: u64 = 1024 * 1024;
 /// Largest template file accepted.
