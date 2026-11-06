@@ -34,9 +34,9 @@ fn read_manifest_invalid_file_is_empty_with_a_warning() {
     let (manifest, warning) = read_manifest(&d.dir()).unwrap();
     assert_eq!(manifest, Manifest::default());
     let w = warning.expect("a warning");
-    assert!(
-        w.starts_with("invalid manifest, treating every file as modified: "),
-        "{w}"
+    assert_eq!(
+        w,
+        "invalid manifest, treating every file as modified: TOML parse error at line 1, column 12\n  |\n1 | version = [\n  |            ^\nunclosed array, expected `]`\n"
     );
 }
 
@@ -48,9 +48,9 @@ fn read_manifest_not_utf8_is_empty_with_a_warning() {
     let (manifest, warning) = read_manifest(&dir).unwrap();
     assert_eq!(manifest, Manifest::default());
     let w = warning.expect("a warning");
-    assert!(
-        w.starts_with("invalid manifest, treating every file as modified: "),
-        "{w}"
+    assert_eq!(
+        w,
+        "invalid manifest, treating every file as modified: TOML parse error at line 1, column 3\n  |\n1 | \u{fffd}\u{fffd}\n  |   ^\nkey with no value, expected `=`\n"
     );
 }
 

@@ -28,7 +28,10 @@ fn fetch_catalog_http_error_names_the_url() {
 fn fetch_catalog_invalid_toml_is_a_parse_error() {
     let server = FakeHttp::start(vec![Route::ok("/templates/index.toml", "version = [")]);
     match fetch_catalog(&Origin::new(&server.base()).unwrap()) {
-        Err(Error::Parse(m)) => assert!(m.starts_with("template catalog: "), "{m}"),
+        Err(Error::Parse(m)) => assert_eq!(
+            m,
+            "template catalog: TOML parse error at line 1, column 12\n  |\n1 | version = [\n  |            ^\nunclosed array, expected `]`\n"
+        ),
         other => panic!("expected parse error, got {other:?}"),
     }
 }

@@ -1,5 +1,7 @@
 use std::io::Write;
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 
 use super::*;
@@ -25,30 +27,57 @@ fn endpoint_chat_refuses_an_invalid_port() {
 }
 
 /// A listener that answers every connection with `reply`, one chunk every `pause`, and keeps the
-/// connection open until the client closes it.
-fn raw_server(reply: Vec<Vec<u8>>, pause: Duration) -> String {
+/// connection open until the client closes it. Dropping it stops the accept loop and frees the
+/// port.
+struct RawServer {
+    url: String,
+    addr: std::net::SocketAddr,
+    stop: Arc<AtomicBool>,
+}
+
+impl Drop for RawServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect(self.addr); // wake the accept loop
+    }
+}
+
+fn raw_server(reply: Vec<Vec<u8>>, pause: Duration) -> RawServer {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
+    let addr = listener.local_addr().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_t = stop.clone();
     thread::spawn(move || {
-        for mut stream in listener.incoming().flatten() {
-            for (index, chunk) in reply.iter().enumerate() {
-                if index > 0 {
-                    thread::sleep(pause);
-                }
-                if stream.write_all(chunk).is_err() {
-                    break;
-                }
+        for stream in listener.incoming() {
+            if stop_t.load(Ordering::SeqCst) {
+                break;
             }
-            let _ = std::io::copy(&mut stream, &mut std::io::sink());
+            let Ok(mut stream) = stream else { continue };
+            let reply = reply.clone();
+            thread::spawn(move || {
+                for (index, chunk) in reply.iter().enumerate() {
+                    if index > 0 {
+                        thread::sleep(pause);
+                    }
+                    if stream.write_all(chunk).is_err() {
+                        break;
+                    }
+                }
+                let _ = std::io::copy(&mut stream, &mut std::io::sink());
+            });
         }
     });
-    url
+    RawServer {
+        url: format!("http://{addr}"),
+        addr,
+        stop,
+    }
 }
 
 #[test]
 fn endpoint_tls_rejected_by_the_client_is_transient() {
-    let url = raw_server(vec![b"HTTP/1.1 200 OK\r\n\r\n".to_vec()], Duration::ZERO);
-    let url = url.replacen("http://", "https://", 1);
+    let server = raw_server(vec![b"HTTP/1.1 200 OK\r\n\r\n".to_vec()], Duration::ZERO);
+    let url = server.url.replacen("http://", "https://", 1);
     let backend = OpenAiCompatible::new("box", "m", &url, None, 1000, Duration::from_secs(5));
     let (message, transient) = llm_err(backend.complete("s", "u", &no_interrupt()).unwrap_err());
     assert_eq!(
@@ -73,15 +102,17 @@ fn endpoint_read_timeout_restarts_with_each_read() {
     .into_bytes()];
     let pieces = body.len().div_ceil(15);
     reply.extend(body.as_bytes().chunks(pieces).map(<[u8]>::to_vec));
-    let url = raw_server(reply, Duration::from_millis(200));
-    let backend = OpenAiCompatible::new("box", "m", &url, None, 1000, Duration::from_secs(2));
+    let server = raw_server(reply, Duration::from_millis(200));
+    let backend =
+        OpenAiCompatible::new("box", "m", &server.url, None, 1000, Duration::from_secs(2));
     assert_eq!(backend.complete("s", "u", &no_interrupt()).unwrap(), "hi");
 }
 
 #[test]
 fn endpoint_key_in_the_url_is_redacted_from_a_transport_error() {
     let key = "k3yk3yk3y";
-    let url = format!("{}/{key}/v1", raw_server(vec![], Duration::ZERO));
+    let server = raw_server(vec![], Duration::ZERO);
+    let url = format!("{}/{key}/v1", server.url);
     let url = url.replacen("http://", "https://", 1);
     let backend = OpenAiCompatible::new(
         "box",
