@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.0.0
+
+From 1.0, minuta follows a versioning promise; what it covers is in
+[docs/stability.md](https://github.com/JCIOriente/minuta/blob/main/docs/stability.md).
+
+### Added
+- Four how-to guides, each in English and Spanish, linked from the README: writing your own
+  templates, setting up an LLM and whisper, fixing what `minuta doctor` reports, and a worked
+  example from a recording to the finished files.
+- The templates page lists all 13 curated templates with their platform, what they write and
+  how to pull them with `minuta templates pull <name>`.
+- The README and LICENSE, the English and Spanish docs and the how-to guides now ship in the
+  npm package, so the package page on npmjs.com is no longer empty.
+- A project logo and badges in the README.
+
+### Changed
+- The install page shows `--llm claude:<model>` for Claude Code, like `codex:<model>` for Codex.
+- A release is published with a single approval: npm, crates.io and the GitHub release, with no
+  stored npm token (npm trusted publishing).
+
+### Fixed
+- Control characters in a transcript's language or a backend name are no longer printed raw in
+  the done line; they show as `?`.
+
 ## 0.9.0
 
 ### Added
