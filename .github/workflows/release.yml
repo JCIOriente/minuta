@@ -30,6 +30,8 @@ jobs:
       dry_run: ${{ steps.v.outputs.dry_run }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the ancestry check below needs main's history
       - id: v
         env:
           REF_TYPE: ${{ github.ref_type }}
@@ -46,6 +48,14 @@ jobs:
           if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "v$version" ]; then
             echo "::error::tag $REF_NAME does not match Cargo.toml version $version (expected v$version)"
             exit 1
+          fi
+          # A release is cut from main: a tag on an unreviewed branch must not publish.
+          if [ "$REF_TYPE" = tag ]; then
+            git fetch --no-tags origin main
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::tagged commit $GITHUB_SHA is not on main"
+              exit 1
+            fi
           fi
           # A real publish needs a tag; a branch run is always a dry run.
           dry_run=false
@@ -116,6 +126,8 @@ jobs:
   publish:
     needs: [verify, build]
     runs-on: ubuntu-latest
+    # Holds the NPM_TOKEN secret and the required-reviewer rule.
+    environment: npm-publish
     permissions:
       contents: read
       id-token: write # npm --provenance
