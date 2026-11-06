@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-#[path = "../support/fake_ollama.rs"]
+#[path = "../../src/test_support/fake_ollama.rs"]
 pub mod fake_ollama;
 
 use fake_ollama::{FakeOllama, Request};

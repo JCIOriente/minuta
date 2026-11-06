@@ -11,11 +11,11 @@ use minuta::llm::endpoint::{check, connect, OpenAiCompatible, Problem};
 use minuta::llm::Backend;
 use serde_json::{json, Value};
 
-#[path = "support/fake_ollama.rs"]
+#[path = "../src/test_support/fake_ollama.rs"]
 mod fake_ollama;
 use fake_ollama::{FakeOllama, Reply, Request};
 
-#[path = "support/fake_http.rs"]
+#[path = "../src/test_support/fake_http.rs"]
 mod fake_http;
 use fake_http::{FakeHttp, Route};
 

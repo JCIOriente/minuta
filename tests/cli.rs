@@ -979,7 +979,7 @@ fn models_pull_unknown_name_is_usage_error() {
 // Templates and LLM backends. The fake Ollama answers chats; the fake `claude` fixture
 // stands in for Claude Code.
 
-#[path = "support/fake_ollama.rs"]
+#[path = "../src/test_support/fake_ollama.rs"]
 mod fake_ollama;
 
 use fake_ollama::{FakeOllama, Reply};

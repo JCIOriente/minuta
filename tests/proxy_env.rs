@@ -9,11 +9,11 @@ use minuta::template::pull::{fetch_catalog, Origin};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-#[path = "support/fake_http.rs"]
+#[path = "../src/test_support/fake_http.rs"]
 mod fake_http;
 use fake_http::{FakeHttp, Route};
 
-#[path = "support/fake_ollama.rs"]
+#[path = "../src/test_support/fake_ollama.rs"]
 mod fake_ollama;
 use fake_ollama::{FakeOllama, Reply};
 

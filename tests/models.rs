@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-#[path = "support/fake_http.rs"]
+#[path = "../src/test_support/fake_http.rs"]
 mod fake_http;
 use fake_http::{FakeHttp, Route};
 

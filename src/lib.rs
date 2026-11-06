@@ -13,5 +13,7 @@ pub mod progress;
 pub mod runner;
 pub mod steps;
 pub mod template;
+#[cfg(test)]
+mod test_support;
 pub mod tools;
 pub mod transcript;

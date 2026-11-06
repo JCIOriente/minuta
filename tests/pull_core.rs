@@ -10,7 +10,7 @@ use minuta::template::pull::{
 };
 use tempfile::TempDir;
 
-#[path = "support/fake_http.rs"]
+#[path = "../src/test_support/fake_http.rs"]
 mod fake_http;
 
 use fake_http::{FakeHttp, Route};
