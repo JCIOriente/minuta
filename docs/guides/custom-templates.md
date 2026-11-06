@@ -191,6 +191,10 @@ The easiest way to start is to copy the built-in one and change the copy.
    # Meeting summary
    ```
 
+   The model may not follow this line exactly (it can change the wording or wrap
+   the text in a code block). The authoritative check is the layer that
+   `minuta templates list` showed in step 4.
+
 To go back to the built-in template, delete your file.
 
 **How minuta chooses.** There are three places, and a later one wins over an

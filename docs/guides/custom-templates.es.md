@@ -192,6 +192,10 @@ fácil es copiar la integrada y cambiar la copia.
    # Resumen de la reunión
    ```
 
+   Puede que el modelo no siga esta línea al pie de la letra (puede cambiar las
+   palabras o envolver el texto en un bloque de código). La comprobación que
+   vale es la capa que `minuta templates list` mostró en el paso 4.
+
 Para volver a la plantilla integrada, borra tu archivo.
 
 **Cómo elige minuta.** Hay tres lugares y gana el último: primero las plantillas

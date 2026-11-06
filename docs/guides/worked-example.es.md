@@ -218,7 +218,9 @@ minuta run weekly-sync.m4a -t meeting-minutes
 ```
 
 La transcripción ya existe, así que minuta la reutiliza y solo le pide al modelo de
-lenguaje que escriba el acta. Las últimas líneas son:
+lenguaje que escriba el acta. Si el modelo predeterminado no es `small`,
+minuta transcribe de nuevo con el otro modelo y reemplaza tu transcripción
+corregida; vuelve antes al paso 3.4. Las últimas líneas son:
 
 ```console
 finished in 2.6s (1 run, 5 cached)
