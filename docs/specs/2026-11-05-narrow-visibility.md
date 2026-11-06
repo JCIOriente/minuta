@@ -187,5 +187,16 @@ The rule is about the library's API.
 None.
 
 ## Implementation status
-Updated by the PRs that implement this spec. Plan: not written yet.
-- [ ] Plan and tasks
+Updated by the PRs that implement this spec. Plan:
+[docs/plans/2026-11-05-narrow-visibility.md](../plans/2026-11-05-narrow-visibility.md) (#330),
+tasks #328, #329.
+- [x] T1: `testing` facade, test-only items under `cfg(test)`, measured dead code removed
+      (#331, task #328)
+- [x] T2: private modules, `#![warn(unreachable_pub)]`, 347 narrowings, facade members
+      narrowed by hand (#332, task #329)
+
+End state: only `cli`, `error` and the doc-hidden `testing` facade are public;
+`cargo build --lib` reports no `dead_code`; the three existing `allow(dead_code)` remain.
+Test count 1,481 -> 1,478 (deleted with their code: `default_llm_parses`,
+`default_dir_is_minuta_models`, `origin_github_host`). The facade's `models` submodule
+re-exports `pull_with_progress` instead of `pull` (Behavior & edge cases).
