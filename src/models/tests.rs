@@ -1,14 +1,11 @@
 //! Tests for model download, lookup and listing, split by behavior.
 
-use crate::models::{self, ModelKind, ModelSpec, Pulled};
-use crate::test_support::fake_http::{FakeHttp, Route};
-use sha2::{Digest, Sha256};
-use std::fmt::Write as _;
-use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
+
+use super::*;
+use crate::test_support::fake_http::{FakeHttp, Route};
 
 mod catalog;
 mod download;

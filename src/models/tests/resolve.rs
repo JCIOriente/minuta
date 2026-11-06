@@ -9,24 +9,19 @@ fn resolve_path_vs_name() {
     let custom = dir.path().join("custom.bin");
     std::fs::write(&custom, b"x").unwrap();
     let given = custom.to_str().unwrap();
-    assert_eq!(models::resolve(given, &models_dir).unwrap(), custom);
+    assert_eq!(resolve(given, &models_dir).unwrap(), custom);
     assert_eq!(
-        models::resolve("small", &models_dir).unwrap(),
+        resolve("small", &models_dir).unwrap(),
         models_dir.join("ggml-small.bin")
     );
-    assert_eq!(
-        models::resolve("nope", &models_dir)
-            .unwrap_err()
-            .exit_code(),
-        2
-    );
+    assert_eq!(resolve("nope", &models_dir).unwrap_err().exit_code(), 2);
 }
 
 #[test]
 fn vad_model_resolves_into_vad_subfolder() {
     let dir = tempfile::tempdir().unwrap();
     assert_eq!(
-        models::resolve("silero-v5.1.2", dir.path()).unwrap(),
+        resolve("silero-v5.1.2", dir.path()).unwrap(),
         dir.path().join("vad").join("ggml-silero-v5.1.2.bin")
     );
 }
@@ -35,7 +30,7 @@ fn vad_model_resolves_into_vad_subfolder() {
 fn whisper_model_resolves_flat() {
     let dir = tempfile::tempdir().unwrap();
     assert_eq!(
-        models::resolve("tiny", dir.path()).unwrap(),
+        resolve("tiny", dir.path()).unwrap(),
         dir.path().join("ggml-tiny.bin")
     );
 }
@@ -43,10 +38,7 @@ fn whisper_model_resolves_flat() {
 #[test]
 fn default_dir_is_minuta_models() {
     let home = Path::new("/home/u");
-    assert_eq!(
-        models::default_dir_for(home),
-        Path::new("/home/u/.minuta/models")
-    );
+    assert_eq!(default_dir_for(home), Path::new("/home/u/.minuta/models"));
 }
 
 #[test]
@@ -57,7 +49,7 @@ fn resolve_does_not_accept_a_directory() {
     let lookalike = dir.path().join("small");
     std::fs::create_dir(&lookalike).unwrap();
     assert_eq!(
-        models::resolve(lookalike.to_str().unwrap(), &models_dir)
+        resolve(lookalike.to_str().unwrap(), &models_dir)
             .unwrap_err()
             .exit_code(),
         2

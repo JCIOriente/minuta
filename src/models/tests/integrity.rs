@@ -15,7 +15,7 @@ fn bad_checksum_rejected_and_cleaned() {
         sha256: &wrong,
         size: BODY.len() as u64,
     };
-    let err = models::pull(&spec, dir.path()).unwrap_err();
+    let err = pull(&spec, dir.path()).unwrap_err();
     assert_eq!(err.to_string(), "job error: checksum mismatch for tiny");
     assert!(
         files_in(dir.path()).is_empty(),
@@ -38,7 +38,7 @@ fn already_present_noop() {
         size: BODY.len() as u64,
     };
     std::fs::write(dir.path().join("ggml-tiny.bin"), BODY).unwrap();
-    let out = models::pull(&spec, dir.path()).unwrap();
+    let out = pull(&spec, dir.path()).unwrap();
     assert_eq!(out, Pulled::AlreadyPresent);
     assert!(requests.lock().unwrap().is_empty());
 }
@@ -57,7 +57,7 @@ fn invalid_present_file_is_replaced() {
         size: BODY.len() as u64,
     };
     std::fs::write(dir.path().join("ggml-tiny.bin"), b"corrupt").unwrap();
-    assert_eq!(models::pull(&spec, dir.path()).unwrap(), Pulled::Downloaded);
+    assert_eq!(pull(&spec, dir.path()).unwrap(), Pulled::Downloaded);
     assert_eq!(
         std::fs::read(dir.path().join("ggml-tiny.bin")).unwrap(),
         BODY
@@ -78,7 +78,7 @@ fn corrupt_present_file_removed_when_download_also_bad() {
         size: BODY.len() as u64,
     };
     std::fs::write(dir.path().join("ggml-tiny.bin"), b"corrupt").unwrap();
-    models::pull(&spec, dir.path()).unwrap_err();
+    pull(&spec, dir.path()).unwrap_err();
     assert!(
         files_in(dir.path()).is_empty(),
         "left {:?}",
@@ -99,7 +99,7 @@ fn oversized_download_rejected_and_cleaned() {
         sha256: &good,
         size: BODY.len() as u64 - 5,
     };
-    let err = models::pull(&spec, dir.path()).unwrap_err();
+    let err = pull(&spec, dir.path()).unwrap_err();
     assert_eq!(err.to_string(), "job error: size mismatch for tiny");
     assert!(
         files_in(dir.path()).is_empty(),
@@ -121,7 +121,7 @@ fn undersized_download_rejected_and_cleaned() {
         sha256: &good,
         size: BODY.len() as u64 + 5,
     };
-    let err = models::pull(&spec, dir.path()).unwrap_err();
+    let err = pull(&spec, dir.path()).unwrap_err();
     assert_eq!(err.to_string(), "job error: size mismatch for tiny");
     assert!(
         files_in(dir.path()).is_empty(),

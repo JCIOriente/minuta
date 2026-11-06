@@ -15,7 +15,7 @@ fn good_download_renamed() {
         sha256: &good,
         size: BODY.len() as u64,
     };
-    let out = models::pull(&spec, dir.path()).unwrap();
+    let out = pull(&spec, dir.path()).unwrap();
     assert_eq!(*requests.lock().unwrap(), ["GET /ggml-tiny.bin HTTP/1.1"]);
     assert_eq!(out, Pulled::Downloaded);
     assert_eq!(files_in(dir.path()), vec!["ggml-tiny.bin".to_string()]);
@@ -42,7 +42,7 @@ fn download_follows_redirects() {
         sha256: &good,
         size: BODY.len() as u64,
     };
-    assert_eq!(models::pull(&spec, dir.path()).unwrap(), Pulled::Downloaded);
+    assert_eq!(pull(&spec, dir.path()).unwrap(), Pulled::Downloaded);
     assert_eq!(
         server.requests(),
         vec!["/templates/ggml-tiny.bin", "/templates/cdn.bin"]
@@ -67,7 +67,7 @@ fn redirect_chain(hops: usize) -> Vec<Route> {
     routes
 }
 
-fn pull_hop0(server: &FakeHttp, dir: &Path) -> crate::error::Result<Pulled> {
+fn pull_hop0(server: &FakeHttp, dir: &Path) -> Result<Pulled> {
     let base = server.base();
     let good = sha(BODY);
     let spec = ModelSpec {
@@ -78,7 +78,7 @@ fn pull_hop0(server: &FakeHttp, dir: &Path) -> crate::error::Result<Pulled> {
         sha256: &good,
         size: BODY.len() as u64,
     };
-    models::pull(&spec, dir)
+    pull(&spec, dir)
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn pull_uses_the_spec_file_name() {
         sha256: &good,
         size: BODY.len() as u64,
     };
-    assert_eq!(models::pull(&spec, dir.path()).unwrap(), Pulled::Downloaded);
+    assert_eq!(pull(&spec, dir.path()).unwrap(), Pulled::Downloaded);
     assert_eq!(
         *requests.lock().unwrap(),
         ["GET /ggml-silero-v5.1.2.bin HTTP/1.1"]
@@ -141,7 +141,7 @@ fn pull_creates_vad_subfolder() {
         sha256: &good,
         size: BODY.len() as u64,
     };
-    models::pull(&spec, dir.path()).unwrap();
+    pull(&spec, dir.path()).unwrap();
     assert_eq!(
         files_in(&dir.path().join("vad")),
         vec!["ggml-silero-v5.1.2.bin".to_string()]
@@ -162,7 +162,7 @@ fn trailing_slash_in_base_url_is_ok() {
         sha256: &good,
         size: BODY.len() as u64,
     };
-    assert_eq!(models::pull(&spec, dir.path()).unwrap(), Pulled::Downloaded);
+    assert_eq!(pull(&spec, dir.path()).unwrap(), Pulled::Downloaded);
     assert_eq!(*requests.lock().unwrap(), ["GET /ggml-tiny.bin HTTP/1.1"]);
 }
 
@@ -186,7 +186,7 @@ fn download_failure_leaves_no_file() {
             sha256: &good,
             size: BODY.len() as u64,
         };
-        let err = models::pull(&spec, dir.path()).unwrap_err();
+        let err = pull(&spec, dir.path()).unwrap_err();
         assert_eq!(err.exit_code(), 1);
         if name == "base" {
             let msg = err.to_string();

@@ -16,7 +16,7 @@ fn pull_reports_bytes_up_to_the_size() {
         size: BODY.len() as u64,
     };
     let mut seen = Vec::new();
-    let result = models::pull_with_progress(&spec, dir.path(), &mut |n| seen.push(n)).unwrap();
+    let result = pull_with_progress(&spec, dir.path(), &mut |n| seen.push(n)).unwrap();
     assert_eq!(result, Pulled::Downloaded);
     assert_eq!(seen.last(), Some(&(BODY.len() as u64)));
 }
@@ -36,7 +36,7 @@ fn pull_already_present_reports_no_bytes() {
         size: BODY.len() as u64,
     };
     let mut seen = Vec::new();
-    models::pull_with_progress(&spec, dir.path(), &mut |n| seen.push(n)).unwrap();
+    pull_with_progress(&spec, dir.path(), &mut |n| seen.push(n)).unwrap();
     assert!(seen.is_empty());
 }
 
@@ -55,7 +55,7 @@ fn pull_reports_running_totals_over_many_chunks() {
         size: body.len() as u64,
     };
     let mut seen = Vec::new();
-    models::pull_with_progress(&spec, dir.path(), &mut |n| seen.push(n)).unwrap();
+    pull_with_progress(&spec, dir.path(), &mut |n| seen.push(n)).unwrap();
     assert!(seen.len() > 1, "one callback for the whole body: {seen:?}");
     assert!(
         seen.windows(2).all(|w| w[0] < w[1]),

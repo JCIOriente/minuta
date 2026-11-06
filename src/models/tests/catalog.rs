@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn catalog_lists_pinned_models() {
-    let names: Vec<_> = models::CATALOG.iter().map(|m| m.name).collect();
+    let names: Vec<_> = CATALOG.iter().map(|m| m.name).collect();
     assert_eq!(
         names,
         [
@@ -16,14 +16,14 @@ fn catalog_lists_pinned_models() {
             "silero-v5.1.2"
         ]
     );
-    for m in models::CATALOG {
+    for m in CATALOG {
         assert_eq!(m.sha256.len(), 64);
         assert!(m.sha256.bytes().all(|b| b.is_ascii_hexdigit()));
     }
 }
 
 fn catalog_spec(name: &str) -> &'static ModelSpec<'static> {
-    models::CATALOG.iter().find(|m| m.name == name).unwrap()
+    CATALOG.iter().find(|m| m.name == name).unwrap()
 }
 
 #[test]
