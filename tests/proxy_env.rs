@@ -3,9 +3,9 @@
 
 use std::sync::{Arc, Once};
 
-use minuta::llm::{endpoint, ollama};
-use minuta::models::{self, ModelKind, ModelSpec, Pulled};
-use minuta::template::pull::{fetch_catalog, Origin};
+use minuta::testing::models::{self, ModelKind, ModelSpec, Pulled};
+use minuta::testing::{endpoint, ollama};
+use minuta::testing::{fetch_catalog, Origin};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 

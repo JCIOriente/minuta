@@ -15,5 +15,7 @@ pub mod steps;
 pub mod template;
 #[cfg(test)]
 mod test_support;
+#[doc(hidden)]
+pub mod testing;
 pub mod tools;
 pub mod transcript;
