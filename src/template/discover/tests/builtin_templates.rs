@@ -1,7 +1,7 @@
 use super::*;
 use crate::chapters::ChaptersSpec;
 use crate::fields::{Field, Format, Limit};
-use crate::template::Input;
+use crate::template::{graph, Input, Output};
 
 #[test]
 fn builtin_summary_parses() {
@@ -261,8 +261,8 @@ fn social_run_creates_no_summary() {
         .iter()
         .map(|s| s.to_string())
         .collect();
-    let order = crate::template::graph::order(&requested, &deps_of).unwrap();
+    let order = graph::order(&requested, &deps_of).unwrap();
     assert_eq!(order, requested);
-    let order = crate::template::graph::order(&["summary".to_string()], &deps_of).unwrap();
+    let order = graph::order(&["summary".to_string()], &deps_of).unwrap();
     assert_eq!(order, ["summary"]);
 }

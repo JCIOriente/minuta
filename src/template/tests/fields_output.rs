@@ -1,6 +1,4 @@
 use super::*;
-use crate::fields::{Field, FieldsSpec, Format, Limit};
-use crate::template::Output;
 
 const FIELDS_HEAD: &str = "---\noutput: fields\n";
 
@@ -10,13 +8,6 @@ fn fields_tpl(extra: &str) -> String {
 
 fn fields_error(extra: &str) -> String {
     usage(parse("a", &fields_tpl(extra)))
-}
-
-fn spec(t: &Template) -> &FieldsSpec {
-    match &t.output {
-        Output::Fields(s) => s,
-        other => panic!("expected fields output, got {other:?}"),
-    }
 }
 
 #[test]

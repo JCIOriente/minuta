@@ -1,6 +1,4 @@
 use super::*;
-use crate::chapters::ChaptersSpec;
-use crate::template::Output;
 
 const CHAPTERS_HEAD: &str = "---\noutput: chapters\n";
 

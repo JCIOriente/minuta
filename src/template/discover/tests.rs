@@ -1,41 +1,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::error::Error;
-use crate::fields::FieldsSpec;
-use crate::template::discover::{discover, Dirs};
-use crate::template::{Layer, Output, Template, Vars};
 use tempfile::TempDir;
+
+use super::*;
+use crate::template::tests::{spec, usage, vars};
 
 mod builtin_templates;
 #[cfg(unix)]
 mod hard_links;
 #[cfg(unix)]
 mod symlinks;
-
-fn usage(r: crate::error::Result<impl std::fmt::Debug>) -> String {
-    match r {
-        Err(Error::Usage(m)) => m,
-        other => panic!("expected usage error, got {other:?}"),
-    }
-}
-
-fn vars() -> Vars {
-    Vars {
-        output_lang: "Spanish".into(),
-        output_lang_code: "es".into(),
-        speech_lang: "Catalan".into(),
-        job_name: "reunion".into(),
-        duration: "1:02:03".into(),
-    }
-}
-
-fn spec(t: &Template) -> &FieldsSpec {
-    match &t.output {
-        Output::Fields(s) => s,
-        other => panic!("expected fields output, got {other:?}"),
-    }
-}
 
 fn write(dir: &Path, file: &str, text: &str) {
     fs::create_dir_all(dir).unwrap();

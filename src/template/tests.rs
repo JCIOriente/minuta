@@ -1,30 +1,36 @@
 use std::path::Path;
 
-use crate::error::Error;
-use crate::llm::BackendId;
-use crate::template::{Input, Layer, Template, Vars, VARIABLES};
+use super::*;
 
 mod chapters_output;
 mod fields_output;
 
-fn parse(name: &str, text: &str) -> crate::error::Result<Template> {
+fn parse(name: &str, text: &str) -> Result<Template> {
     Template::parse(name, Layer::Project, None, text)
 }
 
-fn usage(r: crate::error::Result<impl std::fmt::Debug>) -> String {
+/// The message of a usage error; panics on anything else.
+pub(super) fn usage(r: Result<impl std::fmt::Debug>) -> String {
     match r {
         Err(Error::Usage(m)) => m,
         other => panic!("expected usage error, got {other:?}"),
     }
 }
 
-fn vars() -> Vars {
+pub(super) fn vars() -> Vars {
     Vars {
         output_lang: "Spanish".into(),
         output_lang_code: "es".into(),
         speech_lang: "Catalan".into(),
         job_name: "reunion".into(),
         duration: "1:02:03".into(),
+    }
+}
+
+pub(super) fn spec(t: &Template) -> &FieldsSpec {
+    match &t.output {
+        Output::Fields(s) => s,
+        other => panic!("expected fields output, got {other:?}"),
     }
 }
 
