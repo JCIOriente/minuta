@@ -67,6 +67,14 @@ fn write_transcript(dir: &Path, t: &Transcript) {
     fs::write(path, serde_json::to_string(t).unwrap()).unwrap();
 }
 
+/// Rewrites the job's `transcript.json` as minuta 0.9.0 wrote it: no `version` key.
+fn write_transcript_v0_9_0(dir: &Path, t: &Transcript) {
+    let json = serde_json::to_string(t).unwrap();
+    let old = json.replacen("\"version\":1,", "", 1);
+    assert_ne!(old, json, "the writer no longer emits a version");
+    fs::write(dir.join(TRANSCRIPT_FILE), old).unwrap();
+}
+
 /// A job folder holding a short Spanish transcript.
 fn job() -> (TempDir, Transcript) {
     let dir = TempDir::new().unwrap();

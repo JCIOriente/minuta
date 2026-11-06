@@ -166,7 +166,7 @@ fn detected_language(dir: &Path) -> Result<String> {
     let path = layout::transcript_json(dir);
     let json = fs::read_to_string(&path)
         .map_err(|e| Error::Io(io::Error::new(e.kind(), format!("{}: {e}", path.display()))))?;
-    let transcript: Transcript = serde_json::from_str(&json)
+    let transcript = Transcript::from_json(&json)
         .map_err(|e| Error::Parse(format!("{}: {e}", path.display())))?;
     Ok(transcript.language)
 }

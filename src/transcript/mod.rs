@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::error::{Error, Result};
 
@@ -9,10 +10,42 @@ pub(crate) struct Segment {
     pub text: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// The `"version"` written to `transcript.json`. Raise it when a change would break a reader.
+const TRANSCRIPT_VERSION: u64 = 1;
+
+/// The contents of `transcript.json`. The version is not a field: it is written by
+/// [`Serialize`] and checked by [`Transcript::from_json`], so a file without one (made by
+/// 0.9.0) still loads and the stored bytes are never rewritten on read.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct Transcript {
     pub language: String,
     pub segments: Vec<Segment>,
+}
+
+impl Serialize for Transcript {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let mut out = serializer.serialize_struct("Transcript", 3)?;
+        out.serialize_field("version", &TRANSCRIPT_VERSION)?;
+        out.serialize_field("language", &self.language)?;
+        out.serialize_field("segments", &self.segments)?;
+        out.end()
+    }
+}
+
+impl Transcript {
+    /// Reads a `transcript.json` text. A missing `version` is accepted; a different one is
+    /// refused, as for `chapters.json`. Errors are a phrase for after the file name.
+    pub(crate) fn from_json(text: &str) -> std::result::Result<Self, String> {
+        let value: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+        if let Some(version) = value.get("version").and_then(serde_json::Value::as_u64) {
+            if version != TRANSCRIPT_VERSION {
+                return Err(format!(
+                    "has version {version}, which this version of minuta cannot read"
+                ));
+            }
+        }
+        serde_json::from_value(value).map_err(|e| e.to_string())
+    }
 }
 
 #[derive(Deserialize)]

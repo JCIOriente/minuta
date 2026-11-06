@@ -148,12 +148,64 @@ fn json_roundtrip() {
     assert_eq!(
         json,
         serde_json::json!({
+            "version": 1,
             "language": "en",
             "segments": [{"start": 0.0, "end": 1.5, "text": "hi"}]
         })
     );
     let back: Transcript = serde_json::from_value(json).unwrap();
     assert_eq!(back, t);
+}
+
+#[test]
+fn written_json_starts_with_version_1() {
+    let json = serde_json::to_string_pretty(&transcript(vec![seg(0.0, 1.0, "hi")])).unwrap();
+    assert!(json.starts_with("{\n  \"version\": 1,"), "{json}");
+}
+
+/// A `transcript.json` from minuta 0.9.0, before the file had a version.
+const V0_9_0: &str = r#"{
+  "language": "es",
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 1.5,
+      "text": " hola"
+    }
+  ]
+}"#;
+
+#[test]
+fn file_without_version_still_loads() {
+    let t = Transcript::from_json(V0_9_0).unwrap();
+    assert_eq!(t.language, "es");
+    assert_eq!(t.segments, vec![seg(0.0, 1.5, " hola")]);
+}
+
+#[test]
+fn file_with_version_1_loads() {
+    let t = Transcript::from_json(r#"{"version":1,"language":"en","segments":[]}"#).unwrap();
+    assert_eq!(t, transcript(vec![]));
+}
+
+#[test]
+fn newer_version_is_rejected_by_name() {
+    let err = Transcript::from_json(r#"{"version":2,"language":"en","segments":[]}"#).unwrap_err();
+    assert_eq!(
+        err,
+        "has version 2, which this version of minuta cannot read"
+    );
+}
+
+#[test]
+fn version_0_is_rejected() {
+    let err = Transcript::from_json(r#"{"version":0,"language":"en","segments":[]}"#).unwrap_err();
+    assert!(err.starts_with("has version 0"), "{err}");
+}
+
+#[test]
+fn invalid_json_reports_the_parse_error() {
+    assert!(Transcript::from_json("{").is_err());
 }
 
 #[test]

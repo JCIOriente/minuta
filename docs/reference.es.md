@@ -95,7 +95,7 @@ Los documentos quedan en la raíz de la carpeta del trabajo, los archivos que ot
 | `transcript.txt` | Transcripción legible con marcas de tiempo |
 | `captions.srt` | Subtítulos |
 | `<template>.md` | El documento generado con cada plantilla que pediste |
-| `assets/transcript.json` | Segmentos con marcas de tiempo y el idioma detectado |
+| `assets/transcript.json` | Segmentos con marcas de tiempo y el idioma detectado, como `{"version": 1, "language": ..., "segments": [{"start", "end", "text"}]}` |
 | `assets/<template>.json` | El resultado estructurado de una plantilla `fields` o `chapters` |
 | `assets/audio.wav` | Audio mono de 16 kHz que se le pasa a whisper |
 | `assets/joined.<ext>` | La grabación unida. Solo con varias fuentes; con una, se usa el archivo original tal cual |
@@ -113,6 +113,11 @@ audio.wav  chapters.json  chapters.md  instagram.json  linkedin.json  transcript
 $ ls -A minuta-out/standup/.minuta
 job.json  llm-cache  probe.json
 ```
+
+`transcript.json` lleva `"version": 1`, como los demás archivos JSON de `assets/`. Un
+archivo sin `version`, escrito por 0.9.0, se lee como versión 1 y no invalida la caché
+de su trabajo. Un archivo con otra versión se rechaza con un mensaje que indica la
+versión.
 
 Una carpeta del trabajo pertenece a las grabaciones que la crearon. Si procesas otras grabaciones con un nombre de trabajo que ya está en uso, minuta se detiene en lugar de
 sobrescribir. Elige otro nombre con `--name`, o reemplaza el trabajo con `--force`.
