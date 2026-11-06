@@ -1,4 +1,17 @@
-# minuta
+<p align="center">
+  <img src="https://raw.githubusercontent.com/JCIOriente/minuta/main/assets/logo.svg" alt="minuta logo: three audio waveform bars turning into three lines of text" width="96" height="96">
+</p>
+
+<h1 align="center">minuta</h1>
+
+<p align="center">Turn recordings of meetings, classes and webinars into transcripts and written documents.</p>
+
+<p align="center">
+  <a href="https://crates.io/crates/minuta"><img src="https://img.shields.io/crates/v/minuta" alt="crates.io version"></a>
+  <a href="https://www.npmjs.com/package/@jcioriente/minuta"><img src="https://img.shields.io/npm/v/@jcioriente/minuta" alt="npm version"></a>
+  <a href="https://github.com/JCIOriente/minuta/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/JCIOriente/minuta/ci.yml?branch=main" alt="CI status"></a>
+  <a href="https://github.com/JCIOriente/minuta/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
+</p>
 
 **English** | [Español](https://github.com/JCIOriente/minuta/blob/main/README.es.md)
 
