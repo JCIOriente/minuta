@@ -1,9 +1,10 @@
-use minuta::error::Error;
-use minuta::transcript::{from_whisper_json, to_srt, to_txt, Segment, Transcript};
+//! Tests for whisper JSON parsing and the text, SRT and JSON transcript outputs.
 
-const SAMPLE: &str = include_str!("fixtures/whisper/sample.json");
-const EMPTY: &str = include_str!("fixtures/whisper/empty.json");
-const CLASS: &str = include_str!("fixtures/whisper/class.json");
+use super::*;
+
+const SAMPLE: &str = include_str!("../../tests/fixtures/whisper/sample.json");
+const EMPTY: &str = include_str!("../../tests/fixtures/whisper/empty.json");
+const CLASS: &str = include_str!("../../tests/fixtures/whisper/class.json");
 
 fn whisper(segments: &[(u64, u64, &str)]) -> String {
     let items: Vec<String> = segments
