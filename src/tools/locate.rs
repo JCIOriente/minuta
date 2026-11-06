@@ -297,16 +297,16 @@ pub fn preflight(paths: &ToolPaths, need_model: bool) -> Result<Toolchain> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
+
+    /// Committed and already executable: writing a script here and running it can fail with
+    /// ETXTBSY on Linux when another test thread forks while the file is open for writing.
+    const HANG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bin/hang");
 
     #[test]
     fn hanging_version_probe_times_out() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("hang");
-        std::fs::write(&path, "#!/bin/sh\nexec sleep 30\n").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         let start = Instant::now();
-        let err = probe_version(&path, "--version", Duration::from_millis(200)).unwrap_err();
+        let err =
+            probe_version(Path::new(HANG), "--version", Duration::from_millis(200)).unwrap_err();
         assert!(err.contains("timed out"), "err was {err:?}");
         assert!(start.elapsed() < Duration::from_secs(2));
     }
