@@ -430,6 +430,10 @@ const SHIPPED = [
   'README.es.md',
   'LICENSE',
   ...['install', 'reference', 'templates'].flatMap((n) => [`docs/${n}.md`, `docs/${n}.es.md`]),
+  ...['README', 'custom-templates', 'llm-and-whisper', 'fix-doctor', 'worked-example'].flatMap((n) => [
+    `docs/guides/${n}.md`,
+    `docs/guides/${n}.es.md`,
+  ]),
 ];
 
 // A repository root holding every shipped file; `files` overrides the content of some of them.
@@ -459,7 +463,11 @@ test('main_package_ships_readmes_license_and_user_docs_from_the_repository', () 
   run(f, { repoRoot: REPO_ROOT });
   const dir = path.join(f.outDir, 'minuta');
   for (const rel of SHIPPED) assert.ok(fs.statSync(path.join(dir, rel)).isFile(), rel);
-  assert.deepEqual(fs.readdirSync(path.join(dir, 'docs')).sort(), SHIPPED.filter((s) => s.startsWith('docs/')).map((s) => s.slice(5)).sort());
+  const shippedDocs = fs
+    .readdirSync(path.join(dir, 'docs'), { recursive: true, withFileTypes: true })
+    .filter((e) => e.isFile())
+    .map((e) => path.relative(dir, path.join(e.parentPath, e.name)).split(path.sep).join('/'));
+  assert.deepEqual(shippedDocs.sort(), SHIPPED.filter((s) => s.startsWith('docs/')).sort());
   assert.equal(
     fs.readFileSync(path.join(dir, 'LICENSE'), 'utf8'),
     fs.readFileSync(path.join(REPO_ROOT, 'LICENSE'), 'utf8'),
@@ -545,7 +553,7 @@ test('every_relative_link_in_the_built_package_resolves_inside_it', () => {
   run(f, { repoRoot: REPO_ROOT });
   const dir = path.join(f.outDir, 'minuta');
   const files = markdownFiles(dir);
-  assert.equal(files.length, 8);
+  assert.equal(files.length, 18);
   let checked = 0;
   for (const file of files) {
     for (const target of relativeLinks(fs.readFileSync(file, 'utf8'))) {

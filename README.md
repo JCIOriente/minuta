@@ -108,6 +108,7 @@ The built-in templates are `summary`, `chapters`, `youtube`, `linkedin` and
 | Guide | What it covers |
 | --- | --- |
 | [Installation](https://github.com/JCIOriente/minuta/blob/main/docs/install.md) | macOS, Linux and Windows setup, models and LLM backends |
+| [How-to guides](https://github.com/JCIOriente/minuta/blob/main/docs/guides/README.md) | Step by step: your own templates, an LLM and a whisper model, fixing `minuta doctor`, and a recording to meeting minutes |
 | [Templates](https://github.com/JCIOriente/minuta/blob/main/docs/templates.md) | Built-in templates, downloading more, writing your own, choosing a backend |
 | [Reference](https://github.com/JCIOriente/minuta/blob/main/docs/reference.md) | Commands, the job folder, caching, configuration and troubleshooting |
 
