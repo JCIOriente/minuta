@@ -110,3 +110,6 @@ fn io_error(path: &Path, source: std::io::Error) -> Error {
         source,
     }
 }
+
+#[cfg(test)]
+mod tests;
