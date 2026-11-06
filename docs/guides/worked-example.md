@@ -6,9 +6,13 @@
 You will transcribe the recording, fix a bad transcript, generate the minutes,
 check them and share them.
 
-The example is a short recording called `weekly-sync.m4a`. Use your own
-recording and change the name in each command. What you see on screen will
-differ from this page in the words, because models write differently every time.
+The example is a short English recording called `weekly-sync.m4a`. Use your own
+recording: replace the folder and the file name in each command with yours. If a
+name has spaces, put it in quotes, as in `minuta transcribe "weekly sync.m4a"`.
+
+The output on this page is an example. On your screen the words, versions,
+paths, timings and counts will differ, and in an interactive terminal the
+progress shows as bars instead of plain lines.
 
 ## Before you start
 
@@ -18,7 +22,8 @@ differ from this page in the words, because models write differently every time.
   model. If not, follow [Set up an LLM and a whisper model](llm-and-whisper.md).
 - You have a recording of a meeting in a file that ffmpeg can read, such as
   `.mp4`, `.m4a`, `.mp3` or `.wav`.
-- A terminal open in the folder that holds the recording:
+- A terminal open in the folder that holds the recording. Replace `~/Meetings`
+  with that folder:
 
   ```sh
   cd ~/Meetings
@@ -64,8 +69,9 @@ finished in 0.8s (5 run, 0 cached)
 The `note: VAD disabled` line is information, not an error. A real meeting takes
 longer; the transcription step is the slow one.
 
-The job folder is `minuta-out/weekly-sync/`. It holds `transcript.txt` (the text
-with timestamps) and `captions.srt` (subtitles). Read the transcript:
+The job folder is named after the recording: here, `minuta-out/weekly-sync/`.
+It holds `transcript.txt` (plain text, without timestamps) and `captions.srt`
+(subtitles, with timestamps). Read the transcript:
 
 ```sh
 cat minuta-out/weekly-sync/transcript.txt
@@ -78,11 +84,26 @@ We decided to move the launch review to Thursday. Action items. Maria will send 
 Tom will ask Heidi for the test server today. Thanks everyone.
 ```
 
+**If it did not work.**
+
+- `source file not found`: the file is not in this folder, or its name is
+  spelled differently. Run `ls` to see the exact name, and use quotes if it has
+  spaces.
+- `holds a job made from different sources`: another recording already used the
+  name `weekly-sync`. Choose a new name with `--name`, such as
+  `minuta transcribe weekly-sync.m4a --name weekly-sync-2`, then use the folder
+  minuta prints in the next commands.
+
+More errors are in [Troubleshooting](../reference.md#troubleshooting).
+
 ## 3. Fix a transcript with mistakes
 
 The example transcript has errors: "Weekly Sailing" should be "Weekly Sync", and
-"Heidi" should be "IT". The default model, `base`, is small and fast. A bigger
-model hears better.
+"Heidi" should be "IT". It was made with `base`, the model the installation
+guide sets up. `base` is small and fast. A bigger model hears better.
+
+If your transcript is good enough, or you already use `small` or a larger
+model, skip to step 4.
 
 1. Download the `small` model (465 MiB):
 
@@ -96,8 +117,8 @@ model hears better.
    .../.minuta/models/ggml-small.bin
    ```
 
-2. Transcribe again with it. minuta sees that the model changed and redoes only
-   the transcription:
+2. Transcribe again with it. minuta sees that the model changed, and redoes only
+   the transcription and the files made from it:
 
    ```sh
    minuta transcribe weekly-sync.m4a --model small
@@ -116,6 +137,10 @@ model hears better.
 
 3. Read the transcript again:
 
+   ```sh
+   cat minuta-out/weekly-sync/transcript.txt
+   ```
+
    ```text
    Welcome to the Weekly Sync.
    Maria reported that the website redesign is on track and will launch on Friday.
@@ -127,21 +152,30 @@ model hears better.
    Thanks everyone.
    ```
 
-   Better. One word is still wrong ("buck"). No model is perfect, so you will
-   check the minutes against the transcript in step 6.
+   Better, but "buck" and "locked on" are still wrong. No model is perfect, so
+   you will check the minutes against the recording in step 7.
 
-4. Make `small` the default so you do not need `--model` again. Open the config
-   file (`minuta config path` prints where it is; `minuta config init` creates
-   it) and set the model under `[whisper]`:
+4. Make `small` the default so you do not need `--model` again. Run
+   `minuta config path` to see where the config file is, and open it. Under
+   `[whisper]`, change the `model` line:
 
    ```toml
    [whisper]
    model = "small"
    ```
 
-**If it did not work.** `unknown model` means the name is not in
-`minuta models list`. A long recording with silences can make whisper invent
-text; [the models guide](llm-and-whisper.md) shows the fix (step 5 of Part 1).
+   Change the line that is already there. Do not add a second `[whisper]`
+   section: minuta stops with `duplicate key`. If you have no config file yet,
+   run `minuta config init` first.
+
+**If it did not work.**
+
+- `unknown model`: the name is not in `minuta models list`.
+- `config error: ... invalid TOML at line ...`: the config file has a mistake.
+  Open the file that `minuta config path` prints and fix the line the message
+  names.
+- On a long recording with silences, whisper can invent text.
+  [The models guide](llm-and-whisper.md) shows the fix (step 5 of Part 1).
 
 ## 4. Get a minutes template
 
@@ -224,39 +258,19 @@ The meeting covered the status of the website redesign, a fix for the payment bu
 - `not reachable` or `model missing`: your language model is not ready. See
   [the doctor guide](fix-doctor.md#5-llm-is-not-ok).
 
-## 6. Check the minutes before you share them
+## 6. Choose the language of the minutes
 
-A model can make mistakes, so read the minutes once against the transcript.
-Check these, in order:
+Skip this step if the language is right.
 
-1. **Names.** Does each name match what people said?
-2. **Numbers and dates.** "Wednesday" and "Thursday" in the example match the
-   transcript.
-3. **Owners.** Is each action next to the right person?
-4. **Nothing invented.** Every line should be in the transcript. Delete what is
-   not.
-
-The template tells the model not to invent anything. It still helps to check.
-
-If you want a change, edit `meeting-minutes.md` by hand. It is a plain text file.
-To have the model write it again, run the command from step 5 with
-`--force meeting-minutes` after the file name. That reruns this template only:
-
-```sh
-minuta run weekly-sync.m4a -t meeting-minutes --force meeting-minutes
-```
-
-## 7. Write the minutes in another language
-
-The documents use the language of the recording. To get them in another
-language, name it with `--output-lang`:
+Without any setting, documents use the language spoken in the recording. To get
+them in another language, name it with `--output-lang`:
 
 ```sh
 minuta run weekly-sync.m4a -t meeting-minutes --output-lang es
 ```
 
-Only the minutes are written again. The headings and the text come out in
-Spanish:
+Only the minutes are written again, and the new file replaces the old one. The
+headings and the text come out in Spanish:
 
 ```markdown
 # weekly-sync
@@ -267,8 +281,45 @@ Spanish:
 ## Resumen de la reunión
 ```
 
-Running the command again without `--output-lang es` writes the minutes in
-English again.
+Running the command without `--output-lang` writes the minutes in your usual
+language again: the one set in the template or the config file, or else the
+language of the recording. In this example, that is English.
+
+Choose the language before you edit the minutes in step 7. Each new run of the
+template replaces the file, and your edits with it.
+
+## 7. Check the minutes before you share them
+
+A model can make mistakes, and so can the transcript. The template lets the
+model correct an obvious mishearing, as it did with "buck", so the minutes and
+the transcript can differ. Check the facts against the recording itself. The
+timestamps in the minutes, such as `[00:00:00]`, and in `captions.srt` tell you
+where to listen.
+
+Check these, in order:
+
+1. **Names.** Does each name match what people said?
+2. **Numbers and dates.** "Wednesday" and "Thursday" in the example match the
+   recording.
+3. **Owners.** Is each action next to the right person?
+4. **Nothing invented.** Every factual claim must be supported by the
+   recording. Delete what is not.
+
+To make a change, edit `minuta-out/weekly-sync/meeting-minutes.md` by hand. It is
+a plain text file. Before you run the template again, save a copy of your edited
+file, for example:
+
+```sh
+cp minuta-out/weekly-sync/meeting-minutes.md weekly-sync-minutes.md
+```
+
+To have the model write the minutes again from scratch, run the command from
+step 5 with `--force meeting-minutes`. That reruns this template only, and
+replaces your edits:
+
+```sh
+minuta run weekly-sync.m4a -t meeting-minutes --force meeting-minutes
+```
 
 ## 8. Share the minutes
 
@@ -282,8 +333,8 @@ $ ls -A minuta-out/weekly-sync
 | File | Use it for |
 | --- | --- |
 | `meeting-minutes.md` | The minutes. Paste them into an email or a wiki, or send the file |
-| `transcript.txt` | The full text, for people who want to check a detail |
-| `captions.srt` | Subtitles, if you share the recording as a video |
+| `transcript.txt` | The full text, without timestamps, for people who want to check a detail |
+| `captions.srt` | Subtitles with timestamps, if you share the recording as a video |
 
 Do not send `.minuta` or `assets`: they are for minuta. To share the minutes
 from the terminal, `cat` the file or copy it. On macOS, `pbcopy` puts it in the
@@ -300,5 +351,7 @@ your transcript goes.
 ## Next
 
 - Make the template yours: [Add and override your own templates](custom-templates.md).
-- Run it on every meeting: `minuta run` accepts several files. See
+- For your next meeting, run the same command on its recording. Each meeting
+  gets its own job folder. Pass several files to one command only when they are
+  successive parts of the same meeting: minuta joins them into one job. See
   [Reference](../reference.md#commands).

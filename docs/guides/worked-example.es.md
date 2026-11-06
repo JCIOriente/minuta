@@ -6,9 +6,14 @@
 tu equipo. Vas a transcribir la grabación, corregir una transcripción con errores,
 generar el acta, revisarla y compartirla.
 
-El ejemplo es una grabación corta llamada `weekly-sync.m4a`. Usa tu propia
-grabación y cambia el nombre en cada comando. Lo que veas en pantalla será distinto
-de esta página en las palabras, porque los modelos escriben distinto cada vez.
+El ejemplo es una grabación corta en inglés llamada `weekly-sync.m4a`. Usa tu
+propia grabación: en cada comando, cambia la carpeta y el nombre del archivo por
+los tuyos. Si un nombre tiene espacios, escríbelo entre comillas, como en
+`minuta transcribe "reunion semanal.m4a"`.
+
+La salida que muestra esta página es un ejemplo. El texto que obtengas será
+distinto, igual que las versiones, las rutas, los tiempos y los conteos, y en una
+terminal interactiva el progreso aparece como barras en lugar de líneas simples.
 
 ## Antes de empezar
 
@@ -18,7 +23,8 @@ de esta página en las palabras, porque los modelos escriben distinto cada vez.
   predeterminado. Si no, sigue [Configura un LLM y un modelo de whisper](llm-and-whisper.es.md).
 - Tienes la grabación de una reunión en un archivo que ffmpeg pueda leer, como
   `.mp4`, `.m4a`, `.mp3` o `.wav`.
-- Una terminal abierta en la carpeta donde está la grabación:
+- Una terminal abierta en la carpeta donde está la grabación. Cambia
+  `~/Meetings` por esa carpeta:
 
   ```sh
   cd ~/Meetings
@@ -65,8 +71,9 @@ finished in 0.8s (5 run, 0 cached)
 La línea `note: VAD disabled` es información, no un error. Una reunión real tarda más;
 el paso de transcripción es el lento.
 
-La carpeta del trabajo es `minuta-out/weekly-sync/`. Contiene `transcript.txt` (el
-texto con marcas de tiempo) y `captions.srt` (subtítulos). Lee la transcripción:
+La carpeta del trabajo lleva el nombre de la grabación: aquí,
+`minuta-out/weekly-sync/`. Contiene `transcript.txt` (texto sin marcas de tiempo)
+y `captions.srt` (subtítulos con marcas de tiempo). Lee la transcripción:
 
 ```sh
 cat minuta-out/weekly-sync/transcript.txt
@@ -79,11 +86,26 @@ We decided to move the launch review to Thursday. Action items. Maria will send 
 Tom will ask Heidi for the test server today. Thanks everyone.
 ```
 
+**Si no funcionó.**
+
+- `source file not found`: el archivo no está en esta carpeta o su nombre se
+  escribe de otra forma. Ejecuta `ls` para ver el nombre exacto y usa comillas si
+  tiene espacios.
+- `holds a job made from different sources`: otra grabación ya usó el nombre
+  `weekly-sync`. Elige un nombre nuevo con `--name`, como
+  `minuta transcribe weekly-sync.m4a --name weekly-sync-2`, y usa en los comandos
+  siguientes la carpeta que imprime minuta.
+
+Hay más errores en [Solución de problemas](../reference.es.md#solución-de-problemas).
+
 ## 3. Corrige una transcripción con errores
 
 La transcripción del ejemplo tiene errores: "Weekly Sailing" debería ser "Weekly
-Sync" y "Heidi" debería ser "IT". El modelo predeterminado, `base`, es pequeño y
-rápido. Un modelo más grande oye mejor.
+Sync" y "Heidi" debería ser "IT". Se hizo con `base`, el modelo que configura la
+guía de instalación. `base` es pequeño y rápido. Un modelo más grande oye mejor.
+
+Si tu transcripción ya es suficientemente buena, o ya usas `small` o un modelo
+mayor, pasa al paso 4.
 
 1. Descarga el modelo `small` (465 MiB):
 
@@ -98,7 +120,7 @@ rápido. Un modelo más grande oye mejor.
    ```
 
 2. Transcribe de nuevo con él. minuta nota que el modelo cambió y repite solo la
-   transcripción:
+   transcripción y los archivos que salen de ella:
 
    ```sh
    minuta transcribe weekly-sync.m4a --model small
@@ -117,6 +139,10 @@ rápido. Un modelo más grande oye mejor.
 
 3. Lee la transcripción otra vez:
 
+   ```sh
+   cat minuta-out/weekly-sync/transcript.txt
+   ```
+
    ```text
    Welcome to the Weekly Sync.
    Maria reported that the website redesign is on track and will launch on Friday.
@@ -128,22 +154,31 @@ rápido. Un modelo más grande oye mejor.
    Thanks everyone.
    ```
 
-   Mejor. Una palabra sigue mal ("buck"). Ningún modelo es perfecto, así que en el
-   paso 6 revisarás el acta contra la transcripción.
+   Mejor, pero "buck" y "locked on" siguen mal. Ningún modelo es perfecto, así que
+   en el paso 7 revisarás el acta contra la grabación.
 
-4. Deja `small` como modelo predeterminado para no volver a usar `--model`. Abre el
-   archivo de configuración (`minuta config path` imprime dónde está;
-   `minuta config init` lo crea) y define el modelo en `[whisper]`:
+4. Deja `small` como modelo predeterminado para no volver a usar `--model`.
+   Ejecuta `minuta config path` para ver dónde está el archivo de configuración y
+   ábrelo. En `[whisper]`, cambia la línea `model`:
 
    ```toml
    [whisper]
    model = "small"
    ```
 
-**Si no funcionó.** `unknown model` significa que el nombre no está en
-`minuta models list`. En una grabación larga con silencios, whisper puede inventar
-texto; [la guía de modelos](llm-and-whisper.es.md) muestra la solución (paso 5 de la
-Parte 1).
+   Cambia la línea que ya existe. No agregues una segunda sección `[whisper]`:
+   minuta se detiene con `duplicate key`. Si todavía no tienes archivo de
+   configuración, ejecuta antes `minuta config init`.
+
+**Si no funcionó.**
+
+- `unknown model`: el nombre no está en `minuta models list`.
+- `config error: ... invalid TOML at line ...`: el archivo de configuración tiene
+  un error. Abre el archivo que imprime `minuta config path` y corrige la línea
+  que indica el mensaje.
+- En una grabación larga con silencios, whisper puede inventar texto.
+  [La guía de modelos](llm-and-whisper.es.md) muestra la solución (paso 5 de la
+  Parte 1).
 
 ## 4. Consigue una plantilla de acta
 
@@ -226,38 +261,19 @@ The meeting covered the status of the website redesign, a fix for the payment bu
 - `not reachable` o `model missing`: tu modelo de lenguaje no está listo. Consulta
   [la guía de doctor](fix-doctor.es.md#5-llm-no-está-en-ok).
 
-## 6. Revisa el acta antes de compartirla
+## 6. Elige el idioma del acta
 
-Un modelo puede equivocarse, así que lee el acta una vez contra la transcripción.
-Revisa esto, en orden:
+Si el idioma ya es el correcto, omite este paso.
 
-1. **Nombres.** ¿Cada nombre coincide con lo que dijo la gente?
-2. **Números y fechas.** "Wednesday" y "Thursday" del ejemplo coinciden con la
-   transcripción.
-3. **Responsables.** ¿Cada tarea está junto a la persona correcta?
-4. **Nada inventado.** Cada línea debe estar en la transcripción. Borra lo que no.
-
-La plantilla le indica al modelo que no invente nada. Aun así conviene revisar.
-
-Si quieres un cambio, edita `meeting-minutes.md` a mano; es un archivo de texto
-simple. Para que el modelo la escriba de nuevo, ejecuta el comando del paso 5 con
-`--force meeting-minutes` después del nombre del archivo. Eso repite solo esta
-plantilla:
-
-```sh
-minuta run weekly-sync.m4a -t meeting-minutes --force meeting-minutes
-```
-
-## 7. Escribe el acta en otro idioma
-
-Los documentos usan el idioma de la grabación. Para obtenerlos en otro idioma,
-indícalo con `--output-lang`:
+Si no configuras nada, los documentos usan el idioma que se habla en la
+grabación. Para obtenerlos en otro idioma, indícalo con `--output-lang`:
 
 ```sh
 minuta run weekly-sync.m4a -t meeting-minutes --output-lang es
 ```
 
-Solo se vuelve a escribir el acta. Los títulos y el texto salen en español:
+Solo se vuelve a escribir el acta, y el archivo nuevo reemplaza al anterior. Los
+títulos y el texto salen en español:
 
 ```markdown
 # weekly-sync
@@ -268,8 +284,45 @@ Solo se vuelve a escribir el acta. Los títulos y el texto salen en español:
 ## Resumen de la reunión
 ```
 
-Si vuelves a ejecutar el comando sin `--output-lang es`, el acta se escribe otra vez
-en inglés.
+Si vuelves a ejecutar el comando sin `--output-lang`, el acta se escribe otra vez
+en tu idioma habitual: el que define la plantilla o el archivo de configuración o,
+si no hay ninguno, el idioma de la grabación. En este ejemplo, inglés.
+
+Elige el idioma antes de editar el acta en el paso 7. Cada vez que la plantilla se
+ejecuta de nuevo, reemplaza el archivo y, con él, tus cambios.
+
+## 7. Revisa el acta antes de compartirla
+
+Un modelo puede equivocarse, y la transcripción también. La plantilla permite que
+el modelo corrija un error de audición evidente, como hizo con "buck", así que el
+acta y la transcripción pueden no coincidir. Comprueba los datos contra la propia
+grabación. Las marcas de tiempo del acta, como `[00:00:00]`, y las de
+`captions.srt` te indican dónde escuchar.
+
+Revisa esto, en orden:
+
+1. **Nombres.** ¿Cada nombre coincide con lo que dijo la gente?
+2. **Números y fechas.** "Wednesday" y "Thursday" del ejemplo coinciden con la
+   grabación.
+3. **Responsables.** ¿Cada tarea está junto a la persona correcta?
+4. **Nada inventado.** Cada dato del acta debe estar respaldado por la grabación.
+   Borra lo que no lo esté.
+
+Para hacer un cambio, edita a mano `minuta-out/weekly-sync/meeting-minutes.md`; es
+un archivo de texto simple. Antes de volver a ejecutar la plantilla, guarda una
+copia del archivo editado, por ejemplo:
+
+```sh
+cp minuta-out/weekly-sync/meeting-minutes.md acta-weekly-sync.md
+```
+
+Para que el modelo escriba el acta de nuevo desde cero, ejecuta el comando del
+paso 5 con `--force meeting-minutes`. Eso repite solo esta plantilla y reemplaza
+tus cambios:
+
+```sh
+minuta run weekly-sync.m4a -t meeting-minutes --force meeting-minutes
+```
 
 ## 8. Comparte el acta
 
@@ -283,8 +336,8 @@ $ ls -A minuta-out/weekly-sync
 | Archivo | Para qué sirve |
 | --- | --- |
 | `meeting-minutes.md` | El acta. Pégala en un correo o en una wiki, o envía el archivo |
-| `transcript.txt` | El texto completo, para quien quiera comprobar un detalle |
-| `captions.srt` | Subtítulos, si compartes la grabación como video |
+| `transcript.txt` | El texto completo, sin marcas de tiempo, para quien quiera comprobar un detalle |
+| `captions.srt` | Subtítulos con marcas de tiempo, si compartes la grabación como video |
 
 No envíes `.minuta` ni `assets`: son para minuta. Para compartir el acta desde la
 terminal, usa `cat` o copia el archivo. En macOS, `pbcopy` la pone en el
@@ -301,5 +354,7 @@ va tu transcripción.
 ## Siguientes pasos
 
 - Haz tuya la plantilla: [Agrega y reemplaza tus propias plantillas](custom-templates.es.md).
-- Úsala en cada reunión: `minuta run` acepta varios archivos. Consulta la
-  [Referencia](../reference.es.md#comandos).
+- Para tu próxima reunión, ejecuta el mismo comando con su grabación. Cada reunión
+  tiene su propia carpeta de trabajo. Pasa varios archivos en un solo comando solo
+  cuando sean partes seguidas de la misma reunión: minuta los une en un solo
+  trabajo. Consulta la [Referencia](../reference.es.md#comandos).

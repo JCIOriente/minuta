@@ -11,9 +11,12 @@ template with `-t`, for example `-t summary`.
 
 ## Before you start
 
-- minuta is installed and `minuta doctor` passes. If not, see the
-  [installation guide](../install.md) and [fix what doctor reports](fix-doctor.md).
+- minuta is installed, `minuta doctor` ends without an error and its `llm` line
+  ends in `(ok)`. If not, see [Fix what doctor reports](fix-doctor.md) and
+  [Set up an LLM and a whisper model](llm-and-whisper.md).
 - You have a recording. This page uses `meeting.mp4`; use your own file name.
+  The examples assume an English recording; the language of your documents
+  depends on your recording and your settings.
 - A terminal open in the folder that holds the recording.
 
 ## Part 1: write a new template
@@ -40,8 +43,10 @@ template with `-t`, for example `-t summary`.
    templates from a folder with this name in the folder where you run it:
 
    ```sh
-   mkdir templates
+   mkdir -p templates
    ```
+
+   If the folder already exists, the command leaves it as it is.
 
 3. Create the file `templates/weekly-sync.md` with this content. The file name
    is the template's name, so this template is called `weekly-sync`.
@@ -63,7 +68,9 @@ template with `-t`, for example `-t summary`.
    `{{job_name}}` and `{{duration}}` are filled in by minuta.
 
    A template name starts with a lowercase letter or a digit and uses only
-   lowercase letters, digits, `-` and `_`.
+   lowercase letters, digits, `-` and `_`. A few names, such as `transcript`
+   and `outputs`, are reserved; the list is in
+   [Writing a template](../templates.md#writing-a-template).
 
 4. Check that minuta sees it:
 
@@ -84,8 +91,14 @@ template with `-t`, for example `-t summary`.
    ```
 
    minuta prints its progress and, at the end, the path of the job folder. The
-   document is `weekly-sync.md` in that folder. The wording of the answer
-   depends on your model; this is an example:
+   document is `weekly-sync.md` in that folder. For `meeting.mp4` the folder is
+   `minuta-out/meeting`; if minuta prints another path, use that one:
+
+   ```sh
+   cat minuta-out/meeting/weekly-sync.md
+   ```
+
+   The wording of the answer depends on your model; this is an example:
 
    ```text
    ### Weekly Sync Report
@@ -120,13 +133,17 @@ The easiest way to start is to copy the built-in one and change the copy.
    minuta templates show summary > summary.md
    ```
 
+   minuta prints `built-in` on the screen, which means you copied the original.
+   If it prints the path of a file instead, you already have your own `summary`
+   and copied that one.
+
    Do not write the copy straight into the `templates` folder. The shell empties
    the file before minuta reads the template, and you would get an empty
    `summary` that replaces the real one.
 
 2. Open `summary.md` in any text editor and change the prompt. For example, add
-   a line at the end: `Write at most five bullet points.` Keep the header at
-   the top.
+   a line at the end: `Start the summary with the heading "# Meeting summary".`
+   Keep the header at the top.
 
 3. Move the file to where you want it to apply.
 
@@ -163,6 +180,17 @@ The easiest way to start is to copy the built-in one and change the copy.
    minuta run meeting.mp4 -t summary
    ```
 
+   Check that the document follows your change. With the example line, the
+   summary starts with your heading:
+
+   ```sh
+   head -n 1 minuta-out/meeting/summary.md
+   ```
+
+   ```console
+   # Meeting summary
+   ```
+
 To go back to the built-in template, delete your file.
 
 **How minuta chooses.** There are three places, and a later one wins over an
@@ -174,13 +202,16 @@ current folder.
 - The `summary` row still says `built-in`: the file is not in the right folder
   or does not end in `.md`. Run `minuta templates show summary` to see which file
   minuta uses; its path is printed to the error output.
+- The `summary` row says `project` but you put your file in
+  `~/.minuta/templates`: a `templates/summary.md` in the current folder wins
+  over it. Delete or rename that file.
 - The `summary` row has no description and the document is not a summary: the
   file is empty, because you wrote the copy straight into the `templates`
   folder. Delete the file and start again from step 1.
-- A job folder already exists and nothing changed: minuta reuses finished work.
-  After you edit a template, run `minuta run meeting.mp4 -t summary` again and
-  only that template runs. To force it, add `--force summary` after the file
-  name.
+- The document did not change after you edited the template: check that you
+  saved the file, and that `minuta templates list` shows the layer you expect.
+  minuta notices a changed template and runs it again on its own. To run it
+  again anyway, add `--force summary` after the file name.
 
 > **Careful.** minuta reads `./templates` from whatever folder you run it in. If
 > you clone a project from somebody else, read its templates before you run
@@ -221,6 +252,7 @@ The minuta repository has a catalog of ready-made templates.
    `Continue? [y/N]`. Type `y` to continue.
 
 3. Use it like any other template: `minuta run meeting.mp4 -t meeting-minutes`.
+   The document is `meeting-minutes.md` in the job folder.
 
 A downloaded file is an ordinary template: you can edit it. If you edit it and
 later run `pull` again, minuta skips your file instead of overwriting it. Add

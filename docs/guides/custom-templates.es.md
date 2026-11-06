@@ -11,9 +11,12 @@ Eliges la plantilla con `-t`, por ejemplo `-t summary`.
 
 ## Antes de empezar
 
-- minuta está instalada y `minuta doctor` no muestra problemas. Si no, consulta la
-  [guía de instalación](../install.es.md) y [resuelve lo que reporta doctor](fix-doctor.es.md).
+- minuta está instalada, `minuta doctor` termina correctamente y su línea `llm`
+  termina en `(ok)`. Si no, consulta [Resuelve lo que reporta doctor](fix-doctor.es.md)
+  y [Configura un LLM y un modelo de whisper](llm-and-whisper.es.md).
 - Tienes una grabación. En esta página se usa `meeting.mp4`; usa el nombre de tu archivo.
+  Los ejemplos suponen una grabación en inglés; el idioma de tus documentos
+  depende de tu grabación y de tu configuración.
 - Una terminal abierta en la carpeta donde está la grabación.
 
 ## Parte 1: escribe una plantilla nueva
@@ -40,8 +43,10 @@ Eliges la plantilla con `-t`, por ejemplo `-t summary`.
    plantillas de una carpeta con ese nombre, dentro de la carpeta donde la ejecutas:
 
    ```sh
-   mkdir templates
+   mkdir -p templates
    ```
+
+   Si la carpeta ya existe, el comando la deja como está.
 
 3. Crea el archivo `templates/weekly-sync.md` con este contenido. El nombre del
    archivo es el nombre de la plantilla, así que esta se llama `weekly-sync`.
@@ -63,7 +68,9 @@ Eliges la plantilla con `-t`, por ejemplo `-t summary`.
    prompt. minuta reemplaza `{{job_name}}` y `{{duration}}` por sus valores.
 
    El nombre de una plantilla empieza con una letra minúscula o un dígito y usa
-   solo letras minúsculas, dígitos, `-` y `_`.
+   solo letras minúsculas, dígitos, `-` y `_`. Algunos nombres, como `transcript`
+   y `outputs`, están reservados; la lista está en
+   [Escribir una plantilla](../templates.es.md#escribir-una-plantilla).
 
 4. Comprueba que minuta la ve:
 
@@ -84,9 +91,15 @@ Eliges la plantilla con `-t`, por ejemplo `-t summary`.
    ```
 
    minuta muestra su progreso y, al final, la ruta de la carpeta del trabajo. El
-   documento es `weekly-sync.md` en esa carpeta. Las palabras de la respuesta
-   dependen de tu modelo, y la grabación de ejemplo está en inglés, así que la respuesta
-   también; esto es un ejemplo:
+   documento es `weekly-sync.md` en esa carpeta. Para `meeting.mp4` la carpeta es
+   `minuta-out/meeting`; si minuta imprime otra ruta, usa esa:
+
+   ```sh
+   cat minuta-out/meeting/weekly-sync.md
+   ```
+
+   Las palabras de la respuesta dependen de tu modelo. La grabación del ejemplo
+   está en inglés, así que la respuesta también; esto es un ejemplo:
 
    ```text
    ### Weekly Sync Report
@@ -122,13 +135,17 @@ fácil es copiar la integrada y cambiar la copia.
    minuta templates show summary > summary.md
    ```
 
+   minuta muestra `built-in` en la pantalla, lo que significa que copiaste la
+   original. Si en cambio muestra la ruta de un archivo, ya tienes tu propio
+   `summary` y copiaste ese.
+
    No escribas la copia directamente dentro de la carpeta `templates`. La terminal
    vacía el archivo antes de que minuta lea la plantilla, y terminarías con un
    `summary` vacío que reemplaza al verdadero.
 
 2. Abre `summary.md` en cualquier editor de texto y cambia el prompt. Por ejemplo,
-   agrega al final una línea: `Escribe como máximo cinco viñetas.` Deja el
-   encabezado al principio.
+   agrega al final una línea: `Empieza el resumen con el título "# Resumen de la reunión".`
+   Deja el encabezado al principio.
 
 3. Mueve el archivo al lugar donde quieres que se aplique.
 
@@ -164,6 +181,17 @@ fácil es copiar la integrada y cambiar la copia.
    minuta run meeting.mp4 -t summary
    ```
 
+   Comprueba que el documento sigue tu cambio. Con la línea del ejemplo, el
+   resumen empieza con tu título:
+
+   ```sh
+   head -n 1 minuta-out/meeting/summary.md
+   ```
+
+   ```console
+   # Resumen de la reunión
+   ```
+
 Para volver a la plantilla integrada, borra tu archivo.
 
 **Cómo elige minuta.** Hay tres lugares y gana el último: primero las plantillas
@@ -175,13 +203,17 @@ actual.
 - La fila `summary` sigue diciendo `built-in`: el archivo no está en la carpeta
   correcta o no termina en `.md`. Ejecuta `minuta templates show summary` para ver
   qué archivo usa minuta; su ruta se imprime en la salida de errores.
+- La fila `summary` dice `project`, pero pusiste tu archivo en
+  `~/.minuta/templates`: un `templates/summary.md` en la carpeta actual tiene
+  prioridad. Borra o renombra ese archivo.
 - La fila `summary` no tiene descripción y el documento no es un resumen: el archivo
   está vacío, porque escribiste la copia directamente en la carpeta `templates`.
   Borra el archivo y empieza de nuevo desde el paso 1.
-- Ya existe una carpeta de trabajo y nada cambió: minuta reutiliza el trabajo
-  terminado. Después de editar una plantilla, vuelve a ejecutar
-  `minuta run meeting.mp4 -t summary` y solo esa plantilla se ejecuta de nuevo. Para
-  forzarlo, agrega `--force summary` después del nombre del archivo.
+- El documento no cambió después de editar la plantilla: comprueba que guardaste
+  el archivo y que `minuta templates list` muestra la capa que esperas. minuta
+  detecta una plantilla modificada y la vuelve a ejecutar por su cuenta. Para
+  ejecutarla de nuevo de todos modos, agrega `--force summary` después del nombre
+  del archivo.
 
 > **Cuidado.** minuta lee `./templates` de la carpeta donde la ejecutes. Si clonas
 > un proyecto de otra persona, lee sus plantillas antes de ejecutar minuta allí.
@@ -221,6 +253,7 @@ El repositorio de minuta tiene un catálogo de plantillas ya hechas.
    `Continue? [y/N]`. Escribe `y` para continuar.
 
 3. Úsala como cualquier otra plantilla: `minuta run meeting.mp4 -t meeting-minutes`.
+   El documento es `meeting-minutes.md` en la carpeta del trabajo.
 
 Un archivo descargado es una plantilla normal: puedes editarlo. Si lo editas y más
 tarde ejecutas `pull` otra vez, minuta omite tu archivo en lugar de sobrescribirlo.

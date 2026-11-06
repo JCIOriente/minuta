@@ -16,7 +16,13 @@ minuta usa dos tipos de modelo:
 
 - minuta, `ffmpeg` y `whisper-cli` están instalados. Consulta la
   [guía de instalación](../install.es.md).
-- Una terminal.
+- Una grabación corta para hacer pruebas. Esta página la llama `meeting.mp4`;
+  cámbiala por el nombre de tu archivo.
+- Una terminal abierta en la carpeta donde está la grabación.
+
+La salida que muestra esta página es un ejemplo. Tus versiones, rutas, modelos
+instalados y tiempos serán distintos, y en una terminal interactiva una descarga
+muestra una barra de progreso.
 
 ## Parte 1: elige un modelo de whisper
 
@@ -63,17 +69,20 @@ minuta usa dos tipos de modelo:
    created .../.minuta/config.toml
    ```
 
-   Si el archivo ya existe, el comando no lo toca y puedes omitir este paso.
-   `minuta config path` imprime dónde está el archivo.
+   Si el archivo ya existe, el comando dice `already exists; nothing changed` y
+   puedes seguir. `minuta config path` imprime dónde está el archivo.
 
-4. Abre ese archivo en un editor de texto. Bajo la línea `[whisper]`, busca
-   `# model = "small"`, borra el `# ` del principio y escribe el modelo que
+4. Abre ese archivo en un editor de texto. Bajo la línea `[whisper]`, busca la
+   línea `model`. Si empieza con `# `, borra el `# `. Escribe el modelo que
    descargaste:
 
    ```toml
    [whisper]
    model = "small"
    ```
+
+   Cambia las líneas que ya existen. No agregues una segunda sección `[whisper]`:
+   minuta se detiene con `duplicate key`.
 
    Guarda el archivo. Para probar un modelo una sola vez sin cambiar el archivo,
    agrega `--model small` al comando: `minuta run meeting.mp4 --model small`.
@@ -113,6 +122,9 @@ minuta usa dos tipos de modelo:
 - `unknown model`: usa uno de los nombres de `minuta models list`.
 - `is a VAD model; set it as whisper.vad_model`: pusiste `silero-v5.1.2` en
   `model`. Muévelo a `vad_model`.
+- `config error: ... invalid TOML at line ...`: el archivo de configuración tiene
+  un error, como una segunda sección `[whisper]`. Corrige la línea que indica el
+  mensaje.
 - ¿Ya tienes un archivo de modelo de whisper.cpp? Pon en `model` su ruta completa,
   por ejemplo `model = "/Users/ana/models/ggml-medium.bin"`.
 
@@ -128,13 +140,15 @@ La tabla muestra adónde va tu transcripción. Elige una opción y sigue su secc
 | Otro servidor | Ese servidor | Usas LM Studio, Colibri o un servicio en la nube |
 
 Elijas lo que elijas, nombras el LLM con un id: `ollama:<modelo>`, `claude`,
-`codex` o `<nombre-del-servidor>:<modelo>`. Puedes pasarlo en una sola ejecución con
-`--llm`, o guardarlo como predeterminado (consulta el paso 4 de la sección de Ollama).
+`codex` o `<nombre-del-servidor>:<modelo>`. Las partes entre `<` y `>` son
+marcadores: reemplázalas, signos incluidos. Puedes pasar el id en una sola
+ejecución con `--llm`, o guardarlo como predeterminado en `[llm]` del archivo de
+configuración.
 
 ### Ollama (en tu computadora)
 
-1. Instala [Ollama](https://ollama.com). En macOS, `brew install ollama`; en Linux,
-   `curl -fsSL https://ollama.com/install.sh | sh`.
+1. Instala Ollama siguiendo [Ollama](../install.es.md#ollama) en la guía de
+   instalación.
 2. Inícialo. La app de macOS y el servicio de Linux lo inician por ti; si no,
    ejecuta esto en una terminal y déjala abierta:
 
@@ -142,27 +156,35 @@ Elijas lo que elijas, nombras el LLM con un id: `ollama:<modelo>`, `claude`,
    ollama serve
    ```
 
-3. En otra terminal, descarga el modelo predeterminado de minuta. Es grande (unos
-   17 GB) y necesita una computadora con bastante memoria:
+3. En otra terminal, descarga un modelo. Elige uno de estos y descarga solo ese:
 
-   ```sh
-   ollama pull gemma4:26b
-   ```
+   - **El modelo predeterminado de minuta, `gemma4:26b`.** Es grande (unos
+     17 GB) y necesita una computadora con bastante memoria. Después de
+     descargarlo no hay nada que configurar:
 
-4. Para usar un modelo más pequeño, busca uno en
-   [ollama.com/library](https://ollama.com/library), ejecuta `ollama pull <modelo>`
-   y déjalo como predeterminado. En el archivo de configuración, busca `# [llm]` y
-   la línea `# default = ...` que sigue. Borra el `# ` del principio de ambas y
-   escribe tu modelo:
+     ```sh
+     ollama pull gemma4:26b
+     ```
 
-   ```toml
-   [llm]
-   default = "ollama:<modelo>"
-   ```
+   - **Un modelo más pequeño**, de [ollama.com/library](https://ollama.com/library).
+     Antes, compara su tamaño con la memoria de tu computadora. Por ejemplo, para
+     `qwen3:14b`:
 
-   El prefijo `ollama:` se queda. Para `qwen3:14b` escribes `ollama:qwen3:14b`.
+     ```sh
+     ollama pull qwen3:14b
+     ```
 
-5. Ejecuta `minuta doctor` (consulta [Comprueba tu configuración](#comprueba-tu-configuración)).
+     Luego déjalo como predeterminado. En el archivo de configuración, busca
+     `# [llm]` y la línea `# default = ...` que sigue. Borra el `# ` del principio
+     de ambas y escribe tu modelo después de `ollama:`:
+
+     ```toml
+     [llm]
+     default = "ollama:qwen3:14b"
+     ```
+
+4. Ejecuta `minuta doctor`. La línea `llm` termina en `(ok)` (consulta
+   [Comprueba tu configuración](#comprueba-tu-configuración)).
 
 Si Ollama se ejecuta en otra computadora, define `url` en `[ollama]` con su
 dirección. Entonces tus transcripciones van a esa computadora. Si las respuestas se
@@ -172,26 +194,41 @@ cortan, sube `num_ctx` en `[ollama]`, siempre que el modelo admita una ventana m
 
 minuta usa la sesión que ya tienes. No hay clave que configurar.
 
-1. Instala y entra una sola vez: ejecuta `claude` para Claude Code, o
-   `codex login` para Codex. Los pasos de instalación están en la
-   [guía de instalación](../install.es.md#claude-code).
-2. Úsalo en una ejecución:
+1. Instala la herramienta e inicia sesión una vez, como se explica en
+   [Claude Code](../install.es.md#claude-code) o [Codex](../install.es.md#codex)
+   en la guía de instalación.
+2. Úsala en una ejecución:
 
    ```sh
    minuta run meeting.mp4 -t summary --llm claude
    ```
 
-   Usa `--llm codex` para Codex. minuta muestra un aviso de que la transcripción se
-   envía a la empresa.
-3. Para dejarlo como predeterminado, define `default = "claude"` (o `"codex"`) en `[llm]`.
+   Usa `--llm codex` para Codex. minuta muestra un aviso de que la transcripción
+   se envía a la empresa. Al terminar, el resumen está en la carpeta del trabajo
+   que imprime minuta, aquí `minuta-out/meeting/summary.md`:
+
+   ```sh
+   cat minuta-out/meeting/summary.md
+   ```
+
+   Esta ejecución es la prueba real. `minuta doctor` solo comprueba que el
+   programa arranca; no comprueba que hayas iniciado sesión. Si la ejecución
+   falla con un error de inicio de sesión o de autenticación, vuelve a ejecutar
+   `claude` (o `codex login`).
+3. Para dejarla como predeterminada, define `default = "claude"` (o `"codex"`) en
+   `[llm]`.
 
 ### Otro servidor (LM Studio, Colibri, un servicio en la nube)
 
-Funciona cualquier servidor que hable la API de OpenAI. Le das un nombre una sola
-vez, en el archivo de configuración, y luego usas ese nombre en el id.
+Usa un servidor con una API compatible con OpenAI: debe responder en `/models` y
+`/chat/completions`. LM Studio, Colibri, llama.cpp y vLLM lo hacen. Le das un
+nombre al servidor una sola vez, en el archivo de configuración, y luego usas ese
+nombre en el id. Los pasos para LM Studio y Colibri están en
+[Servidores compatibles con OpenAI](../install.es.md#servidores-compatibles-con-openai).
 
-1. Inicia el servidor y carga un modelo. Anota la dirección del servidor, que
-   normalmente termina en `/v1`, y el nombre exacto del modelo.
+1. Inicia el servidor y carga un modelo con un contexto de al menos 16384
+   tokens. Anota la dirección del servidor, que normalmente termina en `/v1`, y
+   el nombre exacto del modelo.
 2. En el archivo de configuración, agrega una sección con el nombre que quieras.
    Este ejemplo llama `lmstudio` al servidor:
 
@@ -200,23 +237,50 @@ vez, en el archivo de configuración, y luego usas ese nombre en el id.
    url = "http://127.0.0.1:1234/v1"
    ```
 
-   El nombre usa letras minúsculas, dígitos, `-` y `_`. No puede ser `ollama`,
-   `claude` ni `codex`.
-3. Úsalo. El id es el nombre, dos puntos y el nombre del modelo tal como lo lista
-   el servidor:
-
-   ```sh
-   minuta run meeting.mp4 -t summary --llm lmstudio:google/gemma-4-26b-a4b
-   ```
-
-4. Si el servidor pide una clave, no la escribas en el archivo. Guárdala en una
-   variable de entorno y escribe el nombre de la variable:
+   El nombre empieza con una letra minúscula (de la `a` a la `z`) y usa solo
+   letras minúsculas, dígitos, `-` y `_`. No puede ser `ollama`, `claude` ni
+   `codex`. Si el servidor le da al modelo un contexto menor de 16384 tokens,
+   agrega `context_tokens` con ese número.
+3. Si el servidor pide una clave, no la escribas en el archivo. Escribe en
+   `api_key_env` el nombre de una variable de entorno. Este ejemplo es un
+   servicio en la nube llamado `openrouter`:
 
    ```toml
    [endpoints.openrouter]
    url = "https://openrouter.ai/api/v1"
    api_key_env = "OPENROUTER_API_KEY"
    ```
+
+   Luego define la variable en la terminal donde ejecutas minuta. Cambia el texto
+   entre comillas por tu clave:
+
+   ```sh
+   export OPENROUTER_API_KEY='replace-with-your-key'
+   ```
+
+   La variable dura hasta que cierras esta terminal. Para conservarla, agrega la
+   misma línea al archivo de inicio de tu shell, como `~/.zshrc` o `~/.bashrc`.
+4. Comprueba el servidor y el modelo. El id es el nombre, dos puntos y el nombre
+   del modelo tal como lo lista el servidor:
+
+   ```sh
+   MINUTA_LLM=lmstudio:google/gemma-4-26b-a4b minuta doctor
+   ```
+
+   La última línea termina en `(ok)`:
+
+   ```console
+   llm          lmstudio:google/gemma-4-26b-a4b (ok)
+   ```
+
+5. Úsalo:
+
+   ```sh
+   minuta run meeting.mp4 -t summary --llm lmstudio:google/gemma-4-26b-a4b
+   ```
+
+   El resumen está en la carpeta del trabajo que imprime minuta, aquí
+   `minuta-out/meeting/summary.md`.
 
 Un servidor que no está en tu computadora recibe tu transcripción, y minuta muestra
 un aviso cada vez. Los servidores lentos necesitan más tiempo: sube `timeout_secs`
@@ -225,18 +289,27 @@ en la sección (el valor predeterminado es 600 segundos). Todas las claves está
 
 ## Comprueba tu configuración
 
-Para comprobar el LLM, déjalo como predeterminado o defínelo para un solo comando con
-la variable de entorno `MINUTA_LLM`, y luego ejecuta `doctor`:
-
 ```sh
-MINUTA_LLM=ollama:gemma4:26b minuta doctor
+minuta doctor
 ```
 
-La última línea es el LLM:
+La última línea es tu LLM predeterminado y termina en `(ok)`:
 
 ```console
 llm          ollama:gemma4:26b (ok)
 ```
+
+Para comprobar otro LLM sin cambiar el archivo de configuración, defínelo para un
+solo comando con la variable de entorno `MINUTA_LLM`. Cambia `claude` por el id
+que quieras comprobar:
+
+```sh
+MINUTA_LLM=claude minuta doctor
+```
+
+Con Claude Code y Codex, `(ok)` significa que el programa arranca, no que hayas
+iniciado sesión. Ejecuta un `minuta run ... -t summary` corto para probarlos de
+principio a fin.
 
 Para ver qué valor usa minuta y de dónde viene, ejecuta `minuta config show`. Un
 `(file)` o un `(env)` al final de la línea te lo indica.
@@ -251,6 +324,8 @@ Para ver qué valor usa minuta y de dónde viene, ejecuta `minuta config show`. 
 | `invalid: unknown endpoint "lmstudio"; add it to the config file...` | Agrega la sección `[endpoints.lmstudio]` |
 | `model missing: not offered by the server; it offers: ...` | Usa uno de los nombres de la lista |
 | `not reachable: start the server or fix endpoints.lmstudio.url...` | Inicia el servidor o corrige `url` |
+| `not reachable: set OPENROUTER_API_KEY to the API key ...` | Ejecuta la línea `export` del paso 3 en la misma terminal |
+| `... 401 ...; check the key in endpoints.openrouter.api_key_env` (o `403`) | El servidor rechazó la clave. Comprueba que la copiaste completa y que sigue siendo válida |
 
 Más soluciones: [Resuelve lo que reporta doctor](fix-doctor.es.md).
 
